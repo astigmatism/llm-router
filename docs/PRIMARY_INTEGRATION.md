@@ -6,11 +6,11 @@ The primary runtime has two resident services with independent admission. This d
 
 | Property | Coding | Everyday |
 |---|---|---|
-| Display name | Daytime (128K) | Nighttime (64K) |
+| Display name | Daytime (128K) | Nighttime (128K) |
 | Model | `qwen3.8-27b-q8_0` | `qwen3.8-27b-abliterated-q6_k` |
 | Backend URL | `http://qwen38-daytime:8080` | `http://qwen38-nighttime:8080` |
 | Stable service ID | `daytime` (also `local-active`, or omitted model) | `nighttime` |
-| Working context | 131072 | 65536 |
+| Working context | 131072 | 131072 |
 | Active generations | 1 | 1 |
 | Context admission reserve | 1024 tokens | 1024 tokens |
 | Default output / policy maximum | Unrestricted / none | Unrestricted / none |

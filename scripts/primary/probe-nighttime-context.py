@@ -5,6 +5,7 @@ Uses only the existing pinned image, weights, GPU pair, and output policy. The
 owner must reserve Nighttime for this experiment. Daytime and router stay running.
 Only the final headroom-qualified context is advertised; failed probes are private.
 """
+import argparse
 import copy
 import datetime
 import fcntl
@@ -65,7 +66,9 @@ def proposal(manifest, compose, catalog, target):
     return manifest, compose, catalog
 
 
-def main():
+def main(accept_context=None):
+    if accept_context not in (None, 131072):
+        raise ValueError('The explicitly accepted final target is 128K')
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True).strip():
         raise RuntimeError('Probe from a clean published checkout')
@@ -110,6 +113,11 @@ def main():
             if loaded is not None:
                 c.require_idle(p)
             m, spec, catalog = proposal(*baseline, target)
+            if accept_context == target:
+                contract = next(s for s in m['services'] if s['role'] == 'everyday')['qualification_contract']['capacity']
+                contract['previous_minimum_free_vram_mib_per_gpu'] = contract['minimum_free_vram_mib_per_gpu']
+                contract['minimum_free_vram_mib_per_gpu'] = None
+                contract['headroom_policy'] = 'Owner explicitly accepted 128K with measured GPU headroom in place of the previous 1024 MiB reserve; retain the live acceptance receipt.'
             p.write(PRIMARY / 'manifest.json', m)
             p.write(PRIMARY / 'compose.json', spec)
             p.validate()
@@ -190,6 +198,28 @@ def main():
             p.write(backup / 'rollback.json', {'completed_at': p.now(), 'context': 65536})
 
         try:
+            if accept_context is not None:
+                final = probe(accept_context, 'final')
+                if not final['ok']:
+                    raise RuntimeError('Owner-selected 128K failed functional acceptance')
+                preserve_other_services()
+                before_marker, after_marker = p.read(backup / 'active-model-before.json'), p.read(p.MARKER)
+                for marker in [before_marker, after_marker]:
+                    marker['models'] = [r for r in marker['models'] if r['model'] != c.MODEL]
+                if before_marker != after_marker:
+                    raise RuntimeError('Daytime discovery projection changed')
+                receipt = {'completed_at': p.now(), 'source_revision': revision, 'source_directory': str(SOURCE),
+                    'final_context': accept_context, 'selection': 'Owner explicitly accepted 128K and ended the ceiling search',
+                    'previous_reserve_mib': floor, 'previous_reserve_passed': final['reserve_passed'],
+                    'minimum_free_mib': final['minimum_free_mib'], 'checks': final['checks'],
+                    'daytime_and_router_unchanged': True, 'manifest_sha256': c.digest(p.MANIFEST)}
+                p.write(backup / 'qualification.json', receipt)
+                qualified.update(manifest_sha256=c.digest(p.MANIFEST), nighttime_context_selection={
+                    'receipt': str(backup / 'qualification.json'), 'completed_at': receipt['completed_at']})
+                p.write(PRIMARY / 'evidence/qualified.json', qualified)
+                p.write(PRIMARY / 'evidence/live-identity.json', p.runtime_identity())
+                print('ACCEPTED CONTEXT ' + json.dumps(receipt), flush=True)
+                return
             # First locate the allocation boundary without spending generation
             # time on every point. Then test the upper end under long prefill.
             lower, upper = 65536, None
@@ -266,4 +296,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--accept-context', type=int, choices=[131072], help='Owner-selected 128K; report measured headroom instead of enforcing the former 1 GiB reserve')
+    main(parser.parse_args().accept_context)

@@ -59,3 +59,9 @@ largest tested setting with at least 1024 MiB free on both Nighttime GPUs.
 It preserves Daytime and the router and restores the immediate 64K baseline if
 final acceptance fails. Publish the resulting capacity in the source catalog
 after the experiment; the backend and consumer metadata must agree.
+
+The owner ended the ceiling search and selected Nighttime at 128K. The reviewed
+`--accept-context 131072` option performs final long-context, router, tool and
+overflow checks for that target and records the measured GPU headroom. This
+explicit selection replaces the former 1024 MiB Nighttime reserve requirement;
+Daytime's configuration and reserve contract stay unchanged.
