@@ -94,7 +94,9 @@ def main():
             for original, result in zip(before, proposed):
                 if payload(model(result['id'])) != payload(original):
                     raise RuntimeError('Preset changed during label preparation: ' + result['id'])
-                api('/api/v1/models/model/update', result)
+                # Omitted grants retain their existing records. Posting even
+                # identical grants recreates their IDs in Open WebUI.
+                api('/api/v1/models/model/update', {key: value for key, value in result.items() if key != 'access_grants'})
                 applied.append(original)
                 if payload(model(result['id'])) != result:
                     raise RuntimeError('Preset label verification failed: ' + result['id'])
@@ -108,7 +110,7 @@ def main():
                 print(json.dumps({'id': result['id'], 'name': result['name']}))
         except BaseException:
             for original in reversed(applied):
-                api('/api/v1/models/model/update', payload(original))
+                api('/api/v1/models/model/update', {key: value for key, value in payload(original).items() if key != 'access_grants'})
             api('/api/models?refresh=true')
             raise
         return
