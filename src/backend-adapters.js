@@ -1547,8 +1547,17 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
         return { messages, journal, context };
       } catch (error) {
         if (error.code !== OPENAI_CONTEXT_LENGTH_EXCEEDED_CODE || outputTokens !== null) throw error;
-        const transition = await rebaseContext(this, messages, controls, signal);
-        return { ...transition, journal, transition };
+        try {
+          const transition = await rebaseContext(this, messages, controls, signal);
+          return { ...transition, journal, transition };
+        } catch (recoveryError) {
+          if (recoveryError.code !== 'CONTEXT_RECOVERY_UNAVAILABLE') throw recoveryError;
+          // Recovery being unsupported does not turn a measured input overflow
+          // into a backend outage. Preserve the actionable context error and
+          // token arithmetic so clients can page tool results or compact history.
+          error.message += ` Automatic context recovery is unavailable: ${recoveryError.message} Use smaller or paged tool results, or shorten the conversation history.`;
+          throw error;
+        }
       }
     } catch (error) {
       await journal.append({ type: 'terminal', status: 'incomplete', error: { code: error.code, message: error.message } });

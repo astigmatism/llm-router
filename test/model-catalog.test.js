@@ -574,6 +574,40 @@ test('context-ended default generation continues with a disclosed working excerp
   assert.equal(f.context.requestGate.active.size, 0);
 });
 
+test('oversized tool history keeps the measured context error across APIs without starting generation', async (t) => {
+  const f = await fixture(t);
+  f.backends[1].state.countInput = (content) => content.includes('OVERSIZED_TOOL_RESULT') ? 40000 : 20;
+  const tools = [{ type: 'function', function: { name: 'fetch_url', parameters: { type: 'object' } } }];
+  const messages = [
+    { role: 'user', content: 'Read the source' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'call_fetch', type: 'function', function: { name: 'fetch_url', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'call_fetch', content: 'OVERSIZED_TOOL_RESULT' }
+  ];
+  for (const stream of [false, true]) {
+    for (const route of ['/api/chat', '/v1/chat/completions', '/v1/responses']) {
+      const body = route.endsWith('responses') ? {
+        input: [messages[0], { type: 'function_call', call_id: 'call_fetch', name: 'fetch_url', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_fetch', output: 'OVERSIZED_TOOL_RESULT' }],
+        tools: [{ type: 'function', name: 'fetch_url', parameters: { type: 'object' } }]
+      } : { messages, tools };
+      const response = await f.post(route, { ...body, model: 'nighttime', stream });
+      assert.equal(response.status, 400);
+      const payload = await response.json();
+      assert.equal(payload.error.code, 'context_length_exceeded');
+      assert.match(payload.error.message, /Formatted input \(40000\).*32768-token slot/);
+      assert.match(payload.error.message, /Tool history cannot be shortened safely/);
+      assert.match(payload.error.message, /paged tool results/);
+    }
+  }
+  assert.equal(f.backends[1].state.requests.filter((r) => r.path === '/v1/chat/completions').length, 0);
+  for (const rows of await journals(f)) {
+    assert.match(JSON.stringify(rows[0].request), /OVERSIZED_TOOL_RESULT/);
+    assert.equal(rows.at(-1).error.code, 'context_length_exceeded');
+  }
+  assert.equal((await f.post('/api/chat', { model: 'nighttime', messages: [messages[0]], stream: false })).status, 200);
+  assert.equal(f.context.requestGate.active.size, 0);
+});
+
 test('broken stream reports incomplete, retains Unicode and reasoning, and releases only its service', async (t) => {
   const f = await fixture(t);
   const completeText = '🌌 漢字 café '.repeat(3000);
