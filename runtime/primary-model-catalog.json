@@ -297,12 +297,12 @@
         "management_enabled": false
       },
       "keep_alive": -1,
-      "context_length": 32768,
+      "context_length": 65536,
       "backend_kind": "llama_cpp",
       "backend_url": "http://qwen38-nighttime:8080",
       "backend_revision": "8ea290247c87ced2ab245b056ffe96dbcf90d36c",
       "revision": "efb07baa690a1bc7beb53ee067b4b57c7025b5e7",
-      "total_context_length": 32768,
+      "total_context_length": 65536,
       "max_active_requests": 1,
       "max_output_tokens": null,
       "default_output_tokens": null,
@@ -420,7 +420,7 @@
       "output_policy": "unrestricted",
       "global_ram_prompt_cache_mib": 8192,
       "slot_save_path": null,
-      "display_name": "Nighttime (32K)",
+      "display_name": "Nighttime (64K)",
       "mmproj_path": "/home/astigmatism/ai/models/llm/windowsxp811203/Qwen3.8-27B-Abliterated-GGUF/revisions/efb07baa690a1bc7beb53ee067b4b57c7025b5e7/mmproj-Qwen3.8-27B-Abliterated-F16.gguf",
       "mmproj_revision": "efb07baa690a1bc7beb53ee067b4b57c7025b5e7",
       "mmproj_offload": "cpu"

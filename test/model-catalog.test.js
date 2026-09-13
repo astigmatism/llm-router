@@ -79,9 +79,9 @@ test('catalog lists canonical identities, resolves aliases deliberately, and pro
   await assert.rejects(writeActiveModelMarker(f.file, { model: CODING }), /complete catalog/);
   const list = await (await fetch(f.base + '/v1/models')).json();
   assert.deepEqual(list.data.map((x) => x.id), [CODING, EVERYDAY, 'local-active', 'daytime', 'nighttime']);
-  assert.equal(list.data[1].x_ollama_router.context_window, 32768);
+  assert.equal(list.data[1].x_ollama_router.context_window, 65536);
   assert.equal(list.data[0].x_ollama_router.display_name, 'Daytime (128K)');
-  assert.equal(list.data[1].x_ollama_router.display_name, 'Nighttime (32K)');
+  assert.equal(list.data[1].x_ollama_router.display_name, 'Nighttime (64K)');
   assert.equal(list.data[1].x_ollama_router.default_output_tokens, null);
   assert.equal(list.data[1].x_ollama_router.reasoning.per_effort.medium.reasoning_budget_tokens, -1);
   assert.deepEqual(list.data[1].x_ollama_router.capabilities, ['completion', 'thinking', 'tools', 'vision']);
@@ -117,7 +117,7 @@ test('catalog lists canonical identities, resolves aliases deliberately, and pro
   }
   const show = await (await f.post('/api/show', { model: EVERYDAY })).json();
   assert.deepEqual(show.capabilities, ['completion', 'thinking', 'tools', 'vision']);
-  assert.equal(show.model_info.context_length, 32768);
+  assert.equal(show.model_info.context_length, 65536);
   f.marker.models[1].context_length = 262144;
   await fs.writeFile(f.file, JSON.stringify(f.marker));
   await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG' });
@@ -181,7 +181,7 @@ test('legacy exact-ID discovery preserves truthful unrestricted limits and per-m
   for (const [id, context, capabilities, modalities] of [
     [CODING, 131072, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
     ['local-active', 131072, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
-    [EVERYDAY, 32768, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']]
+    [EVERYDAY, 65536, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']]
   ]) {
     const entry = data.find((entry) => entry.id === id);
     const metadata = entry.x_ollama_router;
@@ -343,7 +343,7 @@ test('independent gates allow overlap, share aliases, drain both, and release on
 
 test('selected template admission, independent reasoning budgets, longer output and unavailable health', async (t) => {
   const f = await fixture(t);
-  for (const [model, context] of [[CODING, 131072], [EVERYDAY, 32768]]) {
+  for (const [model, context] of [[CODING, 131072], [EVERYDAY, 65536]]) {
     const boundary = context - 1024 - 16;
     assert.equal((await f.post('/v1/chat/completions', chat(model, `INPUT=${boundary}`))).status, 200);
     const rejected = await f.post('/v1/chat/completions', chat(model, `INPUT=${boundary + 1}`));
@@ -424,9 +424,9 @@ test('queued validation failures terminate SSE/NDJSON honestly and retain JSON H
   const f = await fixture(t);
   for (const stream of [true, false]) {
     for (const [url, body] of [
-      ['/api/chat', { model: EVERYDAY, messages: chat(EVERYDAY, 'INPUT=32768').messages, think: false, options: { num_predict: 16 }, stream }],
-      ['/v1/chat/completions', chat(EVERYDAY, 'INPUT=32768', { stream })],
-      ['/v1/responses', { model: EVERYDAY, input: 'INPUT=32768', max_output_tokens: 16, stream }]
+      ['/api/chat', { model: EVERYDAY, messages: chat(EVERYDAY, 'INPUT=65536').messages, think: false, options: { num_predict: 16 }, stream }],
+      ['/v1/chat/completions', chat(EVERYDAY, 'INPUT=65536', { stream })],
+      ['/v1/responses', { model: EVERYDAY, input: 'INPUT=65536', max_output_tokens: 16, stream }]
     ]) {
       const controller = new AbortController();
       const held = await f.post('/v1/chat/completions', chat(EVERYDAY, 'HOLD', { stream: true }), controller.signal);
@@ -576,7 +576,7 @@ test('context-ended default generation continues with a disclosed working excerp
 
 test('oversized tool history keeps the measured context error across APIs without starting generation', async (t) => {
   const f = await fixture(t);
-  f.backends[1].state.countInput = (content) => content.includes('OVERSIZED_TOOL_RESULT') ? 40000 : 20;
+  f.backends[1].state.countInput = (content) => content.includes('OVERSIZED_TOOL_RESULT') ? 80000 : 20;
   const tools = [{ type: 'function', function: { name: 'fetch_url', parameters: { type: 'object' } } }];
   const messages = [
     { role: 'user', content: 'Read the source' },
@@ -594,7 +594,7 @@ test('oversized tool history keeps the measured context error across APIs withou
       assert.equal(response.status, 400);
       const payload = await response.json();
       assert.equal(payload.error.code, 'context_length_exceeded');
-      assert.match(payload.error.message, /Formatted input \(40000\).*32768-token slot/);
+      assert.match(payload.error.message, /Formatted input \(80000\).*65536-token slot/);
       assert.match(payload.error.message, /Tool history cannot be shortened safely/);
       assert.match(payload.error.message, /paged tool results/);
     }

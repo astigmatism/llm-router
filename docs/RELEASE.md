@@ -28,3 +28,20 @@ python3 scripts/primary/test_primary.py
 python3 scripts/primary/test_deploy_router_only.py
 python3 integrations/open-webui/test-align-primary.py
 ```
+
+The separate `scripts/primary/deploy-nighttime-context.py` migration tests 64K
+on the existing Nighttime image and weights. Run it from a clean published
+checkout during an owner-approved Nighttime idle window. It changes only
+Nighttime's two context arguments and matching capacity declarations, installs
+the capacity-aware controller, and reloads Nighttime discovery metadata.
+Daytime and router containers remain running; no global drain is used.
+The migration refuses active or queued Nighttime work and records container
+identity, long-context retrieval, tool continuation, overflow recovery and GPU
+headroom. A failed acceptance restores the immediately preceding 32K
+Nighttime configuration. This capacity trial does not qualify Harness compaction
+recovery or constitute a matched throughput benchmark.
+
+```sh
+python3 -B scripts/primary/test_nighttime_context.py
+python3 -B scripts/primary/deploy-nighttime-context.py
+```

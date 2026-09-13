@@ -128,6 +128,24 @@ def validate():
     compose('config', '--quiet')
     return {'ok': True, 'image_id': expected_image, 'artifacts': 4, 'gpu_ids': gpu_ids}
 
+def configured_context(role, cfg=None):
+    cfg = cfg or read(ROOT / 'compose.json')['services'][role]
+    service = next(s for s in read(MANIFEST)['services'] if s['role'] == role)
+    expected = service['context_tokens']
+    argv = cfg['command']
+    for flag, value in [('--ctx-size', expected), ('--kv-unified-per-slot', expected), ('--parallel', 1)]:
+        if argv.count(flag) != 1 or argv.index(flag) + 1 >= len(argv) or argv[argv.index(flag) + 1] != str(value):
+            raise RuntimeError(role + ' declared context/slot arguments differ from manifest')
+    if type(expected) is not int or expected <= 0 or service['parallel_slots'] != 1:
+        raise RuntimeError(role + ' invalid context/slot manifest')
+    return expected
+
+
+def service_label(role):
+    service = next(s for s in read(MANIFEST)['services'] if s['role'] == role)
+    return ('Daytime' if role == 'coding' else 'Nighttime') + f" ({service['context_tokens'] // 1024}K)"
+
+
 def runtime_identity():
     spec = read(ROOT / 'compose.json')['services']
     image_id = read(ROOT / 'evidence/engine.json')['image_id']
@@ -150,7 +168,7 @@ def runtime_identity():
         if bindings != [{'HostIp': '127.0.0.1', 'HostPort': str(port)}]:
             raise RuntimeError(role + ' host binding drift')
         slots = http(f'http://127.0.0.1:{port}/slots')
-        expected_ctx = 131072 if role == 'coding' else 32768
+        expected_ctx = configured_context(role, cfg)
         if len(slots) != 1 or slots[0]['n_ctx'] != expected_ctx:
             raise RuntimeError(role + ' context or slot drift')
         results[role] = {'container_id': ci['Id'], 'pid': ci['State']['Pid'], 'image_id': ci['Image'],
@@ -234,7 +252,7 @@ def install_entrypoints():
     if 'brains' in registry['configurations']:
         registry['configurations']['brains']['availability'] = 'historical profile; automatic restoration retired'
     registry['configurations']['primary'] = {
-        'description': 'Resident Daytime Q8/MTP3 128K and Nighttime abliterated Q6_K 32K; one slot each',
+        'description': f"Resident {service_label('coding')} and {service_label('everyday')}; one slot each",
         'controller': str(ROOT / 'primary.py'), 'manifest': str(MANIFEST), 'boot_default': True,
         'services': ['coding', 'everyday']}
     write(HOME_DIR / 'local-ai-configs.json', registry)
@@ -290,7 +308,7 @@ def apply(deploy=False):
         write(STATE, {'schema_version': 1, 'selected_profile': 'primary', 'updated_at': now()})
         write(ROOT / 'evidence/live-identity.json', runtime_identity())
         drain(False)
-        print('primary ready: Daytime 128K + Nighttime 32K', flush=True)
+        print(f"primary ready: {service_label('coding')} + {service_label('everyday')}", flush=True)
     except BaseException:
         print('Primary startup failed; router remains drained for the next supervised retry', flush=True)
         raise
@@ -301,7 +319,7 @@ def status():
     for role, port, name in [('coding', 18080, NAMES[0]), ('everyday', 18081, NAMES[1])]:
         ci = inspect(name)
         result['services'][role] = {'running': bool(ci and ci['State']['Running']), 'port': port,
-            'container_name': name, 'display_name': 'Daytime (128K)' if role == 'coding' else 'Nighttime (32K)'}
+            'container_name': name, 'display_name': service_label(role)}
         with contextlib.suppress(Exception):
             result['services'][role]['health'] = http(f'http://127.0.0.1:{port}/health')
     with contextlib.suppress(Exception):
