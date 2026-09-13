@@ -128,12 +128,12 @@ def memory(p, ids):
             for row in csv.reader(raw.splitlines()) if row[0].strip() in ids]
 
 
-def token_count(p, body):
-    prompt = p.http(BACKEND + '/apply-template', body)['prompt']
-    return len(p.http(BACKEND + '/tokenize', {'content': prompt, 'add_special': False})['tokens'])
+def token_count(p, body, backend=BACKEND):
+    prompt = p.http(backend + '/apply-template', body)['prompt']
+    return len(p.http(backend + '/tokenize', {'content': prompt, 'add_special': False})['tokens'])
 
 
-def long_request(p, context=CONTEXT):
+def long_request(p, context=CONTEXT, model=MODEL, backend=BACKEND):
     expected = {name: secrets.token_hex(6) for name in ['ALPHA', 'BRAVO', 'CHARLIE']}
     filler = ''.join(f'Inventory record {i:04d}: copper bracket, shelf north, inspected and retained.\n' for i in range(160))
     def make(repeats):
@@ -143,12 +143,13 @@ def long_request(p, context=CONTEXT):
                 + 'KEY BRAVO=' + expected['BRAVO'] + '\n' + filler * repeats
                 + 'KEY CHARLIE=' + expected['CHARLIE'] + '\n'
                 + 'Return the three key values as JSON. Do not summarize the inventory.')
-        return {'model': MODEL, 'stream': False, 'temperature': 0,
+        return {'model': model, 'stream': False, 'temperature': 0,
                 'messages': [{'role': 'user', 'content': text}]}
-    unit = token_count(p, make(1))
-    repeats = max(1, int(context * .89 / unit))
+    base = token_count(p, make(0), backend)
+    unit = token_count(p, make(1), backend) - base
+    repeats = max(1, int((context * .93 - base) / unit))
     body = make(repeats)
-    count = token_count(p, body)
+    count = token_count(p, body, backend)
     if not context * .75 < count < context * .95:
         raise RuntimeError(f'Synthetic long-context fixture outside test range: {count}')
     return body, expected, count
@@ -173,38 +174,38 @@ def parsed_json(content):
     return json.loads(content)
 
 
-def qualify(p, evidence, catalog):
-    context = next(row for row in catalog['models'] if row['model'] == MODEL)['context_length']
-    body, expected, count = long_request(p, context)
-    choice = complete(p, evidence, 'backend-long-context', body, BACKEND)
+def qualify(p, evidence, catalog, model=MODEL, backend=BACKEND, publish=publish_nighttime):
+    context = next(row for row in catalog['models'] if row['model'] == model)['context_length']
+    body, expected, count = long_request(p, context, model, backend)
+    choice = complete(p, evidence, 'backend-long-context', body, backend)
     if choice['finish_reason'] != 'stop' or parsed_json(choice['message']['content']) != expected:
         raise RuntimeError('Long-context retrieval did not finish naturally with all three correct keys')
-    if p.http(BACKEND + '/props')['modalities']['vision'] is not True:
-        raise RuntimeError('Existing Nighttime vision capability was lost')
+    if p.http(backend + '/props')['modalities']['vision'] is not True:
+        raise RuntimeError('Existing model vision capability was lost')
     p.write(PRIMARY / 'model-catalog.json', catalog)
-    publish_nighttime(p, catalog)
+    publish(p, catalog)
     entries = p.http(ROUTER + '/v1/models')['data']
-    live = next(row for row in entries if row['id'] == MODEL)['x_ollama_router']
+    live = next(row for row in entries if row['id'] == model)['x_ollama_router']
     if live['context_window'] != context or live['max_output_tokens'] is not None:
-        raise RuntimeError('Router did not publish the tested unrestricted Nighttime capacity')
+        raise RuntimeError('Router did not publish the tested unrestricted model capacity')
     choice = complete(p, evidence, 'router-long-context', body, ROUTER)
     if choice['finish_reason'] != 'stop' or parsed_json(choice['message']['content']) != expected:
         raise RuntimeError('Router long-context retrieval failed')
     tools = [{'type': 'function', 'function': {'name': 'lookup_inventory', 'description': 'Find a synthetic inventory item.',
         'parameters': {'type': 'object', 'properties': {'item': {'type': 'string'}}, 'required': ['item']}}}]
-    request = {'model': MODEL, 'stream': False, 'temperature': 0, 'tools': tools,
+    request = {'model': model, 'stream': False, 'temperature': 0, 'tools': tools,
         'messages': [{'role': 'user', 'content': 'Use lookup_inventory to find item amber-42. After the tool replies, report its exact location in one sentence.'}]}
     choice = complete(p, evidence, 'router-tool-call', request, ROUTER)
     calls = choice['message'].get('tool_calls', [])
     if (choice['finish_reason'] != 'tool_calls' or len(calls) != 1
             or calls[0]['function']['name'] != 'lookup_inventory'
             or json.loads(calls[0]['function']['arguments']) != {'item': 'amber-42'}):
-        raise RuntimeError('Nighttime tool handoff failed')
+        raise RuntimeError('Model tool handoff failed')
     request['messages'].extend([choice['message'], {'role': 'tool', 'tool_call_id': calls[0]['id'],
         'content': '{"item":"amber-42","location":"vault-C19"}'}])
     choice = complete(p, evidence, 'router-tool-result', request, ROUTER)
     if choice['finish_reason'] != 'stop' or 'vault-C19' not in choice['message']['content']:
-        raise RuntimeError('Nighttime tool-result continuation failed')
+        raise RuntimeError('Model tool-result continuation failed')
     oversized = copy.deepcopy(body)
     oversized['messages'][0]['content'] *= 2
     try:
@@ -216,7 +217,7 @@ def qualify(p, evidence, catalog):
             raise RuntimeError('Unexpected oversized-context rejection')
     else:
         raise RuntimeError('Router admitted a prompt larger than the context')
-    choice = complete(p, evidence, 'router-after-overflow', {'model': MODEL, 'stream': False,
+    choice = complete(p, evidence, 'router-after-overflow', {'model': model, 'stream': False,
         'messages': [{'role': 'user', 'content': 'Reply with exactly: READY'}]}, ROUTER)
     if choice['finish_reason'] != 'stop' or choice['message']['content'].strip() != 'READY':
         raise RuntimeError('Recovery after oversized-context rejection failed')
