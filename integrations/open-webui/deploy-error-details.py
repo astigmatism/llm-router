@@ -62,7 +62,12 @@ def main():
                 raise RuntimeError('Open WebUI did not become ready')
             time.sleep(1)
         after = inspect('open-webui')
-        for key in ['Env', 'Cmd', 'Entrypoint']:
+        # Docker Compose may reorder Env entries when recreating a container.
+        # Compare the actual variable mapping, not its serialization order.
+        environment = lambda container: dict(value.split('=', 1) for value in container['Config']['Env'])
+        if environment(after) != environment(current):
+            raise RuntimeError('Unexpected Open WebUI environment change')
+        for key in ['Cmd', 'Entrypoint']:
             if after['Config'][key] != current['Config'][key]:
                 raise RuntimeError('Unexpected Open WebUI configuration change: ' + key)
         if after['Mounts'] != current['Mounts']:
