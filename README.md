@@ -2,7 +2,7 @@
 
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](docs/PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 
-The deployed `primary` runtime exposes two resident models with independent one-request admission: coding `qwen3.8-27b-q8_0` (128K) and everyday `qwen3.8-27b-abliterated-q6_k` (128K). `local-active` remains a coding alias. See [the primary integration contract and deployment report](docs/PRIMARY_INTEGRATION.md) for current operations, clients, validation, and recovery. The single-marker deployment examples below describe legacy operation.
+The deployed `primary` runtime exposes two resident models with independent one-request admission: coding `qwen3.8-27b-q8_0` (144K) and everyday `qwen3.8-27b-abliterated-q6_k` (128K). `local-active` remains a coding alias. See [the primary integration contract and deployment report](docs/PRIMARY_INTEGRATION.md) for current operations, clients, validation, and recovery. The single-marker deployment examples below describe legacy operation.
 
 
 A Docker-ready, Ollama-compatible router that sits between local AI clients and the real Ollama container. It enforces active-model policy, overwrites protected requests with `keep_alive: -1`, preserves streaming responses, persists request history, extracts Ollama response telemetry, and serves a simple human admin portal on a separate port.

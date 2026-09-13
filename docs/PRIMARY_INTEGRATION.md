@@ -6,17 +6,19 @@ The primary runtime has two resident services with independent admission. This d
 
 | Property | Coding | Everyday |
 |---|---|---|
-| Display name | Daytime (128K) | Nighttime (128K) |
+| Display name | Daytime (144K) | Nighttime (128K) |
 | Model | `qwen3.8-27b-q8_0` | `qwen3.8-27b-abliterated-q6_k` |
 | Backend URL | `http://qwen38-daytime:8080` | `http://qwen38-nighttime:8080` |
 | Stable service ID | `daytime` (also `local-active`, or omitted model) | `nighttime` |
-| Working context | 131072 | 131072 |
+| Working context | 147456 | 131072 |
 | Active generations | 1 | 1 |
 | Context admission reserve | 1024 tokens | 1024 tokens |
 | Default output / policy maximum | Unrestricted / none | Unrestricted / none |
 | Default thinking | Enabled, unlimited budget, template-default effort | Enabled, unlimited budget, template-default effort |
 | Explicit efforts | off, default, low, medium, xhigh | off, default, low, medium, xhigh |
 | Qualified capabilities | Text, reasoning, tools, images | Text, reasoning, tools, images |
+
+Daytime 144K passed direct and routed 133,906-token retrieval, native tool continuation, overflow rejection/recovery and MTP acceptance. Observed minimum free VRAM was 1770 MiB on the 3090 and 1329 MiB on the 4080 SUPER. The owner preferred 144K as the fallback: 160K loaded, but its 1005 MiB free on the 4080 SUPER missed the existing 1024 MiB reserve. This is capacity acceptance, not a matched performance benchmark or Harness compaction qualification. Nighttime remains at its separately accepted 128K configuration.
 
 Container/DNS names use Daytime and Nighttime; Stable public service IDs `daytime` and `nighttime` resolve through the catalog; canonical API IDs and `local-active` remain compatible. See [Harness compatibility](HARNESS_PORTAL_COMPATIBILITY.md) for alias discovery and consumer validation.
 

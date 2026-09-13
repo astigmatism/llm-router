@@ -65,3 +65,20 @@ The owner ended the ceiling search and selected Nighttime at 128K. The reviewed
 overflow checks for that target and records the measured GPU headroom. This
 explicit selection replaces the former 1024 MiB Nighttime reserve requirement;
 Daytime's configuration and reserve contract stay unchanged.
+
+
+Daytime capacity changes use `scripts/primary/deploy-daytime-context.py`. The
+owner selected 160K first and 144K as the fallback, retaining the existing
+1024 MiB GPU reserve. The script waits for a quiet Daytime window, changes only
+its two context arguments and matching declarations, and tests long retrieval,
+tools, overflow recovery, MTP acceptance and memory. Nighttime stays at 128K.
+The router must include the 144K/160K catalog validation change before this
+trial; older images reject publication above 128K. A failed publication restores
+valid discovery before querying router admission during rollback.
+
+`--retry-144` resumes the fallback after a completed 160K trial and restoration
+of the 128K baseline. Run deployment code from a clean, published Git checkout.
+After qualification, align source catalog defaults and use the OpenWebUI
+helper's `daytime-labels` mode to update names through its API while preserving
+preset settings and grants. Harness discovers the accepted context through its
+existing settings service; its captured seed defaults should match.

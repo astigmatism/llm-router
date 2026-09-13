@@ -7,12 +7,12 @@
     "management_enabled": false
   },
   "keep_alive": -1,
-  "context_length": 131072,
+  "context_length": 147456,
   "backend_kind": "llama_cpp",
   "backend_url": "http://qwen38-daytime:8080",
   "backend_revision": "8ea290247c87ced2ab245b056ffe96dbcf90d36c",
   "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-  "total_context_length": 131072,
+  "total_context_length": 147456,
   "max_active_requests": 1,
   "max_output_tokens": null,
   "default_output_tokens": null,
@@ -151,12 +151,12 @@
         "management_enabled": false
       },
       "keep_alive": -1,
-      "context_length": 131072,
+      "context_length": 147456,
       "backend_kind": "llama_cpp",
       "backend_url": "http://qwen38-daytime:8080",
       "backend_revision": "8ea290247c87ced2ab245b056ffe96dbcf90d36c",
       "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-      "total_context_length": 131072,
+      "total_context_length": 147456,
       "max_active_requests": 1,
       "max_output_tokens": null,
       "default_output_tokens": null,
@@ -286,7 +286,7 @@
       "output_policy": "unrestricted",
       "global_ram_prompt_cache_mib": 8192,
       "slot_save_path": null,
-      "display_name": "Daytime (128K)"
+      "display_name": "Daytime (144K)"
     },
     {
       "profile": "primary",
@@ -429,5 +429,5 @@
   "output_policy": "unrestricted",
   "global_ram_prompt_cache_mib": 8192,
   "slot_save_path": null,
-  "display_name": "Daytime (128K)"
+  "display_name": "Daytime (144K)"
 }
