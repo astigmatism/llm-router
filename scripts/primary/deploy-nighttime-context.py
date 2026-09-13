@@ -5,6 +5,7 @@ Run only from a clean published release during an owner-approved Nighttime idle
 window. No global drain, router restart, image build, or Daytime workload occurs.
 Any failed acceptance restores this migration's immediate Nighttime predecessor.
 """
+import argparse
 import copy
 import csv
 import datetime
@@ -70,14 +71,32 @@ def resident_snapshot(p, name):
         'pid': ci['State']['Pid'], 'started_at': ci['State']['StartedAt']}
 
 
-def require_idle(p):
+def cancelled_zero_output_slot(slot, task_id, logs):
+    return (task_id is not None and slot.get('id_task') == task_id
+            and slot.get('params', {}).get('n_predict') == 0
+            and bool(slot.get('next_token'))
+            and all(t.get('n_decoded') == 0 and t.get('has_next_token') is False for t in slot['next_token'])
+            and f'cancel task, id_task = {task_id}\n' in logs)
+
+
+def require_idle(p, cancelled_task=None):
     state = p.admin('runtime-state')['runtime']
     if state['draining']:
         raise RuntimeError('Another operation has drained the router')
     if (state.get('active_by_model', {}).get(MODEL, 0)
-            or state.get('queued_by_model', {}).get(MODEL, 0)
-            or any(s.get('is_processing') for s in p.http(BACKEND + '/slots'))):
+            or state.get('queued_by_model', {}).get(MODEL, 0)):
         raise RuntimeError('Nighttime is busy; no service has been stopped')
+    for slot in p.http(BACKEND + '/slots'):
+        if not slot.get('is_processing'):
+            continue
+        logs = ''
+        if cancelled_task is not None:
+            result = subprocess.run(['docker', 'logs', '--tail', '2000', 'qwen38-nighttime'],
+                                    capture_output=True, text=True, check=True, timeout=30)
+            logs = result.stdout + result.stderr
+        if not cancelled_zero_output_slot(slot, cancelled_task, logs):
+            raise RuntimeError('Nighttime is busy; no service has been stopped')
+        print(f'Verified cancelled zero-output slot {cancelled_task}; no router work remains', flush=True)
 
 
 def publish_nighttime(p, catalog):
@@ -206,7 +225,7 @@ def qualify(p, evidence, catalog):
         'harness_compaction_recovery_tested': False, 'matched_performance_benchmark': False}
 
 
-def main():
+def main(cancelled_task=None):
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True).strip():
         raise RuntimeError('Deploy from a clean published checkout')
@@ -224,7 +243,7 @@ def main():
             raise RuntimeError('Existing manifest is not qualified')
         p.validate()
         p.runtime_identity()
-        require_idle(p)
+        require_idle(p, cancelled_task)
         day = resident_snapshot(p, 'qwen38-daytime')
         router = resident_snapshot(p, 'local-ai-ollama-router')
         old_m, old_c, old_catalog = [p.read(PRIMARY / name) for name in ['manifest.json', 'compose.json', 'model-catalog.json']]
@@ -251,7 +270,7 @@ def main():
         watcher = threading.Thread(target=observe, daemon=True)
         changed = False
         try:
-            require_idle(p)
+            require_idle(p, cancelled_task)
             changed = True
             p.write(PRIMARY / 'manifest.json', manifest)
             p.write(PRIMARY / 'compose.json', compose)
@@ -283,6 +302,7 @@ def main():
             identity = p.runtime_identity()
             receipt = {'completed_at': p.now(), 'source_revision': revision, 'source_directory': str(SOURCE),
                 'checks': checks, 'minimum_free_vram_mib': minimum, 'daytime_and_router_unchanged': True,
+                'cancelled_zero_output_slot_recovered': cancelled_task,
                 'manifest_sha256': digest(p.MANIFEST), 'identity': identity}
             p.write(backup / 'qualification.json', receipt)
             qualified.update(manifest_sha256=digest(p.MANIFEST), nighttime_context_extension={
@@ -311,4 +331,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--recover-cancelled-slot', type=int, help='Explicitly reviewed stale task ID; requires cancellation in backend logs, zero output, and no router work')
+    main(parser.parse_args().recover_cancelled_slot)

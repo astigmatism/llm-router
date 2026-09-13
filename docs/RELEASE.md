@@ -41,6 +41,11 @@ headroom. A failed acceptance restores the immediately preceding 32K
 Nighttime configuration. This capacity trial does not qualify Harness compaction
 recovery or constitute a matched throughput benchmark.
 
+If a cancelled token-counting task remains stuck in a backend slot, the optional
+`--recover-cancelled-slot TASK_ID` requires that exact task's cancellation in the
+backend logs, zero generated tokens and no active or queued Nighttime router
+request. Review the stale task before using this recovery exception.
+
 ```sh
 python3 -B scripts/primary/test_nighttime_context.py
 python3 -B scripts/primary/deploy-nighttime-context.py

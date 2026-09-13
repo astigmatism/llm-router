@@ -80,6 +80,18 @@ class CapacityTests(unittest.TestCase):
         p.compose.assert_not_called()
         p.drain.assert_not_called()
 
+    def test_cancelled_slot_exception_requires_exact_task_cancellation_and_zero_output(self):
+        slot = {'id_task': 42, 'params': {'n_predict': 0},
+                'next_token': [{'n_decoded': 0, 'has_next_token': False}]}
+        log = 'timestamp W srv stop: cancel task, id_task = 42\n'
+        self.assertTrue(c.cancelled_zero_output_slot(slot, 42, log))
+        self.assertFalse(c.cancelled_zero_output_slot(slot, None, log))
+        self.assertFalse(c.cancelled_zero_output_slot(slot, 41, log))
+        self.assertFalse(c.cancelled_zero_output_slot(slot, 42, log.replace('42', '420')))
+        self.assertFalse(c.cancelled_zero_output_slot(slot, 42, ''))
+        slot['next_token'][0]['n_decoded'] = 1
+        self.assertFalse(c.cancelled_zero_output_slot(slot, 42, log))
+
 
 if __name__ == '__main__':
     unittest.main()
