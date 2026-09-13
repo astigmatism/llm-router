@@ -1,9 +1,9 @@
-ARG OPENWEBUI_BASE_IMAGE
+ARG OPENWEBUI_BASE_IMAGE=local/open-webui:fetch-reliability-20260913
 FROM ${OPENWEBUI_BASE_IMAGE}
 ARG VCS_REF
 COPY integrations/open-webui/router_completion.py /app/backend/open_webui/utils/router_completion.py
 COPY integrations/open-webui/test-router-completion.py integrations/open-webui/test-unrestricted-policy.py /tmp/router-error-details/
 RUN PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/backend/open_webui/utils python /tmp/router-error-details/test-router-completion.py && \
-    PYTHONDONTWRITEBYTECODE=1 python /tmp/router-error-details/test-unrestricted-policy.py
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/backend python /tmp/router-error-details/test-unrestricted-policy.py
 LABEL org.opencontainers.image.revision="${VCS_REF}" \
       local.open-webui.patch="preserve-router-error-details"
