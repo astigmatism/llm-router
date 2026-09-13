@@ -59,6 +59,13 @@ Queued streaming requests receive immediate SSE comments or empty, nonterminal O
 
 The catalog's `display_name` supplies the shared human-facing labels. Discovery exposes it as `x_ollama_router.display_name`; the router dashboard and DSH discovery use it directly. Open WebUI's explicitly invoked `align-primary.py` copies labels into canonical/service presentation records and migrates preset base IDs toward `daytime` or `nighttime` using discovery metadata. It preserves preset IDs, names, access grants, prompts and saved parameters, including deliberate finite limits. Router deployment does not run this helper or modify Open WebUI. New presets should store stable service IDs on the existing native Ollama connection `http://ai-router:11434`; see [stable services](STABLE_SERVICES.md).
 
+After an approved Nighttime capacity change, run `align-nighttime-tools.py labels`
+inside Open WebUI from a published release. This reads the live context, updates
+the canonical/service names and both Nighttime workflow names, and replaces stale
+context descriptions. It preserves preset IDs, prompts, parameters, tools and
+access grants, verifies Daytime presets remain unchanged, and refreshes the model
+listing without restarting Open WebUI.
+
 API `http://192.168.1.21:11434`; admin `http://192.168.1.21:11435`; container API `http://ai-router:11434`.
 
 - Router source: a clean checkout of a published Git revision. The image carries that exact revision in its OCI label; see [release workflow](RELEASE.md). Preserve the previous production checkout and images for recovery.
