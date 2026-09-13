@@ -58,6 +58,36 @@ class DaytimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 d.proposal(m, cfg, catalog, 163840)
 
+    def test_owner_selected_160_preserves_night_and_waives_only_daytime_reserve(self):
+        baseline = d.proposal(*self.fixture(), 147456)
+        baseline[0]['minimum_free_vram_mib_per_gpu'] = 1024
+        frozen = copy.deepcopy(baseline)
+        m, cfg, catalog = d.proposal(*baseline, 163840, 147456, True)
+        self.assertEqual(baseline, frozen)
+        self.assertEqual(m['services'][1], baseline[0]['services'][1])
+        self.assertEqual(cfg['services']['everyday'], baseline[1]['services']['everyday'])
+        self.assertEqual(catalog['models'][1], baseline[2]['models'][1])
+        self.assertEqual(m['minimum_free_vram_mib_per_gpu'], 1024)
+        capacity = m['services'][0]['qualification_contract']['capacity']
+        self.assertIsNone(capacity['minimum_free_vram_mib_per_gpu'])
+        self.assertEqual(capacity['previous_minimum_free_vram_mib_per_gpu'], 1024)
+        self.assertEqual(capacity['allocated_context_tokens']['coding'], 163840)
+
+    def test_performance_comparison_rejects_slowdown_and_unmatched_cache(self):
+        ref = {'request': {'prompt': 'same'}, 'response': {'usage': {'prompt_tokens': 130000},
+            'timings': {'cache_n': 0, 'prompt_per_second': 1000, 'predicted_per_second': 40}}}
+        candidate = copy.deepcopy(ref)
+        candidate['response']['timings']['predicted_per_second'] = 39
+        result = d.performance_comparison(ref, candidate)
+        self.assertEqual(result['predicted_per_second_ratio'], .975)
+        candidate['response']['timings']['predicted_per_second'] = 25
+        with self.assertRaisesRegex(RuntimeError, '25%'):
+            d.performance_comparison(ref, candidate)
+        candidate = copy.deepcopy(ref)
+        candidate['response']['timings']['cache_n'] = 120000
+        with self.assertRaisesRegex(RuntimeError, 'cache'):
+            d.performance_comparison(ref, candidate)
+
     def test_daytime_busy_rejected_nighttime_busy_allowed(self):
         p = Mock()
         state = {'draining': False, 'active_by_model': {'night': 1}, 'queued_by_model': {}}

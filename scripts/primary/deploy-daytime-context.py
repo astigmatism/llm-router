@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Try the owner-selected 160K Daytime context, falling back to 144K.
 
-Run from a clean published release in a reserved Daytime idle window. Retain
-the existing 1024 MiB reserve, MTP, engine, artifacts, and generation policy.
+Run from a clean published release in a reserved Daytime idle window.
+--accept-160 tests from the qualified 144K baseline using the owner-authorized
+measured-headroom policy and matched performance checks. Retain MTP, engine,
+artifacts, and generation policy.
 Only the coding service is recreated; Nighttime and router stay resident.
 """
 import argparse
@@ -33,6 +35,13 @@ BEFORE = {
     'primary.py': '3cee57629efcd27c9015895bcadcbe5c32e12a432908ad81e71a00ded29ad3f6',
 }
 
+ACCEPT_160_BEFORE = {
+    'manifest.json': 'ddf8fd48dc13ee329ade0454340f6416dbdf6a4278eb35f79f0972acfc0362b0',
+    'compose.json': 'be76f09de9717d9884cefcb93a7f141af424b3edce33cca11c48caf6f00a23d8',
+    'model-catalog.json': '5d34d1a86d5ed7e011d1d18139eabcbb1c46ca068532e77ba9faf1dfb7167c6e',
+    'primary.py': BEFORE['primary.py'],
+}
+
 
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -44,18 +53,20 @@ def load(name, path):
 c = load('daytime_capacity_helpers', Path(__file__).with_name('deploy-nighttime-context.py'))
 
 
-def proposal(manifest, compose, catalog, target):
+def proposal(manifest, compose, catalog, target, from_context=131072, measured_headroom=False):
     if type(target) is not int or target not in TARGETS:
         raise ValueError('Only the owner-selected 160K and 144K trials are authorized')
+    if from_context not in (131072, 147456) or (measured_headroom and (from_context, target) != (147456, 163840)):
+        raise ValueError('Unexpected capacity or measured-headroom selection')
     manifest, compose, catalog = copy.deepcopy((manifest, compose, catalog))
     day = next(s for s in manifest['services'] if s['role'] == 'coding')
     cfg = compose['services']['coding']
-    if (day['model_alias'] != MODEL or day['context_tokens'] != 131072
+    if (day['model_alias'] != MODEL or day['context_tokens'] != from_context
             or day['parallel_slots'] != 1 or cfg['container_name'] != 'qwen38-daytime'
             or cfg['command'] != day['recommended_argv']):
-        raise ValueError('Daytime differs from the reviewed 128K single-slot baseline')
+        raise ValueError('Daytime differs from the reviewed single-slot baseline')
     argv = cfg['command']
-    for flag, expected in [('--ctx-size', '131072'), ('--kv-unified-per-slot', '131072'),
+    for flag, expected in [('--ctx-size', str(from_context)), ('--kv-unified-per-slot', str(from_context)),
                            ('--spec-type', 'draft-mtp'), ('--spec-draft-n-max', '3'),
                            ('--n-predict', '-1'), ('--reasoning-budget', '-1')]:
         if argv.count(flag) != 1 or argv[argv.index(flag) + 1] != expected:
@@ -64,6 +75,13 @@ def proposal(manifest, compose, catalog, target):
         argv[argv.index(flag) + 1] = str(target)
     day['recommended_argv'] = copy.deepcopy(argv)
     day['context_tokens'] = target
+    if measured_headroom:
+        day['qualification_contract'] = {'capacity': {
+            'allocated_context_tokens': {'coding': target},
+            'minimum_free_vram_mib_per_gpu': None,
+            'previous_minimum_free_vram_mib_per_gpu': manifest['minimum_free_vram_mib_per_gpu'],
+            'headroom_policy': 'Owner accepts measured headroom at 160K; retain only after natural long-context, tool, memory-stability and matched performance checks. The former 1024 MiB reserve is informational, not an acceptance gate.',
+        }}
     for row in [catalog, *catalog['models']]:
         if row['model'] == MODEL:
             row.update(context_length=target, total_context_length=target,
@@ -126,7 +144,35 @@ def publish_daytime(p, catalog):
     p.admin('reload-config', {})
 
 
-def main(retry_144=False):
+def checked_completion(p, directory, name, body, expected):
+    choice = c.complete(p, directory, name, body, BACKEND)
+    if choice['finish_reason'] != 'stop' or c.parsed_json(choice['message']['content']) != expected:
+        raise RuntimeError(name + ' failed natural three-key retrieval')
+
+
+def performance_comparison(reference, candidate):
+    """Compare the same uncapped prompt, including actual cache and MTP timing."""
+    before, after = reference['response'], candidate['response']
+    if reference['request'] != candidate['request']:
+        raise RuntimeError('Performance requests differ')
+    if before['usage']['prompt_tokens'] != after['usage']['prompt_tokens']:
+        raise RuntimeError('Performance prompt lengths differ')
+    old, new = before['timings'], after['timings']
+    if max(old['cache_n'], new['cache_n']) > before['usage']['prompt_tokens'] * .01:
+        raise RuntimeError('Performance comparison reused substantial prompt cache')
+    result = {'input_tokens': before['usage']['prompt_tokens'], 'reference_144K': old,
+              'candidate_160K': new, 'single_matched_sample': True}
+    for field in ['prompt_per_second', 'predicted_per_second']:
+        ratio = new[field] / old[field]
+        result[field + '_ratio'] = ratio
+        # A pronounced slowdown is a reason to investigate/restore, unlike
+        # crossing the former VRAM reserve by a few MiB.
+        if ratio < .75:
+            raise RuntimeError(f'Matched {field} fell more than 25%: ratio={ratio:.3f}')
+    return result
+
+
+def main(retry_144=False, accept_160=False):
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True).strip():
         raise RuntimeError('Deploy from a clean published checkout')
@@ -134,7 +180,7 @@ def main(retry_144=False):
     p.ROOT, p.MANIFEST = PRIMARY, PRIMARY / 'manifest.json'
     with (p.HOME_DIR / '.local-ai-profile-switch.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        for name, expected in BEFORE.items():
+        for name, expected in (ACCEPT_160_BEFORE if accept_160 else BEFORE).items():
             if c.digest(PRIMARY / name) != expected:
                 raise RuntimeError(name + ' changed since review')
         qualified = p.read(PRIMARY / 'evidence/qualified.json')
@@ -157,6 +203,8 @@ def main(retry_144=False):
         day = next(s for s in baseline[0]['services'] if s['role'] == 'coding')
         ids = day['container_contract']['gpu_device_ids']
         floor = baseline[0]['minimum_free_vram_mib_per_gpu']
+        previous_context = day['context_tokens']
+        targets = (163840,) if accept_160 else ((147456,) if retry_144 else TARGETS)
         results, changed, backend_ok = [], False, True
 
         def preserve_others():
@@ -167,7 +215,14 @@ def main(retry_144=False):
                 raise RuntimeError('Nighttime discovery changed during the Daytime trial')
 
         try:
-            for target in ((147456,) if retry_144 else TARGETS):
+            matched_body = matched_expected = None
+            if accept_160:
+                reference = backup / '144K-reference'
+                reference.mkdir(mode=0o700)
+                matched_body, matched_expected, matched_count = c.long_request(p, previous_context, MODEL, BACKEND)
+                checked_completion(p, reference, 'matched-reference', matched_body, matched_expected)
+                require_idle(p)
+            for target in targets:
                 preserve_others()
                 require_idle(p, backend=backend_ok)
                 evidence = backup / str(target)
@@ -184,7 +239,7 @@ def main(retry_144=False):
                 watcher = threading.Thread(target=observe, daemon=True)
                 accepted = False
                 try:
-                    manifest, compose, catalog = proposal(*baseline, target)
+                    manifest, compose, catalog = proposal(*baseline, target, previous_context, accept_160)
                     changed, backend_ok = True, False
                     p.write(PRIMARY / 'manifest.json', manifest)
                     p.write(PRIMARY / 'compose.json', compose)
@@ -197,8 +252,16 @@ def main(retry_144=False):
                     result['loaded_free_mib'] = {g['uuid']: g['free_mib'] for g in c.memory(p, ids)}
                     print('Loaded free MiB: ' + json.dumps(result['loaded_free_mib']), flush=True)
                     watcher.start()
-                    if len(result['loaded_free_mib']) != 2 or min(result['loaded_free_mib'].values()) < floor:
+                    if len(result['loaded_free_mib']) != 2:
+                        raise RuntimeError('Missing GPU memory observations')
+                    if not accept_160 and min(result['loaded_free_mib'].values()) < floor:
                         raise RuntimeError('Loaded Daytime is below its existing 1024 MiB reserve')
+                    if accept_160:
+                        checked_completion(p, evidence, 'matched-candidate', matched_body, matched_expected)
+                        result['matched_performance'] = performance_comparison(
+                            p.read(reference / 'matched-reference.json'),
+                            p.read(evidence / 'matched-candidate.json'))
+                        print('Matched performance: ' + json.dumps(result['matched_performance']), flush=True)
                     result['checks'] = c.qualify(p, evidence, catalog, MODEL, BACKEND, publish_daytime)
                     log_result = subprocess.run(['docker', 'logs', 'qwen38-daytime'], capture_output=True, text=True, check=True)
                     logs = log_result.stdout + log_result.stderr
@@ -228,7 +291,8 @@ def main(retry_144=False):
                         result['error'] = 'GPU memory observation was incomplete'
                     else:
                         result['minimum_free_mib'] = {gpu: min(g['free_mib'] for s in samples for g in s['gpus'] if g['uuid'] == gpu) for gpu in ids}
-                        if min(result['minimum_free_mib'].values()) < floor:
+                        result['previous_reserve_passed'] = min(result['minimum_free_mib'].values()) >= floor
+                        if not accept_160 and not result['previous_reserve_passed']:
                             accepted = False
                             result['error'] = 'Loaded testing fell below the existing 1024 MiB reserve'
                 result.update(ok=accepted, completed_at=p.now())
@@ -239,7 +303,9 @@ def main(retry_144=False):
                 if accepted:
                     receipt = {'completed_at': p.now(), 'source_revision': revision,
                         'source_directory': str(SOURCE), 'final_context': target, 'trials': results,
-                        'minimum_free_vram_mib_per_gpu': floor, 'nighttime_and_router_unchanged': True,
+                        'minimum_free_vram_mib_per_gpu': None if accept_160 else floor,
+                        'headroom_policy': 'Owner accepted measured headroom; tested stability and matched performance' if accept_160 else '1024 MiB reserve',
+                        'nighttime_and_router_unchanged': True,
                         'manifest_sha256': c.digest(p.MANIFEST)}
                     p.write(backup / 'qualification.json', receipt)
                     qualified.update(manifest_sha256=c.digest(p.MANIFEST), daytime_context_selection={
@@ -248,7 +314,7 @@ def main(retry_144=False):
                     p.write(PRIMARY / 'evidence/live-identity.json', p.runtime_identity())
                     print('ACCEPTED ' + json.dumps(receipt), flush=True)
                     return
-            raise RuntimeError('Neither 160K nor 144K passed; restoring the qualified 128K baseline')
+            raise RuntimeError(f'Capacity acceptance failed; restoring the qualified {previous_context // 1024}K baseline')
         except BaseException:
             if changed:
                 # A rejected publication can also make the admin discovery
@@ -256,7 +322,7 @@ def main(retry_144=False):
                 p.write(p.MARKER, marker_before)
                 p.admin('reload-config', {})
                 require_idle(p, backend=False)
-                print('Restoring Daytime 128K', flush=True)
+                print(f'Restoring Daytime {previous_context // 1024}K', flush=True)
                 for name in names:
                     shutil.copy2(backup / 'before' / name, PRIMARY / name)
                 p.compose('up', '-d', '--no-deps', '--pull', 'never', 'coding')
@@ -264,7 +330,7 @@ def main(retry_144=False):
                 publish_daytime(p, baseline[2])
                 p.write(PRIMARY / 'evidence/live-identity.json', p.runtime_identity())
                 preserve_others()
-                p.write(backup / 'rollback.json', {'completed_at': p.now(), 'context': 131072})
+                p.write(backup / 'rollback.json', {'completed_at': p.now(), 'context': previous_context})
             raise
 
 
@@ -272,4 +338,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--retry-144', action='store_true',
                         help='Retry 144K after a completed 160K trial and restored 128K baseline')
-    main(parser.parse_args().retry_144)
+    parser.add_argument('--accept-160', action='store_true', help='Owner-authorized 160K from 144K; judge measured performance and stability, not the former VRAM reserve')
+    args = parser.parse_args()
+    if args.retry_144 and args.accept_160:
+        parser.error('Choose one context workflow')
+    main(args.retry_144, args.accept_160)
