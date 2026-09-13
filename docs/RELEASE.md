@@ -50,3 +50,12 @@ request. Review the stale task before using this recovery exception.
 python3 -B scripts/primary/test_nighttime_context.py
 python3 -B scripts/primary/deploy-nighttime-context.py
 ```
+
+An owner-approved ceiling experiment can run
+`python3 -B scripts/primary/probe-nighttime-context.py` from a clean published
+release. This starts from the qualified 64K configuration, probes allocation in
+4K increments at the boundary, tests long-context retrieval, and retains the
+largest tested setting with at least 1024 MiB free on both Nighttime GPUs.
+It preserves Daytime and the router and restores the immediate 64K baseline if
+final acceptance fails. Publish the resulting capacity in the source catalog
+after the experiment; the backend and consumer metadata must agree.

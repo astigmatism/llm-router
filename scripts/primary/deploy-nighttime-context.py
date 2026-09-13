@@ -133,7 +133,7 @@ def token_count(p, body):
     return len(p.http(BACKEND + '/tokenize', {'content': prompt, 'add_special': False})['tokens'])
 
 
-def long_request(p):
+def long_request(p, context=CONTEXT):
     expected = {name: secrets.token_hex(6) for name in ['ALPHA', 'BRAVO', 'CHARLIE']}
     filler = ''.join(f'Inventory record {i:04d}: copper bracket, shelf north, inspected and retained.\n' for i in range(160))
     def make(repeats):
@@ -146,10 +146,10 @@ def long_request(p):
         return {'model': MODEL, 'stream': False, 'temperature': 0,
                 'messages': [{'role': 'user', 'content': text}]}
     unit = token_count(p, make(1))
-    repeats = max(1, int(58500 / unit))
+    repeats = max(1, int(context * .89 / unit))
     body = make(repeats)
     count = token_count(p, body)
-    if not 50000 < count < 62000:
+    if not context * .75 < count < context * .95:
         raise RuntimeError(f'Synthetic long-context fixture outside test range: {count}')
     return body, expected, count
 
@@ -174,7 +174,8 @@ def parsed_json(content):
 
 
 def qualify(p, evidence, catalog):
-    body, expected, count = long_request(p)
+    context = next(row for row in catalog['models'] if row['model'] == MODEL)['context_length']
+    body, expected, count = long_request(p, context)
     choice = complete(p, evidence, 'backend-long-context', body, BACKEND)
     if choice['finish_reason'] != 'stop' or parsed_json(choice['message']['content']) != expected:
         raise RuntimeError('Long-context retrieval did not finish naturally with all three correct keys')
@@ -184,8 +185,8 @@ def qualify(p, evidence, catalog):
     publish_nighttime(p, catalog)
     entries = p.http(ROUTER + '/v1/models')['data']
     live = next(row for row in entries if row['id'] == MODEL)['x_ollama_router']
-    if live['context_window'] != CONTEXT or live['max_output_tokens'] is not None:
-        raise RuntimeError('Router did not publish unrestricted 64K Nighttime')
+    if live['context_window'] != context or live['max_output_tokens'] is not None:
+        raise RuntimeError('Router did not publish the tested unrestricted Nighttime capacity')
     choice = complete(p, evidence, 'router-long-context', body, ROUTER)
     if choice['finish_reason'] != 'stop' or parsed_json(choice['message']['content']) != expected:
         raise RuntimeError('Router long-context retrieval failed')
@@ -219,7 +220,7 @@ def qualify(p, evidence, catalog):
         'messages': [{'role': 'user', 'content': 'Reply with exactly: READY'}]}, ROUTER)
     if choice['finish_reason'] != 'stop' or choice['message']['content'].strip() != 'READY':
         raise RuntimeError('Recovery after oversized-context rejection failed')
-    return {'formatted_long_input_tokens': count, 'context': CONTEXT, 'natural_completion': True,
+    return {'formatted_long_input_tokens': count, 'context': context, 'natural_completion': True,
         'three_key_retrieval_backend_and_router': True, 'tool_round_trip': True,
         'overflow_rejection_and_next_request': True, 'vision_projector_still_loaded': True,
         'harness_compaction_recovery_tested': False, 'matched_performance_benchmark': False}
