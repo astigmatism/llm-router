@@ -30,12 +30,23 @@ async def main():
     for broken in [False, True]:
         chunks = await collect([payload(done=False)], broken)
         assert chunks[-1]['error'] and chunks[-1]['x_router']['status'] == 'incomplete'
+    timeout_message = 'Response incomplete: No upstream bytes or inference progress for 120000 ms.'
+    for retained in ['', TEXT]:
+        chunks = await collect([
+            {'model': MODEL, 'message': {'content': retained}, 'done': False, 'x_router': {'status': 'in_progress'}},
+            {'error': timeout_message, 'done': True, 'done_reason': 'error', 'x_router': {'status': 'incomplete'}},
+        ])
+        assert ''.join(c.get('choices', [{}])[0].get('delta', {}).get('content', '') or '' for c in chunks) == retained
+        saved = incomplete_fields(chunks[-1]['x_router'])
+        assert saved['error']['content'] == timeout_message
+        assert chunks[-1]['error'] == timeout_message
     state = {'status': 'incomplete', 'stop_reason': 'cancelled'}
     items = [{'type': 'function_call', 'status': 'completed', 'arguments': '{"partial":'}]
     assert finalize_items(items, state)[0]['status'] == 'incomplete'
     assert incomplete_fields(state)['error']['content'].startswith('Response incomplete')
     print(json.dumps({'natural_stop': True, 'length_incomplete': True, 'error_incomplete': True,
         'missing_terminal': True, 'broken_stream': True, 'unicode_characters_retained': len(TEXT),
-        'partial_tool_marked_incomplete': True}))
+        'partial_tool_marked_incomplete': True, 'upstream_error_details_persisted': True,
+        'empty_response_has_no_retained_text_claim': True}))
 
 asyncio.run(main())

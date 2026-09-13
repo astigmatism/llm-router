@@ -65,3 +65,20 @@ The owner ended the ceiling search and selected Nighttime at 128K. The reviewed
 overflow checks for that target and records the measured GPU headroom. This
 explicit selection replaces the former 1024 MiB Nighttime reserve requirement;
 Daytime's configuration and reserve contract stay unchanged.
+
+The error-details Open WebUI overlay is built with
+`integrations/open-webui/Dockerfile.error-details` and a pinned
+`OPENWEBUI_BASE_IMAGE` identifying the currently installed image. It preserves
+the underlying router error through conversion and final message persistence,
+and does not claim that an empty response contains retained text. Its image
+build runs both focused helper tests and the installed Open WebUI converter
+tests, including empty and partially generated timeout responses.
+
+Publish it from clean committed source with
+`OPENWEBUI_PUBLICATION_IMAGE` and `OPENWEBUI_EXPECTED_BASE_IMAGE_ID` set, using
+`integrations/open-webui/deploy-error-details.py`. The publisher verifies the
+source revision and unchanged base image, backs up Compose privately, replaces
+only Open WebUI, and verifies environment, mounts, and other service identities.
+It restores the prior image if startup or preservation checks fail. This overlay
+changes error reporting; it does not change inference watchdog policy or image
+processing configuration.
