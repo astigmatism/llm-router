@@ -67,18 +67,26 @@ explicit selection replaces the former 1024 MiB Nighttime reserve requirement;
 Daytime's configuration and reserve contract stay unchanged.
 
 
-Daytime capacity changes use `scripts/primary/deploy-daytime-context.py`. The
-owner selected 160K first and 144K as the fallback, retaining the existing
-1024 MiB GPU reserve. The script waits for a quiet Daytime window, changes only
-its two context arguments and matching declarations, and tests long retrieval,
-tools, overflow recovery, MTP acceptance and memory. Nighttime stays at 128K.
+Daytime capacity changes use `scripts/primary/deploy-daytime-context.py` from a
+clean, published Git checkout. The current owner-authorized workflow is
+`--accept-160`, starting from the qualified 144K baseline. It waits for a quiet
+Daytime window, measures the same uncapped long prompt at 144K and 160K, then
+checks retrieval near the new capacity, tools, overflow recovery, MTP acceptance
+and GPU memory. A matched prefill or decode slowdown above 25% fails the trial.
+The single matched sample is an operational comparison, not a repeated benchmark.
+
+The former 1024 MiB Daytime reserve is informational under this explicit owner
+selection. The manifest records that policy on Daytime only; memory allocation,
+CUDA errors and functional/performance failures still restore the preceding
+144K configuration. Nighttime remains at its independently accepted 128K.
 The router must include the 144K/160K catalog validation change before this
-trial; older images reject publication above 128K. A failed publication restores
+trial; older images reject publication above 128K. Failed publication restores
 valid discovery before querying router admission during rollback.
 
-`--retry-144` resumes the fallback after a completed 160K trial and restoration
-of the 128K baseline. Run deployment code from a clean, published Git checkout.
+The original no-flag and `--retry-144` paths retain their historical 128K baseline
+checks. They are not the workflow for accepting 160K from 144K.
 After qualification, align source catalog defaults and use the OpenWebUI
 helper's `daytime-labels` mode to update names through its API while preserving
-preset settings and grants. Harness discovers the accepted context through its
-existing settings service; its captured seed defaults should match.
+preset settings and grants. Publish the Harness defaults and use its normal
+update-and-restart workflow to install the new image; its existing settings
+service synchronizes the live capacity from router discovery.

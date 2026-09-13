@@ -1,6 +1,6 @@
 # Stable Active-Model Discovery
 
-Primary entries expose `x_ollama_router.display_name`: **Daytime (144K)** for `qwen3.8-27b-q8_0`, **Nighttime (128K)** for `qwen3.8-27b-abliterated-q6_k`. Clients use these labels for presentation while retaining canonical IDs in requests. The router dashboard and DSH discovery consume them; Open WebUI's alignment script persists them as model names.
+Primary entries expose `x_ollama_router.display_name`: **Daytime (160K)** for `qwen3.8-27b-q8_0`, **Nighttime (128K)** for `qwen3.8-27b-abliterated-q6_k`. Clients use these labels for presentation while retaining canonical IDs in requests. The router dashboard and DSH discovery consume them; Open WebUI's alignment script persists them as model names.
 
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 

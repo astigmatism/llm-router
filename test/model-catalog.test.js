@@ -107,7 +107,7 @@ test('catalog lists canonical identities, resolves aliases deliberately, and pro
   const list = await (await fetch(f.base + '/v1/models')).json();
   assert.deepEqual(list.data.map((x) => x.id), [CODING, EVERYDAY, 'local-active', 'daytime', 'nighttime']);
   assert.equal(list.data[1].x_ollama_router.context_window, 131072);
-  assert.equal(list.data[0].x_ollama_router.display_name, 'Daytime (144K)');
+  assert.equal(list.data[0].x_ollama_router.display_name, 'Daytime (160K)');
   assert.equal(list.data[1].x_ollama_router.display_name, 'Nighttime (128K)');
   assert.equal(list.data[1].x_ollama_router.default_output_tokens, null);
   assert.equal(list.data[1].x_ollama_router.reasoning.per_effort.medium.reasoning_budget_tokens, -1);
@@ -206,8 +206,8 @@ test('legacy exact-ID discovery preserves truthful unrestricted limits and per-m
   assert.ok(legacy, 'legacy clients must find the stable alias without interpreting metadata');
   assert.deepEqual(data.filter((entry) => !entry.x_ollama_router.alias).map((entry) => entry.id), [CODING, EVERYDAY]);
   for (const [id, context, capabilities, modalities] of [
-    [CODING, 147456, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
-    ['local-active', 147456, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
+    [CODING, 163840, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
+    ['local-active', 163840, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']],
     [EVERYDAY, 131072, ['completion', 'thinking', 'tools', 'vision'], ['text', 'image']]
   ]) {
     const entry = data.find((entry) => entry.id === id);
@@ -370,7 +370,7 @@ test('independent gates allow overlap, share aliases, drain both, and release on
 
 test('selected template admission, independent reasoning budgets, longer output and unavailable health', async (t) => {
   const f = await fixture(t);
-  for (const [model, context] of [[CODING, 147456], [EVERYDAY, 131072]]) {
+  for (const [model, context] of [[CODING, 163840], [EVERYDAY, 131072]]) {
     const boundary = context - 1024 - 16;
     assert.equal((await f.post('/v1/chat/completions', chat(model, `INPUT=${boundary}`))).status, 200);
     const rejected = await f.post('/v1/chat/completions', chat(model, `INPUT=${boundary + 1}`));
