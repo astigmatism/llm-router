@@ -25,7 +25,10 @@ export async function readModelCatalog(config) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) invalid(`Invalid upstream URL for ${model.model}.`);
     if (upstreams.has(model.backend_url)) invalid('Independent resident entries must use different upstream URLs; use aliases for one service.');
     upstreams.add(model.backend_url);
-    if (!model.context_length || model.context_length > 131072 || model.total_context_length !== model.context_length
+    // The deployment owner qualifies the actual per-slot allocation before
+    // publishing it. Permit the reviewed 144K/160K extensions; the retired
+    // 256K profile remains outside this resident contract.
+    if (!model.context_length || model.context_length > 163840 || model.total_context_length !== model.context_length
       || model.max_active_requests !== 1 || model.context_safety_reserve !== 1024
       || model.output_policy !== 'unrestricted' || model.default_output_tokens !== null || model.max_output_tokens !== null || !model.capability_profile) {
       invalid(`Invalid context, output, capabilities, or one-slot contract for ${model.model}; 256K is retired.`);

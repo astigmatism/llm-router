@@ -70,6 +70,33 @@ async function fixture(t, env = {}) {
 }
 const chat = (model, content = '17*19', extra = {}) => ({ ...(model ? { model } : {}), messages: [{ role: 'user', content }], reasoning_effort: 'none', max_tokens: 16, stream: false, ...extra });
 
+test('qualified Daytime context extensions update aliases and actual admission boundaries', async (t) => {
+  const f = await fixture(t);
+  const night = structuredClone(f.marker.models[1]);
+  for (const context of [147456, 163840]) {
+    const day = f.marker.models[0];
+    Object.assign(day, { context_length: context, total_context_length: context,
+      display_name: `Daytime (${context / 1024}K)` });
+    Object.assign(f.marker, day);
+    await fs.writeFile(f.file, JSON.stringify(f.marker));
+    assert.deepEqual(f.marker.models[1], night);
+    const { data } = await (await fetch(f.base + '/v1/models')).json();
+    for (const id of [CODING, 'daytime', 'local-active']) {
+      const metadata = data.find(row => row.id === id).x_ollama_router;
+      assert.equal(metadata.context_window, context);
+      assert.equal(metadata.display_name, `Daytime (${context / 1024}K)`);
+      assert.equal(metadata.max_output_tokens, null);
+    }
+    const boundary = context - 1024 - 16;
+    assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary}`))).status, 200);
+    assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary + 1}`))).status, 400);
+  }
+  Object.assign(f.marker.models[0], { context_length: 262144, total_context_length: 262144 });
+  Object.assign(f.marker, f.marker.models[0]);
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG' });
+});
+
 test('catalog lists canonical identities, resolves aliases deliberately, and protects metadata writers', async (t) => {
   const f = await fixture(t, { ADMIN_ENABLED: 'true' });
   const catalog = await readModelCatalog(f.config);

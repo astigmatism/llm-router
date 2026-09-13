@@ -5,6 +5,7 @@ Run from a clean published release in a reserved Daytime idle window. Retain
 the existing 1024 MiB reserve, MTP, engine, artifacts, and generation policy.
 Only the coding service is recreated; Nighttime and router stay resident.
 """
+import argparse
 import copy
 import datetime
 import fcntl
@@ -125,7 +126,7 @@ def publish_daytime(p, catalog):
     p.admin('reload-config', {})
 
 
-def main():
+def main(retry_144=False):
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True).strip():
         raise RuntimeError('Deploy from a clean published checkout')
@@ -166,7 +167,7 @@ def main():
                 raise RuntimeError('Nighttime discovery changed during the Daytime trial')
 
         try:
-            for target in TARGETS:
+            for target in ((147456,) if retry_144 else TARGETS):
                 preserve_others()
                 require_idle(p, backend=backend_ok)
                 evidence = backup / str(target)
@@ -250,6 +251,10 @@ def main():
             raise RuntimeError('Neither 160K nor 144K passed; restoring the qualified 128K baseline')
         except BaseException:
             if changed:
+                # A rejected publication can also make the admin discovery
+                # endpoint fail. Restore valid metadata before querying idle.
+                p.write(p.MARKER, marker_before)
+                p.admin('reload-config', {})
                 require_idle(p, backend=False)
                 print('Restoring Daytime 128K', flush=True)
                 for name in names:
@@ -264,4 +269,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--retry-144', action='store_true',
+                        help='Retry 144K after a completed 160K trial and restored 128K baseline')
+    main(parser.parse_args().retry_144)
