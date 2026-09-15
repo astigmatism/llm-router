@@ -17,10 +17,43 @@ SOURCE = Path(__file__).resolve().parents[2]
 IMAGE = os.environ.get('ROUTER_PUBLICATION_IMAGE', 'local-ai-ollama-router:unrestricted-20260912')
 OWNER_PUBLISHER_HASH = 'ecb9f08c52a560a825e24e115e077577ca7f659bcaf259626e248e93f8134689'
 
+class ManagedController:
+    """Runtime keeps launch/catalog ownership across a router-only release."""
+    NAMES = ['qwen38-daytime', 'qwen38-nighttime']
+    MARKER = STACK / 'runtime/router/active-model.json'
+
+    def command(self, action):
+        subprocess.run(['docker', 'exec', 'local-ai-runtime', 'python3', '-m', 'runtime', action], check=True)
+
+    def inspect(self, name):
+        return json.loads(subprocess.check_output(['docker', 'inspect', name], text=True))[0]
+
+    def drain(self, enabled):
+        self.command('router-maintenance-begin' if enabled else 'router-maintenance-end')
+
+    def wait_idle(self):
+        # begin reserves the configuration, drains, and checks both direct slots.
+        pass
+
+    def publish_marker(self):
+        self.command('publish')
+
+def install_runtime_source(publisher, proposed, managed):
+    if managed:
+        return
+    for source, destination in [(proposed, publisher), (SOURCE / 'runtime/primary-model-catalog.json', PRIMARY / 'model-catalog.json')]:
+        temporary = destination.with_suffix('.router-new')
+        shutil.copy2(source, temporary)
+        if destination == publisher:
+            temporary.chmod(0o755)
+        os.replace(temporary, destination)
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def controller():
+    if (PRIMARY / 'runtime-owner.json').exists():
+        return ManagedController()
     spec = importlib.util.spec_from_file_location('primary_router_publication', PRIMARY / 'primary.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -40,7 +73,8 @@ def main():
     revision, image_id = reviewed_image()
     publisher = PRIMARY / 'primary.py'
     proposed = SOURCE / 'scripts/primary/primary.py'
-    if digest(publisher) not in [OWNER_PUBLISHER_HASH, digest(proposed)]:
+    managed = (PRIMARY / 'runtime-owner.json').exists()
+    if not managed and digest(publisher) not in [OWNER_PUBLISHER_HASH, digest(proposed)]:
         raise RuntimeError('Publisher changed since server-owner handoff; merge before installation')
     # Transport tests use short real timers; avoid CPU contention between files.
     subprocess.run(['docker', 'run', '--rm', IMAGE, 'node', '--test', '--test-concurrency=1'], check=True, stdout=subprocess.DEVNULL)
@@ -54,12 +88,7 @@ def main():
         shutil.copy2(source, backup / name)
     before.drain(True)
     before.wait_idle()
-    for source, destination in [(proposed, publisher), (SOURCE / 'runtime/primary-model-catalog.json', PRIMARY / 'model-catalog.json')]:
-        temporary = destination.with_suffix('.router-new')
-        shutil.copy2(source, temporary)
-        if destination == publisher:
-            temporary.chmod(0o755)
-        os.replace(temporary, destination)
+    install_runtime_source(publisher, proposed, managed)
     env = STACK / '.env'
     replacements = {'ROUTER_IMAGE': IMAGE, 'OLLAMA_UPSTREAM_TIMEOUT_MS': '30000', 'GENERATION_STALL_TIMEOUT_MS': '120000'}
     lines = []
@@ -90,6 +119,7 @@ def main():
         raise RuntimeError('Unexpected inference service recreation')
     after.drain(False)
     receipt = {'image': IMAGE, 'image_id': image_id, 'source_revision': revision,
+        'runtime_controller': 'local-ai-runtime' if managed else 'legacy-host',
         'source_directory': str(SOURCE), 'backend_container_ids_unchanged': residents,
         'publisher_sha256': digest(publisher), 'source_catalog_sha256': digest(PRIMARY / 'model-catalog.json'),
         'generated_catalog_sha256': digest(after.MARKER), 'backup': str(backup),

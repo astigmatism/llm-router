@@ -84,3 +84,11 @@ The server owner separately qualified 8192 MiB host prompt cache per service, re
 `~/primary status` and `~/primary active-check` inspect the pair. The primary boot service and legacy-deploy guard remain enabled. No historical full-server deployment is used to publish router edits. Backend startup failure remains drained for supervised retry.
 
 The original `/home/astigmatism/apps/local-ai-primary/rollback` snapshot is immutable historical evidence. Historical `primary deploy`, programmatic `apply(deploy=True)` and `primary rollback` are retired and reject before any side effect; they cannot overwrite the corrected integration. Ordinary qualified startup remains supported and fails drained. The controller installer enforces executable mode 0755 for wrapper and boot execution. The original-Q6 fallback in the corrected server manifest is separately uncapped and qualified. Never copy historical benchmark argv into production or describe historical capped throughput as unrestricted performance. Private backups may contain secrets and must remain on the server.
+
+## Containerized runtime ownership
+
+After the `local-ai-runtime` migration, `/home/astigmatism/apps/local-ai-primary/runtime-owner.json` marks the ownership boundary. Runtime launch definitions, profile selection, generated manifests, and catalog publication belong to [local-ai-runtime](https://github.com/astigmatism/local-ai-runtime). This supersedes the host-copy deployment instructions above for migrated machines.
+
+The router-only publisher detects the marker, reserves runtime configuration through the controller, drains accepted and direct work, replaces only the router, and asks the controller to republish its current catalog. It never copies the router repository's legacy publisher or catalog over runtime-owned configuration. Context and vision migration helpers refuse to run on a migrated host.
+
+An interrupted router release retains its reservation and drain. Restore or complete the router release, then run `docker exec local-ai-runtime python3 -m runtime router-maintenance-end`. This command verifies the backends and republishes the catalog before reopening admission.

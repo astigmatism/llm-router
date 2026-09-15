@@ -173,6 +173,8 @@ def performance_comparison(reference, candidate):
 
 
 def main(retry_144=False, accept_160=False):
+    if (PRIMARY / 'runtime-owner.json').exists():
+        raise RuntimeError('Runtime settings are owned by local-ai-runtime; edit and deploy its profile definitions')
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True).strip():
         raise RuntimeError('Deploy from a clean published checkout')
