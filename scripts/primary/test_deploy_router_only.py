@@ -10,6 +10,22 @@ spec.loader.exec_module(publisher)
 
 
 class CommittedPublicationTests(unittest.TestCase):
+    def test_managed_runtime_source_is_never_reinstalled(self):
+        with patch.object(publisher.shutil, 'copy2') as copy, patch.object(publisher.os, 'replace') as replace:
+            publisher.install_runtime_source(Path('/old/controller'), Path('/new/controller'), managed=True)
+            copy.assert_not_called()
+            replace.assert_not_called()
+
+    def test_managed_router_release_uses_runtime_reservation_and_publication(self):
+        with patch.object(publisher.subprocess, 'run') as run:
+            controller = publisher.ManagedController()
+            controller.drain(True)
+            controller.wait_idle()
+            controller.publish_marker()
+            controller.drain(False)
+            self.assertEqual([call.args[0][-1] for call in run.call_args_list],
+                ['router-maintenance-begin', 'publish', 'router-maintenance-end'])
+
     def test_matching_clean_source_and_image_are_required(self):
         revision = 'a' * 40
         image = [{'Id': 'sha256:tested', 'Config': {'Labels': {'org.opencontainers.image.revision': revision}}}]
