@@ -1321,7 +1321,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-store',
         connection: 'keep-alive',
-        'x-ollama-router': 'local-ai-ollama-router',
+        'x-ollama-router': 'llm-router',
         'x-accel-buffering': 'no',
         ...(backendRequest.reasoning?.outputLimitCapped
           ? { 'x-router-effective-max-output-tokens': String(backendRequest.reasoning.outputTokens) }
@@ -1422,7 +1422,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
       );
       const responseBytes = Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`);
       sendJson(response, 200, payload, {
-        'x-ollama-router': 'local-ai-ollama-router',
+        'x-ollama-router': 'llm-router',
         ...(backendRequest.reasoning?.outputLimitCapped
           ? { 'x-router-effective-max-output-tokens': String(backendRequest.reasoning.outputTokens) }
           : {})

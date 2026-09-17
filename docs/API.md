@@ -232,13 +232,13 @@ The stream uses `Content-Type: text/event-stream`, disables buffering, and emits
 ### Codex configuration
 
 ```toml
-model_provider = "local_ollama_router"
+model_provider = "llm_router"
 model = "local-active"
 model_reasoning_effort = "none"
 web_search = "disabled"
 
-[model_providers.local_ollama_router]
-name = "Local Ollama Router"
+[model_providers.llm_router]
+name = "LLM Router"
 base_url = "http://192.168.1.21:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false

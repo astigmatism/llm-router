@@ -59,7 +59,7 @@ Values below are illustrative. The physical model, limits, modalities, capabilit
   "id": "local-active",
   "object": "model",
   "created": 1788200000,
-  "owned_by": "local-ai-ollama-router",
+  "owned_by": "llm-router",
   "x_ollama_router": {
     "schema_version": 2,
     "alias": true,

@@ -14,7 +14,7 @@ import urllib.request
 STACK = Path('/home/astigmatism/apps/local-ai-ollama-stack')
 PRIMARY = Path('/home/astigmatism/apps/local-ai-primary')
 SOURCE = Path(__file__).resolve().parents[2]
-IMAGE = os.environ.get('ROUTER_PUBLICATION_IMAGE', 'local-ai-ollama-router:unrestricted-20260912')
+IMAGE = os.environ.get('ROUTER_PUBLICATION_IMAGE', 'llm-router:latest')
 OWNER_PUBLISHER_HASH = 'ecb9f08c52a560a825e24e115e077577ca7f659bcaf259626e248e93f8134689'
 
 class ManagedController:

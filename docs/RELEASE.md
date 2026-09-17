@@ -1,5 +1,7 @@
 # Reviewed router publication
 
+The project and new image name are `llm-router`. Existing production Compose project/container names and runtime ownership remain valid; see [rename and migration notes](RENAMING.md) before changing deployment paths or container identity.
+
 Commit and push reviewed router source before production builds. Use a clean checkout of that published revision, retaining the previous production checkout and its uncommitted historical artifacts separately. Do not apply source patches inside a running production container.
 
 This release preserves the two resident services, unrestricted output/reasoning policy, formatted-context admission and cancellable FIFO queues. OpenAI discovery and native `/api/tags` enumerate canonical IDs and every declared service alias. Native `/api/ps` and admin resident counts stay canonical-only. Harness must also publish its consumer companion; an alias row does not make historical capacity/default/finite-output assertions valid.
@@ -8,7 +10,7 @@ From a clean release checkout on the deployment host:
 
 ```sh
 revision=$(git rev-parse HEAD)
-image="local-ai-ollama-router:git-$revision"
+image="llm-router:git-$revision"
 docker build --build-arg "VCS_REF=$revision" -t "$image" .
 ROUTER_PUBLICATION_IMAGE="$image" python3 scripts/primary/deploy-router-only.py
 ```

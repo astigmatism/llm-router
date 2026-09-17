@@ -81,7 +81,7 @@ export function copyUpstreamHeaders(upstreamHeaders, response, streaming = false
     if (streaming && lower === 'content-length') continue;
     response.setHeader(key, value);
   }
-  response.setHeader('x-ollama-router', 'local-ai-ollama-router');
+  response.setHeader('x-ollama-router', 'llm-router');
   response.setHeader('cache-control', 'no-store');
 }
 

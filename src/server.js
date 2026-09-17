@@ -201,7 +201,7 @@ async function handleModelDiscovery(request, response, pathname, context) {
     const headers = {
       'cache-control': 'no-cache',
       etag: discovery.etag,
-      'x-ollama-router': 'local-ai-ollama-router'
+      'x-ollama-router': 'llm-router'
     };
     if (ifNoneMatchMatches(request.headers['if-none-match'], discovery.etag)) {
       response.writeHead(304, headers);
@@ -223,7 +223,7 @@ async function handleModelDiscovery(request, response, pathname, context) {
     }
     sendJson(response, discoveryError.statusCode, modelDiscoveryErrorPayload(discoveryError), {
       'cache-control': 'no-cache',
-      'x-ollama-router': 'local-ai-ollama-router'
+      'x-ollama-router': 'llm-router'
     });
   }
 }
@@ -1124,7 +1124,7 @@ async function handleProxy(request, response, url, context) {
       finalStatus = prepared.localResponse.status;
       const payload = prepared.localResponse.body;
       responseBytes = Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`);
-      sendJson(response, finalStatus, payload, { 'x-ollama-router': 'local-ai-ollama-router' });
+      sendJson(response, finalStatus, payload, { 'x-ollama-router': 'llm-router' });
       await persistRequest(context.store, context.metrics, {
         ...commonRecord,
         allowed: true,
@@ -1192,7 +1192,7 @@ async function handleProxy(request, response, url, context) {
       if (!response.headersSent) {
         response.setHeader('content-type', contentType);
         response.setHeader('cache-control', 'no-store');
-        response.setHeader('x-ollama-router', 'local-ai-ollama-router');
+        response.setHeader('x-ollama-router', 'llm-router');
         if (prepared.reasoning?.outputLimitCapped) {
           response.setHeader('x-router-effective-max-output-tokens', String(prepared.reasoning.outputTokens));
         }
@@ -1229,7 +1229,7 @@ async function handleProxy(request, response, url, context) {
           : extractUsageFromOllamaObject(normalized);
         payloadBuffer = Buffer.from(`${JSON.stringify(normalized)}\n`, 'utf8');
         response.setHeader('content-type', 'application/json; charset=utf-8');
-        response.setHeader('x-ollama-router', 'local-ai-ollama-router');
+        response.setHeader('x-ollama-router', 'llm-router');
         response.setHeader('cache-control', 'no-store');
       } else {
         payloadBuffer = Buffer.from(await upstreamResponse.arrayBuffer());
@@ -1505,7 +1505,7 @@ async function handleRequest(request, response, context) {
 
   try {
     if (request.method === 'GET' && pathname === '/') {
-      sendText(response, 200, 'Ollama is running\n', { 'x-ollama-router': 'local-ai-ollama-router' });
+      sendText(response, 200, 'Ollama is running\n', { 'x-ollama-router': 'llm-router' });
       return;
     }
 

@@ -6,7 +6,7 @@ export function queueHeartbeat(response, protocol, { model, intervalMs = 15000 }
     'content-type': protocol === 'native' ? 'application/x-ndjson; charset=utf-8' : 'text/event-stream; charset=utf-8',
     'cache-control': 'no-store',
     'x-accel-buffering': 'no',
-    'x-ollama-router': 'local-ai-ollama-router'
+    'x-ollama-router': 'llm-router'
   });
   const beat = () => {
     if (!response.destroyed && !response.writableEnded && !response.writableNeedDrain) {

@@ -19,7 +19,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-ZIP_PATH="$(cd "$OUTPUT_DIR" && pwd)/local-ai-ollama-router-${TIMESTAMP}.zip"
+ZIP_PATH="$(cd "$OUTPUT_DIR" && pwd)/llm-router-${TIMESTAMP}.zip"
 
 cd "$SCRIPT_DIR"
 

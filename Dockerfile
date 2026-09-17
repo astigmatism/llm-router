@@ -1,7 +1,9 @@
 FROM node:22-bookworm-slim
 
 ARG VCS_REF=unknown
-LABEL org.opencontainers.image.revision=$VCS_REF
+LABEL org.opencontainers.image.revision=$VCS_REF \
+    org.opencontainers.image.title="LLM Router" \
+    org.opencontainers.image.source="https://github.com/astigmatism/llm-router"
 
 WORKDIR /app
 ENV NODE_ENV=production \

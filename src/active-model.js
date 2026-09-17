@@ -292,7 +292,7 @@ export async function writeActiveModelMarker(filePath, marker) {
     ...(marker.capability_profile === undefined ? {} : { capability_profile: marker.capability_profile }),
     ...(marker.deployment_warnings === undefined ? {} : { deployment_warnings: marker.deployment_warnings }),
     updated_at: marker.updated_at ?? new Date().toISOString(),
-    source: marker.source ?? 'local-ai-ollama-router'
+    source: marker.source ?? 'llm-router'
   };
   await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   return payload;

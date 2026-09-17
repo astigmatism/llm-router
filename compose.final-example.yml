@@ -1,12 +1,12 @@
-# Example final-state compose shape after cutover. Raw Ollama should have no LAN
+# Legacy Ollama example after cutover. Raw Ollama should have no LAN
 # ports mapping; clients should use 11434 on this router and humans should use
 # the separate 11435 admin portal.
 services:
   ai-router:
     build:
       context: .
-    image: local-ai-ollama-router:latest
-    container_name: local-ai-ollama-router
+    image: "${ROUTER_IMAGE:-llm-router:latest}"
+    container_name: "${ROUTER_CONTAINER_NAME:-llm-router}"
     restart: unless-stopped
     ports:
       # 11434 = Ollama-compatible router API.

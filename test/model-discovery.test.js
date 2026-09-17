@@ -183,7 +183,7 @@ test('model discovery lists one stable alias, supports detail lookup and ETags, 
     assert.equal(list.object, 'list');
     assert.equal(list.data.length, 1);
     assert.equal(list.data[0].id, 'active-slot');
-    assert.equal(list.data[0].owned_by, 'local-ai-ollama-router');
+    assert.equal(list.data[0].owned_by, 'llm-router');
     assert.equal(list.data[0].x_ollama_router.upstream_model, 'model-a:test');
     assert.equal(list.data[0].x_ollama_router.context_window, 8192);
     assert.equal(list.data[0].x_ollama_router.model_context_window, 131072);

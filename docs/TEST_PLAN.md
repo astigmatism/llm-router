@@ -46,7 +46,7 @@ The test suite validates:
 ## Docker build test
 
 ```bash
-docker build -t local-ai-ollama-router:test .
+docker build -t llm-router:test .
 ```
 
 ## Router/API/admin health test

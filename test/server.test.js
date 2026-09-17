@@ -218,7 +218,7 @@ test('admin listener serves dashboard and summary without auth while API port st
 
     const adminAlias = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin`);
     assert.equal(adminAlias.status, 200);
-    assert.match(await adminAlias.text(), /Local AI Ollama Router Admin/);
+    assert.match(await adminAlias.text(), /LLM Router Admin/);
 
     const summaryResponse = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/summary`);
     assert.equal(summaryResponse.status, 200);

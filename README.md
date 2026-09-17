@@ -1,13 +1,15 @@
-# Local AI Ollama Router
+# LLM Router
+
+An inference router with OpenAI-compatible and Ollama-compatible APIs. The production deployment uses llama.cpp; Ollama remains a supported backend and client protocol. Formerly `local-ai-ollama-router`; see [rename and migration notes](docs/RENAMING.md).
 
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](docs/PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 
 The deployed `primary` runtime exposes two resident models with independent one-request admission: coding `qwen3.8-27b-q8_0` (160K) and everyday `qwen3.8-27b-abliterated-q6_k` (128K). `local-active` remains a coding alias. See [the primary integration contract and deployment report](docs/PRIMARY_INTEGRATION.md) for current operations, clients, validation, and recovery. The single-marker deployment examples below describe legacy operation.
 
 
-A Docker-ready, Ollama-compatible router that sits between local AI clients and the real Ollama container. It enforces active-model policy, overwrites protected requests with `keep_alive: -1`, preserves streaming responses, persists request history, extracts Ollama response telemetry, and serves a simple human admin portal on a separate port.
+A Docker-ready router that sits between AI clients and model inference servers. It enforces model policy, preserves streaming responses, persists request history, collects inference telemetry, and serves an admin portal on a separate port. The legacy Ollama backend also receives `keep_alive: -1` for protected requests.
 
-This project is designed for the local AI topology where Open WebUI, ComfyUI, local apps, and a voice assistant should call the router instead of raw Ollama.
+Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the runtime controller manages the resident model backends.
 
 ## What this gives you
 
@@ -22,14 +24,17 @@ This project is designed for the local AI topology where Open WebUI, ComfyUI, lo
   - `POST /api/embed`
   - `POST /api/embeddings`
   - model-management routes are disabled by default and require legacy admin auth when enabled
-- Stateless OpenAI Responses compatibility for Codex CLI:
+- OpenAI-compatible Chat Completions:
+  - `POST /v1/chat/completions`
+  - text, streaming, tools, and images according to the selected model’s capabilities
+- Stateless OpenAI Responses compatibility:
   - `POST /v1/responses`
   - `POST /responses` alias
-  - streamed text and function calls translated to and from Ollama `/api/chat`
+  - streamed text and function calls translated to the selected llama.cpp or Ollama backend
 - Stable active-slot model discovery:
   - `GET /v1/models`
   - `GET /v1/models/{alias}`
-  - one configurable public alias enriched from the active marker, Ollama `/api/ps`, and `/api/show`
+  - primary catalogs expose resident models and their stable service aliases; legacy mode exposes one active alias
 - Separate browser admin portal, normally `http://192.168.1.21:11435/` or `http://192.168.1.21:11435/admin`.
 - No token or login for the browser admin portal. It is intended for trusted local/LAN use only.
 - Active-model fail-closed policy by default.
@@ -53,10 +58,19 @@ This project is designed for the local AI topology where Open WebUI, ComfyUI, lo
 
 The API port remains Ollama-compatible. The admin portal is intentionally not buried under the Ollama API URL structure. The old same-port `/admin/api/*` machine endpoints are still present for compatibility and still honor `ADMIN_TOKEN` when it is set, but the browser portal and its admin-port JSON APIs do not require a token.
 
-## Quick start
+## Get the source
 
 ```bash
-cd /home/astigmatism/apps/local-ai-ollama-router
+git clone https://github.com/astigmatism/llm-router.git
+cd llm-router
+```
+
+For an existing production stack, follow [reviewed publication](docs/RELEASE.md). The checked-in Compose files below are legacy Ollama topology examples; a fresh clone does not include model weights, private settings, or the runtime controller. For llama.cpp, the runtime supplies an active marker/catalog with `backend_kind: "llama_cpp"` and each backend URL; see [Primary integration](docs/PRIMARY_INTEGRATION.md).
+
+## Legacy Ollama quick start
+
+```bash
+cd /home/astigmatism/apps/llm-router
 cp .env.example .env
 
 # Write an active model marker for initial testing:
@@ -177,13 +191,13 @@ Upstream routes use Node's native HTTP transport with explicit JSON `Content-Len
 Codex CLI 0.144.3 can be configured with:
 
 ```toml
-model_provider = "local_ollama_router"
+model_provider = "llm_router"
 model = "local-active"
 model_reasoning_effort = "none"
 web_search = "disabled"
 
-[model_providers.local_ollama_router]
-name = "Local Ollama Router"
+[model_providers.llm_router]
+name = "LLM Router"
 base_url = "http://192.168.1.21:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false

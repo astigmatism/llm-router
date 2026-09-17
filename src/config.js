@@ -59,7 +59,7 @@ export function loadConfig(env = process.env) {
   const defaultThinkRaw = envString(env, 'DEFAULT_THINK', '');
   const defaultThinkConfigured = Boolean(defaultThinkRaw);
   return Object.freeze({
-    appName: 'local-ai-ollama-router',
+    appName: 'llm-router',
     version: envString(env, 'ROUTER_VERSION', '0.1.0'),
     nodeEnv: envString(env, 'NODE_ENV', 'production'),
     host: envString(env, 'HOST', '0.0.0.0'),

@@ -170,7 +170,7 @@ export function evaluateProxyPolicy({ method, pathname, body, activeModelInfo, c
       allowed: false,
       status: 404,
       code: 'ROUTE_NOT_SUPPORTED',
-      message: 'This route is not enabled in the Ollama router.',
+      message: 'This route is not enabled in the LLM router.',
       requestedModel,
       forwardedModel: requestedModel,
       activeModel,

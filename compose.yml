@@ -1,9 +1,10 @@
+# Legacy Ollama topology example; see docs/PRIMARY_INTEGRATION.md for llama.cpp.
 services:
   ai-router:
     build:
       context: .
-    image: local-ai-ollama-router:latest
-    container_name: local-ai-ollama-router
+    image: "${ROUTER_IMAGE:-llm-router:latest}"
+    container_name: "${ROUTER_CONTAINER_NAME:-llm-router}"
     restart: unless-stopped
     ports:
       # 11434 = Ollama-compatible router API for Open WebUI, ComfyUI, and local clients.

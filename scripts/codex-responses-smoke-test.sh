@@ -28,14 +28,14 @@ trap cleanup EXIT
   --disable tool_suggest \
   --disable image_generation \
   --disable artifact \
-  -c "model_provider=\"local_ollama_router\"" \
+  -c "model_provider=\"llm_router\"" \
   -c "model=\"$REQUESTED_MODEL\"" \
   -c 'model_reasoning_effort="none"' \
   -c 'web_search="disabled"' \
-  -c 'model_providers.local_ollama_router.name="Local Ollama Router"' \
-  -c "model_providers.local_ollama_router.base_url=\"$ROUTER_URL/v1\"" \
-  -c 'model_providers.local_ollama_router.wire_api="responses"' \
-  -c 'model_providers.local_ollama_router.requires_openai_auth=false' \
+  -c 'model_providers.llm_router.name="LLM Router"' \
+  -c "model_providers.llm_router.base_url=\"$ROUTER_URL/v1\"" \
+  -c 'model_providers.llm_router.wire_api="responses"' \
+  -c 'model_providers.llm_router.requires_openai_auth=false' \
   --json \
   "Use the shell tool exactly once to run: printf 'codex-router-tool-ok\\n'. Then return exactly codex-router-tool-ok." \
   | tee "$SMOKE_OUTPUT"

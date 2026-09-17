@@ -1,8 +1,8 @@
 {
-  "name": "local-ai-ollama-router",
+  "name": "llm-router",
   "version": "0.1.0",
   "private": true,
-  "description": "Policy-enforcing Ollama-compatible router with admin dashboard, request history, and telemetry.",
+  "description": "LLM router for llama.cpp and Ollama backends, with OpenAI-compatible APIs, an admin dashboard, request history, and telemetry.",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -14,11 +14,13 @@
     "lint:syntax": "node --check src/server.js && node --check src/responses-api.js && node --check src/model-discovery.js && node --check src/upstream.js && node --check src/native-tools.js"
   },
   "keywords": [
-    "ollama",
+    "llm",
     "router",
+    "llama.cpp",
+    "openai-compatible",
+    "ollama",
     "proxy",
-    "telemetry",
-    "local-ai"
+    "telemetry"
   ],
   "license": "UNLICENSED"
 }

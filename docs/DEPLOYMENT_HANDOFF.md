@@ -1,6 +1,6 @@
-# Deployment Handoff
+# Legacy Ollama Deployment Handoff
 
-This document is written for the next AI/operator that deploys the router into the existing local AI stack.
+This historical topology guide describes an Ollama-backed installation. Current production uses llama.cpp: start with [Primary integration](PRIMARY_INTEGRATION.md), [reviewed publication](RELEASE.md), and [rename/migration notes](RENAMING.md).
 
 ## Starting facts from the topology handoff
 
@@ -28,8 +28,8 @@ If raw Ollama is still published on `11434`, move it behind the Docker network b
 ```bash
 mkdir -p /home/astigmatism/apps
 cd /home/astigmatism/apps
-unzip local-ai-ollama-router.zip
-cd local-ai-ollama-router
+unzip llm-router.zip
+cd llm-router
 cp .env.example .env
 ```
 
@@ -77,7 +77,7 @@ Inside the container this is:
 
 ```bash
 docker compose --env-file .env up --build -d
-docker logs -f local-ai-ollama-router
+docker logs -f llm-router
 ```
 
 Confirm the router is reachable:
@@ -98,13 +98,13 @@ http://192.168.1.21:11435/
 Configure Codex with a stable client identifier:
 
 ```toml
-model_provider = "local_ollama_router"
+model_provider = "llm_router"
 model = "local-active"
 model_reasoning_effort = "none"
 web_search = "disabled"
 
-[model_providers.local_ollama_router]
-name = "Local Ollama Router"
+[model_providers.llm_router]
+name = "LLM Router"
 base_url = "http://192.168.1.21:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false

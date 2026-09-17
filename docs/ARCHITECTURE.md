@@ -6,16 +6,17 @@ The deployed primary catalog uses unrestricted output, unrestricted thinking and
 
 ## Goal
 
-The router becomes the only supported Ollama-compatible endpoint for local clients. Raw Ollama remains the inference backend, but clients no longer call it directly.
+LLM Router exposes OpenAI-compatible and Ollama-compatible APIs to clients. Production uses two resident llama.cpp servers; the legacy Ollama backend remains supported. The runtime controller owns model loading and catalog publication.
 
 ```text
 OpenWebUI -----------\
-ComfyUI -------------+--> local-ai-ollama-router --> raw Ollama
+ComfyUI -------------+--> llm-router --> llama.cpp (production)
+                    |              \-> Ollama (legacy)
 voice assistant -----/
 local AI apps -------/
 ```
 
-## Core invariant
+## Legacy Ollama keep-alive policy
 
 For the active deployed model, every request that can refresh or load model state is forwarded with:
 
@@ -31,7 +32,7 @@ This is enforced at the router so individual clients do not need to remember or 
 
 `src/server.js` owns the Node.js HTTP servers, route dispatch, admin endpoints, and Ollama-compatible proxy path. It starts two listeners by default: the Ollama-compatible API listener on `PORT` (`11434`) and the separate human admin listener on `ADMIN_PORT` (`11435`).
 
-`src/responses-api.js` owns the isolated OpenAI Responses compatibility path. `/v1/responses` and `/responses` are dispatched before the generic `/api/*` proxy, translated only to Ollama `/api/chat`, and validated directly against the active-model marker. The module honors `REWRITE_REQUESTED_MODEL_TO_ACTIVE` for client-name compatibility but does not call the legacy proxy-policy evaluator: permissive and allowlist settings cannot change the single marker-model upstream target.
+`src/responses-api.js` owns the isolated OpenAI Responses compatibility path. `/v1/responses` and `/responses` are dispatched before the generic `/api/*` proxy, translated through the selected backend adapter (llama.cpp Chat Completions or Ollama `/api/chat`), and validated against the active marker/catalog. The module honors `REWRITE_REQUESTED_MODEL_TO_ACTIVE` for client-name compatibility but does not call the legacy proxy-policy evaluator: permissive and allowlist settings cannot change the single marker-model upstream target.
 
 Responses accepts the documented optional `prompt_cache_key` string as a compatibility hint. Its value is validated and then removed before response construction and backend-policy processing. It is never forwarded to Ollama or llama.cpp, does not choose a model or slot, and is not a router response-cache key; backend prompt-prefix/KV reuse remains authoritative. Request telemetry records only presence and the `accepted_ignored` disposition. `prompt_cache_options` and deprecated `prompt_cache_retention` remain unsupported unless separately implemented against proven backend semantics.
 
