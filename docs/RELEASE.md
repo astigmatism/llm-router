@@ -28,3 +28,65 @@ python3 scripts/primary/test_primary.py
 python3 scripts/primary/test_deploy_router_only.py
 python3 integrations/open-webui/test-align-primary.py
 ```
+
+The separate `scripts/primary/deploy-nighttime-context.py` migration tests 64K
+on the existing Nighttime image and weights. Run it from a clean published
+checkout during an owner-approved Nighttime idle window. It changes only
+Nighttime's two context arguments and matching capacity declarations, installs
+the capacity-aware controller, and reloads Nighttime discovery metadata.
+Daytime and router containers remain running; no global drain is used.
+The migration refuses active or queued Nighttime work and records container
+identity, long-context retrieval, tool continuation, overflow recovery and GPU
+headroom. A failed acceptance restores the immediately preceding 32K
+Nighttime configuration. This capacity trial does not qualify Harness compaction
+recovery or constitute a matched throughput benchmark.
+
+If a cancelled token-counting task remains stuck in a backend slot, the optional
+`--recover-cancelled-slot TASK_ID` requires that exact task's cancellation in the
+backend logs, zero generated tokens and no active or queued Nighttime router
+request. Review the stale task before using this recovery exception.
+
+```sh
+python3 -B scripts/primary/test_nighttime_context.py
+python3 -B scripts/primary/deploy-nighttime-context.py
+```
+
+An owner-approved ceiling experiment can run
+`python3 -B scripts/primary/probe-nighttime-context.py` from a clean published
+release. This starts from the qualified 64K configuration, probes allocation in
+4K increments at the boundary, tests long-context retrieval, and retains the
+largest tested setting with at least 1024 MiB free on both Nighttime GPUs.
+It preserves Daytime and the router and restores the immediate 64K baseline if
+final acceptance fails. Publish the resulting capacity in the source catalog
+after the experiment; the backend and consumer metadata must agree.
+
+The owner ended the ceiling search and selected Nighttime at 128K. The reviewed
+`--accept-context 131072` option performs final long-context, router, tool and
+overflow checks for that target and records the measured GPU headroom. This
+explicit selection replaces the former 1024 MiB Nighttime reserve requirement;
+Daytime's configuration and reserve contract stay unchanged.
+
+
+Daytime capacity changes use `scripts/primary/deploy-daytime-context.py` from a
+clean, published Git checkout. The current owner-authorized workflow is
+`--accept-160`, starting from the qualified 144K baseline. It waits for a quiet
+Daytime window, measures the same uncapped long prompt at 144K and 160K, then
+checks retrieval near the new capacity, tools, overflow recovery, MTP acceptance
+and GPU memory. A matched prefill or decode slowdown above 25% fails the trial.
+The single matched sample is an operational comparison, not a repeated benchmark.
+
+The former 1024 MiB Daytime reserve is informational under this explicit owner
+selection. The manifest records that policy on Daytime only; memory allocation,
+CUDA errors and functional/performance failures still restore the preceding
+144K configuration. Nighttime remains at its independently accepted 128K.
+The router must include the 144K/160K catalog validation change before this
+trial; older images reject publication above 128K. Failed publication restores
+valid discovery before querying router admission during rollback.
+
+The original no-flag and `--retry-144` paths retain their historical 128K baseline
+checks. They are not the workflow for accepting 160K from 144K.
+After qualification, align source catalog defaults and use the OpenWebUI
+helper's `daytime-labels` mode to update names through its API while preserving
+preset settings and grants. Publish the Harness defaults and use its normal
+update-and-restart workflow to install the new image; its existing settings
+service synchronizes the live capacity from router discovery.

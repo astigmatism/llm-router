@@ -6,17 +6,19 @@ The primary runtime has two resident services with independent admission. This d
 
 | Property | Coding | Everyday |
 |---|---|---|
-| Display name | Daytime (128K) | Nighttime (32K) |
+| Display name | Daytime (160K) | Nighttime (128K) |
 | Model | `qwen3.8-27b-q8_0` | `qwen3.8-27b-abliterated-q6_k` |
 | Backend URL | `http://qwen38-daytime:8080` | `http://qwen38-nighttime:8080` |
 | Stable service ID | `daytime` (also `local-active`, or omitted model) | `nighttime` |
-| Working context | 131072 | 32768 |
+| Working context | 163840 | 131072 |
 | Active generations | 1 | 1 |
 | Context admission reserve | 1024 tokens | 1024 tokens |
 | Default output / policy maximum | Unrestricted / none | Unrestricted / none |
 | Default thinking | Enabled, unlimited budget, template-default effort | Enabled, unlimited budget, template-default effort |
 | Explicit efforts | off, default, low, medium, xhigh | off, default, low, medium, xhigh |
 | Qualified capabilities | Text, reasoning, tools, images | Text, reasoning, tools, images |
+
+Daytime 160K passed direct and routed 152,147-token retrieval, tool continuation, overflow rejection/recovery and MTP acceptance. Minimum free VRAM was 1188 MiB on the 3090 and 995 MiB on the 4080 SUPER, with no observed CUDA/allocation failure. On the same 133,902-token prompt, 144K versus 160K measured 1146.06 versus 1140.97 prompt tokens/s and 38.05 versus 38.03 generated tokens/s. This is one matched operational comparison, not a repeated benchmark or Harness compaction qualification. The owner explicitly replaced the former 1024 MiB Daytime reserve gate with measured performance and memory stability. Nighttime remains at its separately accepted 128K configuration.
 
 Container/DNS names use Daytime and Nighttime; Stable public service IDs `daytime` and `nighttime` resolve through the catalog; canonical API IDs and `local-active` remain compatible. See [Harness compatibility](HARNESS_PORTAL_COMPATIBILITY.md) for alias discovery and consumer validation.
 
@@ -58,6 +60,13 @@ Queued streaming requests receive immediate SSE comments or empty, nonterminal O
 ## Durable sources and deployment
 
 The catalog's `display_name` supplies the shared human-facing labels. Discovery exposes it as `x_ollama_router.display_name`; the router dashboard and DSH discovery use it directly. Open WebUI's explicitly invoked `align-primary.py` copies labels into canonical/service presentation records and migrates preset base IDs toward `daytime` or `nighttime` using discovery metadata. It preserves preset IDs, names, access grants, prompts and saved parameters, including deliberate finite limits. Router deployment does not run this helper or modify Open WebUI. New presets should store stable service IDs on the existing native Ollama connection `http://ai-router:11434`; see [stable services](STABLE_SERVICES.md).
+
+After an approved Nighttime capacity change, run `align-nighttime-tools.py labels`
+inside Open WebUI from a published release. This reads the live context, updates
+the canonical/service names and both Nighttime workflow names, and replaces stale
+context descriptions. It preserves preset IDs, prompts, parameters, tools and
+access grants, verifies Daytime presets remain unchanged, and refreshes the model
+listing without restarting Open WebUI.
 
 API `http://192.168.1.21:11434`; admin `http://192.168.1.21:11435`; container API `http://ai-router:11434`.
 

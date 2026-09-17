@@ -5,7 +5,7 @@ Use `daytime` and `nighttime` in client configuration and Open WebUI preset `bas
 | Service | Current canonical target | Context | Capabilities |
 |---|---|---|---|
 | `daytime` | `qwen3.8-27b-q8_0` | 131072 | Text, images, tools, reasoning |
-| `nighttime` | `qwen3.8-27b-abliterated-q6_k` | 32768 | Text, reasoning, tools |
+| `nighttime` | `qwen3.8-27b-abliterated-q6_k` | 131072 | Text, images, tools, reasoning |
 
 The mapping lives in each resident's `aliases` in `runtime/primary-model-catalog.json`. A future qualified model replacement must carry the service alias onto its replacement catalog entry and update the primary projection/manifest through the normal release process. Client configuration keeps the same service ID. This release does not replace any inference model.
 

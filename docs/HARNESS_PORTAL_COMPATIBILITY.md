@@ -1,5 +1,10 @@
 # Service Portal / Harness router compatibility
 
+This is a historical compatibility review. Its captured 32K Nighttime capacity
+and earlier capability observations describe the reviewed release, not the
+current deployment. Daytime and Nighttime now both expose 128K and text, images,
+tools and reasoning; see the [current integration contract](PRIMARY_INTEGRATION.md).
+
 Prepared 2026-09-12. This release integrates stable OpenAI alias discovery with the resident catalog, unrestricted policy and verified per-backend FIFO queues. It does not by itself prove that the production Portal update passes. Harness at `77858bec19ec47fc2d88dde1c3fb21d4ef52dfdf` also needs the companion changes below.
 
 ## Reconfirmed evidence and provenance
