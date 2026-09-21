@@ -201,6 +201,7 @@ async function makeFixture(overrides = {}, upstreamOptions = {}, markerOverrides
   async function cleanup() {
     await close(router.adminServer);
     await close(router.server);
+    await router.waitForIdle();
     await close(upstream.server);
     await fs.rm(dir, { recursive: true, force: true });
   }

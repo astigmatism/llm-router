@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig, publicConfig } from '../src/config.js';
 
+test('retention defaults, overrides and public settings use strictly positive safe integers', () => {
+  const settings = [
+    ['REQUEST_LOG_MAX_BYTES', 'requestLogMaxBytes', 5242880],
+    ['EVENT_LOG_MAX_BYTES', 'eventLogMaxBytes', 5242880],
+    ['GENERATION_RETENTION_DAYS', 'generationRetentionDays', 7],
+    ['GENERATION_MAX_BYTES', 'generationMaxBytes', 1073741824]
+  ];
+  for (const [env, key, fallback] of settings) {
+    assert.equal(loadConfig({})[key], fallback);
+    assert.equal(publicConfig(loadConfig({}))[key], fallback);
+    assert.equal(publicConfig(loadConfig({ [env]: '123' }))[key], 123);
+    for (const value of ['0', '-1', '1.5', '1x', '1e3', 'Infinity', '9007199254740992']) {
+      assert.throws(() => loadConfig({ [env]: value }), new RegExp(`${env} must be a positive integer`));
+    }
+  }
+});
+
 test('parses separate admin listener config', () => {
   const config = loadConfig({
     ADMIN_ENABLED: 'false',

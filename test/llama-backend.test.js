@@ -339,6 +339,7 @@ async function makeFixture({
     backend.state.releasePrewarm();
     await close(router.adminServer);
     await close(router.server);
+    await router.waitForIdle();
     await close(backend.server);
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   };

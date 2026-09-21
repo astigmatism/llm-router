@@ -301,13 +301,19 @@ These routes are used by the browser dashboard and do not require a token on the
 
 Returns router config summary, active model marker, upstream health, `/api/ps`, active loaded state, optional GPU telemetry, metrics, recent reject/error records, and log paths.
 
+`logs.generationRetention` reports `retentionDays`, `maxBytes`, `activeFiles`, `closedFiles`, `closedBytes`, `lastRunAt`, `lastSuccessAt`, and `lastError` (null or an object with `code` and `message`). Closed counts/bytes describe the last cleanup scan; active count is current. Cleanup failures also appear on the dashboard and retry automatically. All retention settings are exposed in public config.
+
+### `GET /admin/api/generation-record?id=<UUID>`
+
+Requires the configured admin token on either listener. Returns a retained generation journal as `application/x-ndjson`. Missing or pruned records return 404 with `RECORD_NOT_FOUND`. Retention does not interrupt a download whose file is already open. Closed journals are retained for at most seven days by default and may be evicted earlier under the 1 GiB budget; active journals are protected.
+
 ### `GET /admin/api/requests?limit=100`
 
-Returns recent request records, newest first.
+Returns retained request records, newest first, bounded by `REQUEST_HISTORY_LIMIT` and `REQUEST_LOG_MAX_BYTES` (500 records and 5 MiB by default).
 
 ### `GET /admin/api/events?limit=50`
 
-Returns recent operational events, newest first.
+Returns retained operational events, newest first, bounded by `EVENT_HISTORY_LIMIT` and `EVENT_LOG_MAX_BYTES` (500 records and 5 MiB by default).
 
 ### `GET /admin/api/metrics`
 

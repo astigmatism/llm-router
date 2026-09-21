@@ -3,13 +3,13 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { loadConfig, publicConfig } from './config.js';
 import { readActiveModel } from './active-model.js';
 import { selectModel } from './model-catalog.js';
 import { JsonlStore } from './fs-store.js';
+import { generationRetention } from './generation-retention.js';
 import { Metrics } from './metrics.js';
 import { evaluateProxyPolicy, isLikelyStreamingRequest, MODEL_BODY_ROUTES, routeKey } from './policy.js';
 import { handleResponsesRequest, isResponsesPath } from './responses-api.js';
@@ -274,7 +274,7 @@ async function buildSummary(context) {
     metrics: context.metrics.snapshot(),
     recentRejectsOrErrors,
     recentErrorEvents,
-    logs: context.store.paths()
+    logs: { ...context.store.paths(), generationRetention: context.generationRetention.snapshot() }
   };
 }
 
@@ -295,12 +295,15 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       sendJson(response, 400, errorPayload('INVALID_RECORD_ID', 'A generation record UUID is required.')); return;
     }
     const file = path.join(context.config.dataDir, 'generations', `${id}.jsonl`);
-    try { await stat(file); } catch (error) {
+    let handle;
+    try { handle = await open(file, 'r'); } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       sendJson(response, 404, errorPayload('RECORD_NOT_FOUND', 'Generation record not found.')); return;
     }
-    response.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
-    await pipeline(createReadStream(file), response);
+    try {
+      response.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+      await pipeline(handle.createReadStream({ autoClose: false }), response);
+    } finally { await handle.close(); }
     return;
   }
 
@@ -1569,6 +1572,7 @@ export async function createRouterServer(config = loadConfig()) {
   const context = {
     config,
     store,
+    generationRetention: generationRetention(config),
     metrics,
     requestGate,
     modelDiscovery: new ModelCatalogDiscovery(config),
@@ -1599,6 +1603,7 @@ export async function createRouterServer(config = loadConfig()) {
   };
   const waitForIdle = async () => {
     while (activeRequests.size) await Promise.allSettled([...activeRequests]);
+    await context.generationRetention.pending;
   };
   const server = http.createServer((request, response) => {
     trackRequest(handleRequest(request, response, context));
@@ -1608,12 +1613,19 @@ export async function createRouterServer(config = loadConfig()) {
       trackRequest(handleAdminRequest(request, response, context));
     })
     : null;
+  await context.generationRetention.start();
+  let listeners = adminServer ? 2 : 1;
+  const releaseRetention = () => {
+    if (--listeners === 0) context.generationRetention.stop();
+  };
+  server.once('close', releaseRetention);
+  adminServer?.once('close', releaseRetention);
   return { server, adminServer, context, waitForIdle };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
-  const { server, adminServer } = await createRouterServer(config);
+  const { server, adminServer, waitForIdle } = await createRouterServer(config);
   server.listen(config.port, config.host, () => {
     console.log(`${config.appName} ${config.version} API listening on http://${config.host}:${config.port}`);
     console.log(`Upstream Ollama: ${config.upstreamUrl}`);
@@ -1634,7 +1646,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     let remaining = adminServer ? 2 : 1;
     const done = () => {
       remaining -= 1;
-      if (remaining <= 0) process.exit(0);
+      if (remaining <= 0) {
+        void waitForIdle().then(() => process.exit(0), (error) => {
+          console.error('failed to finish persistence during shutdown', error);
+          process.exit(1);
+        });
+      }
     };
     server.close(done);
     if (adminServer) adminServer.close(done);

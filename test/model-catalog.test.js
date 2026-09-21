@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { loadConfig } from '../src/config.js';
 import { createRouterServer } from '../src/server.js';
 import { readModelCatalog, selectCatalogModel } from '../src/model-catalog.js';
@@ -694,6 +695,7 @@ test('a new router process can retrieve the complete authenticated durable recor
   const response = await f.post('/api/chat', { model: CODING, messages: [{ role: 'user', content: 'persist across restart' }], stream: false });
   const id = response.headers.get('x-router-generation-id');
   await response.json();
+  await f.waitForIdle();
   const restarted = await createRouterServer(f.config);
   const base = await listen(restarted.server);
   t.after(async () => { restarted.server.closeAllConnections(); await new Promise((r) => restarted.server.close(r)); await restarted.waitForIdle(); });
@@ -703,6 +705,63 @@ test('a new router process can retrieve the complete authenticated durable recor
   const rows = (await recovered.text()).trim().split('\n').map(JSON.parse);
   assert.equal(rows[0].request.messages[0].content, 'persist across restart');
   assert.equal(rows.find((row) => row.type === 'terminal').status, 'completed');
+});
+
+test('archive retrieval completes through concurrent eviction and later retrieval returns 404', async (t) => {
+  const f = await fixture(t);
+  const directory = path.join(f.config.dataDir, 'generations');
+  await fs.mkdir(directory, { recursive: true });
+  const id = randomUUID();
+  const file = path.join(directory, id + '.jsonl');
+  const content = JSON.stringify({ type: 'request', request: { content: 'x'.repeat(8 * 1024 * 1024) } }) + '\n';
+  await fs.writeFile(file, content);
+  const options = { headers: { authorization: 'Bearer test' } };
+  const url = f.base + '/admin/api/generation-record?id=' + id;
+  const response = await fetch(url, options);
+  assert.equal(response.status, 200);
+  const expired = new Date(Date.now() - 8 * 86400000);
+  await fs.utimes(file, expired, expired);
+  await f.context.generationRetention.sweep();
+  await assert.rejects(fs.stat(file), { code: 'ENOENT' });
+  assert.equal(await response.text(), content);
+  const missing = await fetch(url, options);
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.code, 'RECORD_NOT_FOUND');
+});
+
+test('metadata omissions do not reject generation or clip the retained output', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const f = await fixture(t, { REQUEST_LOG_MAX_BYTES: '1', EVENT_LOG_MAX_BYTES: '1' });
+  const response = await f.post('/api/chat', { model: CODING, messages: [{ role: 'user', content: 'complete request' }], stream: false });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).message.content, '323');
+  await f.waitForIdle();
+  assert.deepEqual(f.context.store.requests, []);
+  assert.deepEqual(f.context.store.events, []);
+  const records = (await journals(f))[0];
+  assert.equal(records[0].request.messages[0].content, 'complete request');
+  assert.equal(records.find((row) => row.type === 'terminal').status, 'completed');
+});
+
+test('admin summary exposes retention limits and cleanup failures without failing generation', async (t) => {
+  const f = await fixture(t, { GENERATION_MAX_BYTES: '1' });
+  const unlink = fs.unlink.bind(fs);
+  const mocked = t.mock.method(fs, 'unlink', async (file) => {
+    if (String(file).includes('/generations/')) throw Object.assign(new Error('test cleanup failure'), { code: 'EACCES' });
+    return unlink(file);
+  });
+  t.mock.method(console, 'error', () => {});
+  const response = await f.post('/api/chat', { model: CODING, messages: [{ role: 'user', content: 'x' }], stream: false });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).done_reason, 'stop');
+  await f.waitForIdle();
+  const summary = await (await fetch(f.base + '/admin/api/summary', { headers: { authorization: 'Bearer test' } })).json();
+  assert.equal(summary.config.generationMaxBytes, 1);
+  assert.equal(summary.config.requestLogMaxBytes, 5242880);
+  assert.equal(summary.logs.generationRetention.lastError.code, 'EACCES');
+  mocked.mock.restore();
+  await f.context.generationRetention.sweep();
+  assert.equal(f.context.generationRetention.snapshot().lastError, null);
 });
 
 test('a stalled generation retains its fragment and never becomes a completed response', async (t) => {

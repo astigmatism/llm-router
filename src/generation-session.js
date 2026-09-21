@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { upstreamFetch } from './upstream.js';
+import { generationRetention } from './generation-retention.js';
 
 function failure(code, message) {
   return Object.assign(new Error(message), { code, statusCode: 502 });
@@ -12,8 +13,17 @@ function failure(code, message) {
 export async function openGenerationJournal(config, request) {
   const id = randomUUID();
   const directory = path.join(config.dataDir, 'generations');
-  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-  const file = await fs.open(path.join(directory, `${id}.jsonl`), 'wx', 0o600);
+  const retention = generationRetention(config);
+  retention.register(id);
+  let file;
+  try {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    file = await fs.open(path.join(directory, `${id}.jsonl`), 'wx', 0o600);
+  } catch (error) {
+    await retention.release(id);
+    throw error;
+  }
+  let closing;
   const journal = {
     id,
     closed: false,
@@ -24,7 +34,14 @@ export async function openGenerationJournal(config, request) {
         await file.datasync();
       } catch (error) { throw failure('GENERATION_STORAGE_FAILED', `Could not retain generation ${id}: ${error.message}`); }
     },
-    async close() { if (!journal.closed) { journal.closed = true; await file.close(); } }
+    async close() {
+      closing ??= (async () => {
+        await file.close();
+        journal.closed = true;
+        await retention.release(id);
+      })();
+      await closing;
+    }
   };
   try { await journal.append({ type: 'request', request }); }
   catch (error) { await journal.close(); throw error; }
@@ -112,7 +129,7 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
     try {
       if (prepared.transition) {
         metadata.context_transitions++;
-        const notice = '\n[Working context shortened to an excerpt; the complete conversation is retained in the router archive.]\n\n';
+        const notice = '\n[Working context shortened to an excerpt; the complete conversation is retained in the router archive subject to its retention policy.]\n\n';
         await journal.append({ type: 'context_transition', ...prepared.transition });
         await journal.append({ type: 'delivery_notice', content: notice });
         if (!stream) journal.partial.content += notice;
@@ -161,7 +178,7 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
           const rebased = await rebaseContext(adapter, original.messages, prepared.templateControls, signal, { content: text, reasoning_content: reasoning });
           metadata.context_transitions++;
           await journal.append({ type: 'context_transition', ...rebased });
-          const notice = '\n[Physical context boundary reached. Continuing with an excerpt of prior work; complete text and reasoning are retained in the router archive.]\n\n';
+          const notice = '\n[Physical context boundary reached. Continuing with an excerpt of prior work; complete text and reasoning are retained in the router archive subject to its retention policy.]\n\n';
           await journal.append({ type: 'delivery_notice', content: notice });
           if (!stream) journal.partial.content += notice;
           yield chunk({ content: notice });

@@ -20,6 +20,9 @@ The test suite validates:
 - allowlist behavior
 - NDJSON final-usage extraction
 - metrics aggregation
+- bounded metadata history on disk and in memory, including a sparse 600 MB legacy file, UTF-8 chunk boundaries, corrupt/oversized records, concurrent appends, atomic replacement failures, and abandoned snapshot cleanup
+- generation archive age/size eviction, active-journal protection, interrupted records, shared retention ownership, idle sweeps, deletion failure retries, and exclusion of unrelated files and symlinks
+- authenticated archive retrieval through concurrent eviction, 404 for pruned records, and admin visibility of cleanup failures without affecting generation
 - unauthenticated admin listener access
 - legacy same-port admin auth behavior
 - Ollama-compatible API pass-through and keep-alive preservation/rewriting behavior

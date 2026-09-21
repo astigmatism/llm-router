@@ -147,11 +147,15 @@ function renderPolicy(summary) {
 
 function renderIssues(summary) {
   const issues = summary.recentRejectsOrErrors || [];
+  const retentionError = summary.logs?.generationRetention?.lastError;
+  const retentionIssue = retentionError
+    ? `<div class="issue"><strong>Archive cleanup failed</strong> ${text(retentionError.message)}. Cleanup will retry automatically.</div>`
+    : '';
   if (!issues.length) {
-    document.querySelector('#issues').innerHTML = '<p class="empty">No recent rejects or upstream errors.</p>';
+    document.querySelector('#issues').innerHTML = retentionIssue || '<p class="empty">No recent rejects or upstream errors.</p>';
     return;
   }
-  document.querySelector('#issues').innerHTML = issues.map((row) => `<div class="issue">
+  document.querySelector('#issues').innerHTML = retentionIssue + issues.map((row) => `<div class="issue">
     <div><strong>${text(row.errorCode || row.responseStatus || row.status)}</strong> ${text(row.errorSummary || row.endpoint)}</div>
     <div class="event-time">${text(row.ts)} · ${text(row.method)} ${text(row.endpoint)} · ${text(row.clientIdentity)}</div>
   </div>`).join('');

@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "dev": "NODE_ENV=development node --watch src/server.js",
     "test": "node --test test/*.test.js",
-    "lint:syntax": "node --check src/server.js && node --check src/responses-api.js && node --check src/model-discovery.js && node --check src/upstream.js && node --check src/native-tools.js"
+    "lint:syntax": "node --check src/server.js && node --check src/responses-api.js && node --check src/model-discovery.js && node --check src/upstream.js && node --check src/native-tools.js && node --check src/fs-store.js && node --check src/generation-retention.js && node --check src/generation-session.js && node --check public/app.js"
   },
   "keywords": [
     "llm",

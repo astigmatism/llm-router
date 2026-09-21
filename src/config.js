@@ -29,6 +29,15 @@ function envBool(env, key, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
 }
 
+function envPositiveInt(env, key, fallback) {
+  const raw = envString(env, key, String(fallback));
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${key} must be a positive integer.`);
+  }
+  return value;
+}
+
 function envCsv(env, key, fallback = []) {
   const raw = envString(env, key, '');
   if (!raw) return [...fallback];
@@ -94,6 +103,10 @@ export function loadConfig(env = process.env) {
     eventLogPath: path.join(dataDir, 'events.jsonl'),
     requestHistoryLimit: envInt(env, 'REQUEST_HISTORY_LIMIT', 500, 1),
     eventHistoryLimit: envInt(env, 'EVENT_HISTORY_LIMIT', 500, 1),
+    requestLogMaxBytes: envPositiveInt(env, 'REQUEST_LOG_MAX_BYTES', 5242880),
+    eventLogMaxBytes: envPositiveInt(env, 'EVENT_LOG_MAX_BYTES', 5242880),
+    generationRetentionDays: envPositiveInt(env, 'GENERATION_RETENTION_DAYS', 7),
+    generationMaxBytes: envPositiveInt(env, 'GENERATION_MAX_BYTES', 1073741824),
     maxBodyBytes: envInt(env, 'MAX_BODY_BYTES', 0, 0),
     promptLogging: envString(env, 'PROMPT_LOGGING', 'metadata'),
     enableNvidiaSmi: envBool(env, 'ENABLE_NVIDIA_SMI', false),
@@ -139,6 +152,10 @@ export function publicConfig(config) {
     dataDir: config.dataDir,
     requestHistoryLimit: config.requestHistoryLimit,
     eventHistoryLimit: config.eventHistoryLimit,
+    requestLogMaxBytes: config.requestLogMaxBytes,
+    eventLogMaxBytes: config.eventLogMaxBytes,
+    generationRetentionDays: config.generationRetentionDays,
+    generationMaxBytes: config.generationMaxBytes,
     maxBodyBytes: config.maxBodyBytes,
     promptLogging: config.promptLogging,
     enableNvidiaSmi: config.enableNvidiaSmi,

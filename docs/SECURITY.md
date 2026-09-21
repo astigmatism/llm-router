@@ -51,6 +51,8 @@ PROMPT_LOGGING=full
 
 Full prompt logging will persist prompts to `data/requests.jsonl`.
 
+Request and event metadata logs retain at most 500 records and 5 MiB each by default, using private atomic snapshots. Independently of `PROMPT_LOGGING`, catalog generation journals contain full conversation content and outputs. Closed journals are automatically removed after seven days or earlier to meet a 1 GiB budget; active journals are protected. These archives are available only through the authenticated generation-record endpoint while retained. See [persistence settings](CONFIGURATION.md#persistence) for limits, startup cleanup and operator-backup exclusions.
+
 ## Model-management endpoints
 
 Model-management endpoints are disabled by default:

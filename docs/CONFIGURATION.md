@@ -133,10 +133,20 @@ The browser portal on `ADMIN_PORT` ignores this token and remains no-login by de
 | Variable | Default | Purpose |
 |---|---:|---|
 | `DATA_DIR` | `/app/data` | JSONL log directory. |
-| `REQUEST_HISTORY_LIMIT` | `500` | In-memory request history count. |
-| `EVENT_HISTORY_LIMIT` | `500` | In-memory event history count. |
+| `REQUEST_HISTORY_LIMIT` | `500` | Maximum request records in memory and on disk. |
+| `EVENT_HISTORY_LIMIT` | `500` | Maximum event records in memory and on disk. |
+| `REQUEST_LOG_MAX_BYTES` | `5242880` | Maximum persisted request log size (5 MiB); oldest whole records are removed first. |
+| `EVENT_LOG_MAX_BYTES` | `5242880` | Maximum persisted event log size (5 MiB); oldest whole records are removed first. |
+| `GENERATION_RETENTION_DAYS` | `7` | Closed generation archive age limit, measured from last modification. |
+| `GENERATION_MAX_BYTES` | `1073741824` | Total closed generation archive budget (1 GiB); oldest archives are evicted first. |
 | `MAX_BODY_BYTES` | `0` | Maximum accepted request body size in bytes. `0` disables the router-level cap; positive values restore it. Requests are still buffered in router memory and remain subject to client, Node.js, system-memory, Ollama, and model-context constraints. |
 | `PROMPT_LOGGING` | `metadata` | `off`, `metadata`, or `full`. Use `full` only for explicit debugging. |
+
+The four new byte/age settings require positive safe integers; zero does not disable retention. Each data directory must have a single router writer. Startup compacts existing metadata logs using bounded tail reads, skipping corrupt, incomplete and oversized records. Each update atomically replaces a bounded snapshot. A single metadata record larger than its byte cap is omitted with a payload-free warning; inference and full generation journal contents are unaffected. Temporary snapshots require up to one additional log-sized file per log while writing; abandoned router snapshot files are removed at startup. Metadata persistence errors are logged and subsequent writes retry with the current bounded history.
+
+Generation cleanup runs at startup, after journal closure, and every five minutes while the router is running. Closed archives expire after seven days by default; the byte budget can remove them sooner. Active journals are excluded from both limits and consume additional disk space. Interrupted archives from earlier processes use the same retention policy after restart. Cleanup deletes only regular UUID-named files directly inside `DATA_DIR/generations`; unrelated files, symlinks and operator backups are outside the budget and are not removed. Cleanup failures appear in admin summary status and the dashboard, and retry automatically without failing successful inference. Pruned archive IDs return 404; downloads already opened continue normally.
+
+Deploying this source applies retention to existing active logs and eligible generation archives during the first startup. Export any history that must be preserved before that startup. Metadata history and startup metrics cover only retained records; metrics continue accumulating during the current process lifetime. No changes are made to client-owned conversation storage.
 
 ## GPU/model directory visibility
 

@@ -43,8 +43,8 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
 - Cross-protocol thinking composition with request, active-model, and optional global defaults.
 - Streaming and non-streaming pass-through.
 - Native Node HTTP transport with cancellation and progress-aware generation stall recovery; no total generation deadline.
-- Persistent request log in JSONL.
-- Persistent activity/event log in JSONL.
+- Bounded request and activity/event JSONL logs: 500 records and 5 MiB each by default.
+- Automatic retention for closed generation archives: seven days or 1 GiB total, with active journals protected. See [persistence settings](docs/CONFIGURATION.md#persistence).
 - Telemetry extraction from Ollama final response chunks and non-streaming responses.
 - Optional GPU telemetry through `nvidia-smi` when available.
 - No runtime npm dependencies; the application runs on Node.js 22 built-ins.
