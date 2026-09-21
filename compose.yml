@@ -53,6 +53,7 @@ services:
       local-ai-llm-legacy_default:
         aliases:
           - ai-router
+          - local-ai-ollama-router # Compatibility hostname for existing runtime controllers.
 
 networks:
   local-ai-llm-legacy_default:

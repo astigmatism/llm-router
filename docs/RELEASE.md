@@ -1,6 +1,6 @@
 # Reviewed router publication
 
-The project and new image name are `llm-router`. Existing production Compose project/container names and runtime ownership remain valid; see [rename and migration notes](RENAMING.md) before changing deployment paths or container identity.
+The project is **LLM Router**; image and container names are `llm-router`. The next router-only publication applies the container rename while preserving the existing Compose project, storage and runtime ownership. See [rename and migration notes](RENAMING.md) for the persistent Compose override and compatibility DNS aliases.
 
 Commit and push reviewed router source before production builds. Use a clean checkout of that published revision, retaining the previous production checkout and its uncommitted historical artifacts separately. Do not apply source patches inside a running production container.
 
@@ -15,7 +15,7 @@ docker build --build-arg "VCS_REF=$revision" -t "$image" .
 ROUTER_PUBLICATION_IMAGE="$image" python3 scripts/primary/deploy-router-only.py
 ```
 
-The publisher refuses a dirty checkout or an image whose `org.opencontainers.image.revision` label differs from the checkout. It runs all Node tests sequentially in the image, checks the installed controller against the reviewed source, and captures private backups. It drains accepted active and queued work before replacing only `ai-router` with `--no-deps`. It then republishes the canonical catalog and verifies both inference container IDs are unchanged before reopening admission. The receipt records source commit, image ID and configuration hashes.
+The publisher refuses a dirty checkout or an image whose `org.opencontainers.image.revision` label differs from the checkout. It runs all Node tests sequentially in the image, checks the installed controller against the reviewed source, and captures private backups. It drains accepted active and queued work before replacing only `ai-router` with `--no-deps`. A generated `compose.router-identity.json` sets container name `llm-router` and retains old hostnames as network aliases for the runtime controller. The publisher checks the renamed container's Compose ownership and image, republishes the canonical catalog and verifies both inference container IDs are unchanged before reopening admission. The receipt records source commit, image ID, container/project identity and configuration hashes. Subsequent manual Compose commands must include the identity override after the existing two files.
 
 Coordinate this step with the owner of any simultaneous service rename or Harness acceptance. Do not overwrite server-owned inference manifests, Compose variants, qualification receipts or running backend arguments. A drain timeout must not stop an inference process. If readiness fails, inspect the failed release while admission remains drained; do not restore historical backend profiles.
 

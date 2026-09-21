@@ -47,6 +47,7 @@ services:
       local-ai-llm-legacy_default:
         aliases:
           - ai-router
+          - local-ai-ollama-router # Compatibility hostname for existing runtime controllers.
           # Add this only after raw Ollama is renamed to ollama-backend or loses this alias.
           # - ollama
 

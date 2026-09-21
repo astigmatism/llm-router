@@ -15,6 +15,8 @@ STACK = Path('/home/astigmatism/apps/local-ai-ollama-stack')
 PRIMARY = Path('/home/astigmatism/apps/local-ai-primary')
 SOURCE = Path(__file__).resolve().parents[2]
 IMAGE = os.environ.get('ROUTER_PUBLICATION_IMAGE', 'llm-router:latest')
+ROUTER_NAME = 'llm-router'
+IDENTITY_FILE = 'compose.router-identity.json'
 OWNER_PUBLISHER_HASH = 'ecb9f08c52a560a825e24e115e077577ca7f659bcaf259626e248e93f8134689'
 
 class ManagedController:
@@ -69,6 +71,42 @@ def reviewed_image():
         raise RuntimeError('Router image revision does not match the committed source checkout')
     return revision, image['Id']
 
+def compose_command(*args, identity=False):
+    command = ['docker', 'compose', '-f', str(STACK / 'compose.yaml'),
+        '-f', str(STACK / 'compose.runtime.yaml')]
+    if identity:
+        command += ['-f', str(STACK / IDENTITY_FILE)]
+    return command + list(args)
+
+def router_identity(config):
+    """Rename only the router; retain the controller's old DNS name on every network."""
+    router = config['services']['ai-router']
+    networks = router.get('networks')
+    if router.get('network_mode') or not isinstance(networks, dict) or not networks:
+        raise RuntimeError('Router rename requires Compose networks to preserve controller DNS')
+    aliases = {'ai-router', ROUTER_NAME, 'local-ai-ollama-router'}
+    if router.get('container_name'):
+        aliases.add(router['container_name'])
+    return {'name': config['name'], 'services': {'ai-router': {
+        'container_name': ROUTER_NAME,
+        'networks': {name: {'aliases': sorted(aliases | set((options or {}).get('aliases') or []))}
+            for name, options in networks.items()}}}}
+
+def check_router_identity(project, image_id=None):
+    ids = subprocess.check_output(['docker', 'container', 'ls', '--all', '--quiet',
+        '--filter', 'name=^/' + ROUTER_NAME + '$'], text=True).split()
+    if not ids:
+        if image_id is not None:
+            raise RuntimeError('Renamed router container is missing; drain remains enabled')
+        return
+    container = json.loads(subprocess.check_output(['docker', 'inspect', ROUTER_NAME], text=True))[0]
+    labels = container.get('Config', {}).get('Labels') or {}
+    if (labels.get('com.docker.compose.project') != project
+            or labels.get('com.docker.compose.service') != 'ai-router'):
+        raise RuntimeError('Container name llm-router is already owned by another deployment')
+    if image_id is not None and (container['Image'] != image_id or not container['State']['Running']):
+        raise RuntimeError('Renamed router is not running the reviewed image; drain remains enabled')
+
 def main():
     revision, image_id = reviewed_image()
     publisher = PRIMARY / 'primary.py'
@@ -76,6 +114,11 @@ def main():
     managed = (PRIMARY / 'runtime-owner.json').exists()
     if not managed and digest(publisher) not in [OWNER_PUBLISHER_HASH, digest(proposed)]:
         raise RuntimeError('Publisher changed since server-owner handoff; merge before installation')
+    identity_path = STACK / IDENTITY_FILE
+    config = json.loads(subprocess.check_output(compose_command('config', '--format', 'json',
+        identity=identity_path.exists()), cwd=STACK, text=True))
+    identity = router_identity(config)
+    check_router_identity(identity['name'])
     # Transport tests use short real timers; avoid CPU contention between files.
     subprocess.run(['docker', 'run', '--rm', IMAGE, 'node', '--test', '--test-concurrency=1'], check=True, stdout=subprocess.DEVNULL)
     before = controller()
@@ -84,13 +127,17 @@ def main():
     backup.mkdir(mode=0o700, parents=True)
     for source, name in [(publisher, 'primary.py'), (PRIMARY / 'model-catalog.json', 'model-catalog.json'),
         (STACK / '.env', 'stack.env'), (STACK / 'compose.yaml', 'stack.compose.yaml'),
+        (STACK / 'compose.runtime.yaml', 'stack.compose.runtime.yaml'),
         (before.MARKER, 'active-model.json')]:
         shutil.copy2(source, backup / name)
+    if identity_path.exists():
+        shutil.copy2(identity_path, backup / IDENTITY_FILE)
     before.drain(True)
     before.wait_idle()
     install_runtime_source(publisher, proposed, managed)
     env = STACK / '.env'
-    replacements = {'ROUTER_IMAGE': IMAGE, 'OLLAMA_UPSTREAM_TIMEOUT_MS': '30000', 'GENERATION_STALL_TIMEOUT_MS': '120000'}
+    replacements = {'ROUTER_IMAGE': IMAGE, 'ROUTER_CONTAINER_NAME': ROUTER_NAME,
+        'OLLAMA_UPSTREAM_TIMEOUT_MS': '30000', 'GENERATION_STALL_TIMEOUT_MS': '120000'}
     lines = []
     for line in env.read_text().splitlines():
         key = line.split('=', 1)[0]
@@ -102,8 +149,9 @@ def main():
     if 'GENERATION_STALL_TIMEOUT_MS:' not in text:
         text = text.replace('      OLLAMA_UPSTREAM_TIMEOUT_MS:', '      GENERATION_STALL_TIMEOUT_MS: "${GENERATION_STALL_TIMEOUT_MS:-120000}"\n      OLLAMA_UPSTREAM_TIMEOUT_MS:')
     compose.write_text(text)
-    subprocess.run(['docker', 'compose', '-f', str(compose), '-f', str(STACK / 'compose.runtime.yaml'),
-        'up', '-d', '--no-deps', '--pull', 'never', 'ai-router'], check=True, cwd=STACK)
+    identity_path.write_text(json.dumps(identity, indent=2) + '\n')
+    subprocess.run(compose_command('up', '-d', '--no-deps', '--pull', 'never', 'ai-router', identity=True),
+        check=True, cwd=STACK)
     deadline = time.monotonic() + 120
     while True:
         try:
@@ -113,12 +161,15 @@ def main():
             pass
         if time.monotonic() >= deadline: raise RuntimeError('Router readiness failed; drain remains enabled')
         time.sleep(1)
+    check_router_identity(identity['name'], image_id)
     after = controller()
     after.publish_marker()
     if residents != {name: after.inspect(name)['Id'] for name in after.NAMES}:
         raise RuntimeError('Unexpected inference service recreation')
     after.drain(False)
     receipt = {'image': IMAGE, 'image_id': image_id, 'source_revision': revision,
+        'container_name': ROUTER_NAME, 'compose_project': identity['name'],
+        'identity_override': str(identity_path), 'identity_override_sha256': digest(identity_path),
         'runtime_controller': 'local-ai-runtime' if managed else 'legacy-host',
         'source_directory': str(SOURCE), 'backend_container_ids_unchanged': residents,
         'publisher_sha256': digest(publisher), 'source_catalog_sha256': digest(PRIMARY / 'model-catalog.json'),

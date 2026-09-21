@@ -36,17 +36,21 @@ Preserve uncommitted work and check the current branch before pulling. A fresh c
 
 ## Existing deployment
 
-A repository rename does not rename or restart a running container. Preserve the existing Compose project name, bind mounts, external networks, runtime controller, and `ai-router` service/DNS alias. Moving a deployment directory without preserving its Compose project name and absolute data/runtime paths can create a second stack or select empty storage.
+A repository rename does not rename or restart a running container. The next reviewed router-only publication renames the router container to **`llm-router`**. It preserves the existing Compose project name, bind mounts, external networks, runtime controller, and `ai-router` service/DNS alias. Moving a deployment directory without preserving its Compose project name and absolute data/runtime paths can create a second stack or select empty storage.
 
-New Compose examples default to image and container `llm-router`. When reusing these examples in an installation with the old container name, set:
+New Compose examples default to image and container `llm-router`. The production publisher sets `ROUTER_CONTAINER_NAME=llm-router` and writes `compose.router-identity.json` alongside the server's existing Compose files. This small override pins the existing project name and changes only the `ai-router` container name and network aliases. It retains `local-ai-ollama-router`, `ai-router`, any previous container hostname, and configured aliases on each router network. Existing runtime controllers can therefore continue using `http://local-ai-ollama-router:11435`.
 
-```dotenv
-ROUTER_CONTAINER_NAME=local-ai-ollama-router
+The publisher automatically includes the override on every release, refuses an unrelated container already named `llm-router`, and verifies that the renamed container runs the reviewed image before reopening admission. Backups include any previous identity override; the deployment receipt records the new name, project and override hash. Network modes without Compose DNS aliases are rejected before draining.
+
+`ROUTER_IMAGE` selects the reviewed `llm-router:git-<revision>` image. Follow [reviewed publication](RELEASE.md) when ready to deploy. For manual Compose operations after migration, include all three files from the existing stack directory:
+
+```sh
+docker compose -f compose.yaml -f compose.runtime.yaml -f compose.router-identity.json ps
 ```
 
-`ROUTER_IMAGE` can select the reviewed `llm-router:git-<revision>` image. The production publisher uses the server's existing Compose files and replaces only the `ai-router` service; it does not rename the production container, stack, directories, or model backends. Follow [reviewed publication](RELEASE.md) when ready to deploy. Do not run the legacy example Compose stack alongside production on the same ports.
+Keep the identity override in subsequent Compose commands; omitting it can restore a hard-coded old container name or drop controller aliases. To restore pre-migration configuration, restore the backed-up `.env` and Compose files and remove the generated override if none existed before, while following the release's drain/recovery procedure. Do not run the legacy example Compose stack alongside production on the same ports.
 
-Historical capacity qualification scripts still refer to the old production container name because they target that specific deployment. Historical source/handoff reports retain their original names and image references. Those references are not current project branding.
+The stack, checkout directories and model backend names stay unchanged. Historical capacity qualification scripts still refer to the old production container name; a DNS alias does not make old `docker inspect` or `docker restart` commands work. Use `llm-router` for current direct Docker commands. Historical source/handoff reports retain their original names and image references. Those references are not current project branding.
 
 ## Production identity verified on 2026-09-16
 

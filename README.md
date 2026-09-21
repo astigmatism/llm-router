@@ -1,6 +1,6 @@
 # LLM Router
 
-An inference router with OpenAI-compatible and Ollama-compatible APIs. The production deployment uses llama.cpp; Ollama remains a supported backend and client protocol. Formerly `local-ai-ollama-router`; see [rename and migration notes](docs/RENAMING.md).
+An inference router with OpenAI-compatible and Ollama-compatible APIs. The production deployment uses llama.cpp; Ollama remains a supported backend and client protocol. Formerly `local-ai-ollama-router`; the next reviewed router-only deployment applies the `llm-router` container name while preserving existing client and controller hostnames. See [rename and migration notes](docs/RENAMING.md).
 
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](docs/PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 
