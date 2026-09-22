@@ -56,15 +56,15 @@ docker build -t llm-router:test .
 
 ```bash
 docker compose --env-file .env up --build -d
-curl -fsS http://192.168.1.21:11434/health
-curl -fsS http://192.168.1.21:11434/api/version
-curl -fsS http://192.168.1.21:11435/admin/api/summary
+curl -fsS http://192.168.1.4:11434/health
+curl -fsS http://192.168.1.4:11434/api/version
+curl -fsS http://192.168.1.4:11435/admin/api/summary
 ```
 
 Open the no-token admin portal in a browser:
 
 ```text
-http://192.168.1.21:11435/
+http://192.168.1.4:11435/
 ```
 
 Expected:
@@ -80,7 +80,7 @@ Set the active marker to the currently prewarmed model.
 ### Missing keep_alive
 
 ```bash
-curl -fsS http://192.168.1.21:11434/api/chat \
+curl -fsS http://192.168.1.4:11434/api/chat \
   -H 'content-type: application/json' \
   -H 'x-client-name: manual-missing-keepalive' \
   -d '{
@@ -90,7 +90,7 @@ curl -fsS http://192.168.1.21:11434/api/chat \
   }'
 ```
 
-Expected request history in `http://192.168.1.21:11435/`:
+Expected request history in `http://192.168.1.4:11435/`:
 
 ```text
 incomingKeepAlive: null/undefined
@@ -108,7 +108,7 @@ docker exec local-ai-llm-legacy-ollama ollama ps
 ### Finite keep_alive
 
 ```bash
-curl -fsS http://192.168.1.21:11434/api/chat \
+curl -fsS http://192.168.1.4:11434/api/chat \
   -H 'content-type: application/json' \
   -H 'x-client-name: manual-finite-keepalive' \
   -d '{
@@ -136,7 +136,7 @@ UNTIL Forever
 ## Model mismatch test
 
 ```bash
-curl -i http://192.168.1.21:11434/api/chat \
+curl -i http://192.168.1.4:11434/api/chat \
   -H 'content-type: application/json' \
   -d '{
     "model":"not-the-active-model:latest",
@@ -157,7 +157,7 @@ The dashboard's recent rejects/errors panel should show the rejection.
 ## Streaming test
 
 ```bash
-curl -N http://192.168.1.21:11434/api/generate \
+curl -N http://192.168.1.4:11434/api/generate \
   -H 'content-type: application/json' \
   -H 'x-client-name: manual-streaming-test' \
   -d '{"model":"<active-model>","prompt":"Count to three."}'
@@ -174,8 +174,8 @@ Expected:
 After deploying the new endpoint, run the text and real tool-cycle smoke test:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
-ADMIN_URL=http://192.168.1.21:11435 \
+ROUTER_URL=http://192.168.1.4:11434 \
+ADMIN_URL=http://192.168.1.4:11435 \
 ./scripts/responses-smoke-test.sh
 ```
 
@@ -200,7 +200,7 @@ Tool result incorporated: ...router-smoke-42...
 Codex CLI 0.144.3 must be tested with a function call, not only a curl text request:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
+ROUTER_URL=http://192.168.1.4:11434 \
 ./scripts/codex-responses-smoke-test.sh
 ```
 
@@ -213,11 +213,11 @@ If the script reports an unsupported `web_search` tool, verify the installed Cod
 No token is required on the admin port:
 
 ```bash
-curl -fsS http://192.168.1.21:11435/
-curl -fsS http://192.168.1.21:11435/admin/api/summary
-curl -fsS -X POST http://192.168.1.21:11435/admin/api/prewarm
+curl -fsS http://192.168.1.4:11435/
+curl -fsS http://192.168.1.4:11435/admin/api/summary
+curl -fsS -X POST http://192.168.1.4:11435/admin/api/prewarm
 curl -fsS -X POST -H 'content-type: application/json' \
-  -d '{"enabled":true}' http://192.168.1.21:11435/admin/api/maintenance
+  -d '{"enabled":true}' http://192.168.1.4:11435/admin/api/maintenance
 ```
 
 For a `llama_cpp` profile, a successful prewarm response confirms one generated
@@ -232,8 +232,8 @@ While maintenance mode is enabled, `/api/chat` and `/api/generate` on `11434` sh
 Legacy same-port admin APIs still honor `ADMIN_TOKEN` when it is set:
 
 ```bash
-curl -i http://192.168.1.21:11434/admin/api/summary
-curl -fsS -H "X-Admin-Token: $ADMIN_TOKEN" http://192.168.1.21:11434/admin/api/summary
+curl -i http://192.168.1.4:11434/admin/api/summary
+curl -fsS -H "X-Admin-Token: $ADMIN_TOKEN" http://192.168.1.4:11434/admin/api/summary
 ```
 
 The first command should return `401` when `ADMIN_TOKEN` is non-empty; the second should succeed.

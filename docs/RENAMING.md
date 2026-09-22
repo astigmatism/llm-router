@@ -54,7 +54,7 @@ The stack, checkout directories and model backend names stay unchanged. Historic
 
 ## Production identity verified on 2026-09-16
 
-The container `local-ai-ollama-router` on `192.168.1.21` reported image and OCI revision `b9f61b8148b1eeddc58ecc3032213526f479a466`. SHA-256 checks of all 23 files under `src/`, `public/`, and `package.json` matched that Git revision exactly.
+The container `local-ai-ollama-router` on `192.168.1.4` reported image and OCI revision `b9f61b8148b1eeddc58ecc3032213526f479a466`. SHA-256 checks of all 23 files under `src/`, `public/`, and `package.json` matched that Git revision exactly.
 
 Its health response reported `backend_kind: llama_cpp`, and the resident servers `qwen38-daytime` and `qwen38-nighttime` ran the pinned llama.cpp image. The Compose project was `local-ai-ollama-stack`, service `ai-router`; API and admin ports were `11434` and `11435`.
 

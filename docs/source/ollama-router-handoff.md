@@ -53,23 +53,23 @@ Current exposed services from `docker ps --format 'table {{.Names}}\t{{.Ports}}'
 
 ```text
 NAMES                        PORTS
-local-ai-llm-legacy          192.168.1.21:8001->8000/tcp
-local-ai-llm-legacy-ollama   192.168.1.21:11434->11434/tcp
-local-ai-comfyui             192.168.1.21:8188->8188/tcp
-portainer                    8000/tcp, 9000/tcp, 192.168.1.21:9443->9443/tcp
-open-webui                   192.168.1.21:3000->8080/tcp
+local-ai-llm-legacy          192.168.1.4:8001->8000/tcp
+local-ai-llm-legacy-ollama   192.168.1.4:11434->11434/tcp
+local-ai-comfyui             192.168.1.4:8188->8188/tcp
+portainer                    8000/tcp, 9000/tcp, 192.168.1.4:9443->9443/tcp
+open-webui                   192.168.1.4:3000->8080/tcp
 ```
 
 Important current exposure:
 
 ```text
-local-ai-llm-legacy-ollama   192.168.1.21:11434->11434/tcp
+local-ai-llm-legacy-ollama   192.168.1.4:11434->11434/tcp
 ```
 
 This means raw Ollama is directly reachable from the LAN at:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 Any LAN client can bypass `local-ai-llm-legacy` and call Ollama directly.
@@ -311,7 +311,7 @@ Important caution: OpenWebUI may persist some configuration in its database. Aft
 Current ComfyUI container:
 
 ```text
-local-ai-comfyui 192.168.1.21:8188->8188/tcp
+local-ai-comfyui 192.168.1.4:8188->8188/tcp
 ```
 
 Current Docker network:
@@ -335,13 +335,13 @@ Known raw Ollama references:
 Known current hardcoded/default URL:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 Target future URL should be the router's LAN endpoint, for example:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 only after port `11434` is moved from raw Ollama to the router.
@@ -349,7 +349,7 @@ only after port `11434` is moved from raw Ollama to the router.
 Alternative during transition:
 
 ```text
-http://192.168.1.21:<temporary-router-port>
+http://192.168.1.4:<temporary-router-port>
 ```
 
 Recommended improvement:
@@ -416,7 +416,7 @@ This device was not inspected directly in the troubleshooting session, but it is
 Expected current behavior:
 
 ```text
-voice assistant -> http://192.168.1.21:11434 -> raw Ollama
+voice assistant -> http://192.168.1.4:11434 -> raw Ollama
 ```
 
 Target future behavior:
@@ -679,7 +679,7 @@ Avoid giving the portal automatic authority to swap models unless that is explic
 The raw Ollama container should eventually stop publishing this LAN port:
 
 ```text
-192.168.1.21:11434->11434/tcp
+192.168.1.4:11434->11434/tcp
 ```
 
 Instead, raw Ollama should be reachable only from the router on an internal Docker network.
@@ -688,7 +688,7 @@ Current raw Ollama exposure:
 
 ```yaml
 ports:
-  - "${OLLAMA_BIND_IP:-192.168.1.21}:${OLLAMA_PORT:-11434}:11434"
+  - "${OLLAMA_BIND_IP:-192.168.1.4}:${OLLAMA_PORT:-11434}:11434"
 ```
 
 Target raw Ollama exposure:
@@ -705,14 +705,14 @@ or no public `ports` entry at all.
 For compatibility, the router can eventually publish:
 
 ```text
-192.168.1.21:11434->11434/tcp
+192.168.1.4:11434->11434/tcp
 ```
 
-This allows clients and workflow JSON that currently point to `http://192.168.1.21:11434` to keep working after the cutover, but with the router enforcing policy.
+This allows clients and workflow JSON that currently point to `http://192.168.1.4:11434` to keep working after the cutover, but with the router enforcing policy.
 
 Transition option:
 
-1. Start router on a temporary port, for example `192.168.1.21:11435`.
+1. Start router on a temporary port, for example `192.168.1.4:11435`.
 2. Test all router behavior.
 3. Repoint OpenWebUI/ComfyUI/voice assistant to `11435`.
 4. Once stable, move raw Ollama off `11434` and move router onto `11434`.
@@ -798,7 +798,7 @@ OLLAMA_UPSTREAM_URL=http://ollama:11434
 Router public test port example:
 
 ```text
-192.168.1.21:11435->11434/tcp
+192.168.1.4:11435->11434/tcp
 ```
 
 ### Phase 2: Implement Ollama-Compatible Proxy Endpoints
@@ -901,19 +901,19 @@ Update ComfyUI custom node defaults and user workflow JSON references away from 
 Current known URL:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 During transition, use:
 
 ```text
-http://192.168.1.21:11435
+http://192.168.1.4:11435
 ```
 
 or final router port:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 After running a ComfyUI workflow that uses Ollama, verify:
@@ -940,11 +940,11 @@ Once all clients are verified through the router:
 
 1. Remove raw Ollama `ports` mapping.
 2. Keep raw Ollama reachable only on an internal Docker network.
-3. Publish the router on the compatibility port, likely `192.168.1.21:11434`.
+3. Publish the router on the compatibility port, likely `192.168.1.4:11434`.
 4. Verify raw Ollama is not reachable from LAN:
 
    ```bash
-   curl http://192.168.1.21:<raw-ollama-port>/api/version
+   curl http://192.168.1.4:<raw-ollama-port>/api/version
    ```
 
    should fail if raw port is no longer published.
@@ -952,7 +952,7 @@ Once all clients are verified through the router:
 5. Verify router is reachable:
 
    ```bash
-   curl http://192.168.1.21:11434/api/version
+   curl http://192.168.1.4:11434/api/version
    ```
 
 ### Phase 9: Deprecate `local-ai-llm-legacy`
@@ -969,7 +969,7 @@ Move remaining useful functionality to router/admin portal:
 
 Then:
 
-1. Stop publishing `local-ai-llm-legacy` on `192.168.1.21:8001`.
+1. Stop publishing `local-ai-llm-legacy` on `192.168.1.4:8001`.
 2. Keep it available only temporarily if needed for comparison.
 3. Archive the project once the router fully replaces it.
 
@@ -1034,13 +1034,13 @@ Create a new router project under /home/astigmatism/apps/local-ai-ollama-router 
 
 Current topology:
 - Raw Ollama container: local-ai-llm-legacy-ollama
-- Raw Ollama is currently published at 192.168.1.21:11434->11434/tcp
-- local-ai-llm-legacy app is published at 192.168.1.21:8001->8000/tcp
-- OpenWebUI is published at 192.168.1.21:3000->8080/tcp
-- ComfyUI is published at 192.168.1.21:8188->8188/tcp
+- Raw Ollama is currently published at 192.168.1.4:11434->11434/tcp
+- local-ai-llm-legacy app is published at 192.168.1.4:8001->8000/tcp
+- OpenWebUI is published at 192.168.1.4:3000->8080/tcp
+- ComfyUI is published at 192.168.1.4:8188->8188/tcp
 - OpenWebUI currently uses OLLAMA_BASE_URL=http://ollama:11434
 - Docker alias ollama currently resolves to raw local-ai-llm-legacy-ollama
-- ComfyUI custom nodes/workflows currently reference http://192.168.1.21:11434
+- ComfyUI custom nodes/workflows currently reference http://192.168.1.4:11434
 
 Core policy:
 The profile/deployment system is the source of truth for the active/prewarmed model. The router must not auto-select, auto-load, or auto-swap models. For the active model only, every request to /api/chat and /api/generate must be forwarded to Ollama with keep_alive=-1, regardless of whether the client omitted keep_alive or sent a finite value. Requests for non-active models should fail closed by default unless explicitly allowed by admin configuration.
@@ -1070,7 +1070,7 @@ Migration goals:
 - repoint ComfyUI custom nodes/workflows to the router
 - repoint voice assistant and other LAN clients
 - remove raw Ollama LAN port exposure
-- eventually publish router on 192.168.1.21:11434 for compatibility
+- eventually publish router on 192.168.1.4:11434 for compatibility
 - deprecate local-ai-llm-legacy after router/admin portal replaces its useful features
 
 Important implementation constraints:

@@ -207,7 +207,7 @@ Top-level `type: "function"` tools and Codex `type: "namespace"` groups containi
 ### Non-streaming example
 
 ```bash
-curl -fsS http://192.168.1.21:11434/v1/responses \
+curl -fsS http://192.168.1.4:11434/v1/responses \
   -H 'content-type: application/json' \
   -d '{
     "input": "Reply with exactly: adapter ready",
@@ -222,7 +222,7 @@ The result is an OpenAI Responses object containing `id`, `object: "response"`, 
 ### Streaming example
 
 ```bash
-curl -N http://192.168.1.21:11434/v1/responses \
+curl -N http://192.168.1.4:11434/v1/responses \
   -H 'content-type: application/json' \
   -d '{"input":"Give a five-word health check.","stream":true,"store":false}'
 ```
@@ -239,7 +239,7 @@ web_search = "disabled"
 
 [model_providers.llm_router]
 name = "LLM Router"
-base_url = "http://192.168.1.21:11434/v1"
+base_url = "http://192.168.1.4:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false
 ```

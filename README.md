@@ -13,7 +13,7 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
 
 ## What this gives you
 
-- Ollama-compatible API on the router API listener, normally `http://192.168.1.21:11434`:
+- Ollama-compatible API on the router API listener, normally `http://192.168.1.4:11434`:
   - `GET /api/tags`
   - `POST /api/show`
   - `POST /api/chat`
@@ -35,7 +35,7 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
   - `GET /v1/models`
   - `GET /v1/models/{alias}`
   - primary catalogs expose resident models and their stable service aliases; legacy mode exposes one active alias
-- Separate browser admin portal, normally `http://192.168.1.21:11435/` or `http://192.168.1.21:11435/admin`.
+- Separate browser admin portal, normally `http://192.168.1.4:11435/` or `http://192.168.1.4:11435/admin`.
 - No token or login for the browser admin portal. It is intended for trusted local/LAN use only.
 - Active-model fail-closed policy by default.
 - Request-level `keep_alive` normalization to `-1` for protected active-model requests.
@@ -53,8 +53,8 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
 
 | Port | Purpose | URL |
 |---:|---|---|
-| `11434` | Ollama-compatible router API for clients | `http://192.168.1.21:11434/api/version` |
-| `11435` | Human admin portal for local/LAN operators | `http://192.168.1.21:11435/` |
+| `11434` | Ollama-compatible router API for clients | `http://192.168.1.4:11434/api/version` |
+| `11435` | Human admin portal for local/LAN operators | `http://192.168.1.4:11435/` |
 
 The API port remains Ollama-compatible. The admin portal is intentionally not buried under the Ollama API URL structure. The old same-port `/admin/api/*` machine endpoints are still present for compatibility and still honor `ADMIN_TOKEN` when it is set, but the browser portal and its admin-port JSON APIs do not require a token.
 
@@ -78,19 +78,19 @@ cp .env.example .env
   runtime/reasoning-capabilities.night.example.json
 
 docker compose --env-file .env up --build -d
-curl http://192.168.1.21:11434/api/version
+curl http://192.168.1.4:11434/api/version
 ```
 
 Open the admin portal in a browser:
 
 ```text
-http://192.168.1.21:11435/
+http://192.168.1.4:11435/
 ```
 
 The same dashboard is also available at:
 
 ```text
-http://192.168.1.21:11435/admin
+http://192.168.1.4:11435/admin
 ```
 
 ## Active model source of truth
@@ -198,7 +198,7 @@ web_search = "disabled"
 
 [model_providers.llm_router]
 name = "LLM Router"
-base_url = "http://192.168.1.21:11434/v1"
+base_url = "http://192.168.1.4:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false
 ```
@@ -245,16 +245,16 @@ Because the portal is unauthenticated by design, expose `11435` only on trusted 
 ## Smoke test
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
-ADMIN_URL=http://192.168.1.21:11435 \
+ROUTER_URL=http://192.168.1.4:11434 \
+ADMIN_URL=http://192.168.1.4:11435 \
 ./scripts/curl-smoke-test.sh 'model-a:test'
 ```
 
 Run the Responses text-and-tool-cycle smoke test without changing the active model:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
-ADMIN_URL=http://192.168.1.21:11435 \
+ROUTER_URL=http://192.168.1.4:11434 \
+ADMIN_URL=http://192.168.1.4:11435 \
 REQUESTED_MODEL=local-active \
 ./scripts/responses-smoke-test.sh
 ```
@@ -271,10 +271,10 @@ After Open WebUI, ComfyUI, the voice assistant, and local apps are verified thro
 
 1. Remove raw Ollama's LAN `ports` mapping.
 2. Keep raw Ollama reachable only on an internal Docker network.
-3. Publish the router API on `192.168.1.21:11434`.
-4. Publish the router admin portal on `192.168.1.21:11435`.
-5. Confirm `http://192.168.1.21:11434/api/version` is the router-backed endpoint.
-6. Confirm `http://192.168.1.21:11435/` opens the no-token dashboard.
+3. Publish the router API on `192.168.1.4:11434`.
+4. Publish the router admin portal on `192.168.1.4:11435`.
+5. Confirm `http://192.168.1.4:11434/api/version` is the router-backed endpoint.
+6. Confirm `http://192.168.1.4:11435/` opens the no-token dashboard.
 7. Confirm no clients resolve `ollama` to raw Ollama unless that is deliberate.
 
 See `docs/DEPLOYMENT_HANDOFF.md` for the full phased migration plan.

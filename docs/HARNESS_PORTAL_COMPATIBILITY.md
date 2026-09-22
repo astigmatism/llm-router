@@ -9,7 +9,7 @@ Prepared 2026-09-12. This release integrates stable OpenAI alias discovery with 
 
 ## Reconfirmed evidence and provenance
 
-Read-only `GET http://192.168.1.21:11434/v1/models` returned HTTP 200, two canonical entries, complete public schema-v2 metadata and no warnings. `local-active` appeared only in the primary entry's `aliases`; its detail endpoint already resolved the primary. No production generation, source write, configuration change, build or restart was performed for this investigation.
+Read-only `GET http://192.168.1.4:11434/v1/models` returned HTTP 200, two canonical entries, complete public schema-v2 metadata and no warnings. `local-active` appeared only in the primary entry's `aliases`; its detail endpoint already resolved the primary. No production generation, source write, configuration change, build or restart was performed for this investigation.
 
 | Field | Primary / `local-active` target | Secondary |
 |---|---|---|

@@ -237,7 +237,7 @@ def main():
             checks = verify_images(p, backup)
             p.write(PRIMARY / 'model-catalog.json', catalog)
             p.publish_marker()
-            live = p.http('http://192.168.1.21:11434/api/show', {'model': 'nighttime'})
+            live = p.http('http://192.168.1.4:11434/api/show', {'model': 'nighttime'})
             if 'vision' not in live['capabilities']:
                 raise RuntimeError('Router did not publish Nighttime vision')
             delta = {'source_revision': revision, 'completed_at': now(), 'projector': receipt,

@@ -19,10 +19,10 @@ OLLAMA_BASE_URL: "http://ai-router:11434"
 LAN API target:
 
 ```yaml
-OLLAMA_BASE_URL: "http://192.168.1.21:11434"
+OLLAMA_BASE_URL: "http://192.168.1.4:11434"
 ```
 
-The separate browser admin portal is `http://192.168.1.21:11435/`; do not configure clients to use the admin port.
+The separate browser admin portal is `http://192.168.1.4:11435/`; do not configure clients to use the admin port.
 
 After changing environment variables, verify OpenWebUI did not keep a database-stored Ollama URL by checking router request history while sending a chat.
 
@@ -51,14 +51,14 @@ That consumer should configure only the stable alias, fetch its entry at startup
 Search for hardcoded raw URLs:
 
 ```bash
-grep -R "192.168.1.21:11434\|127.0.0.1:11434\|ollama:11434" \
+grep -R "192.168.1.4:11434\|127.0.0.1:11434\|ollama:11434" \
   /home/astigmatism/apps/local-ai-comfyui
 ```
 
 Use the Ollama-compatible router API URL:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 The admin portal is on `11435` and is not an Ollama API endpoint.

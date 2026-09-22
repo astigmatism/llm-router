@@ -28,7 +28,7 @@ SOURCE = Path(__file__).resolve().parents[2]
 PRIMARY = Path('/home/astigmatism/apps/local-ai-primary')
 MODEL = 'qwen3.8-27b-abliterated-q6_k'
 BACKEND = 'http://127.0.0.1:18081'
-ROUTER = 'http://192.168.1.21:11434'
+ROUTER = 'http://192.168.1.4:11434'
 CONTEXT = 65536
 BEFORE = {
     'manifest.json': '3760fa0748fcdb7f774c83839e10b3e92a255a81986f626a5d3ce17b3d2e8f1f',

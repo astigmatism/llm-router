@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROUTER_URL="${ROUTER_URL:-http://192.168.1.21:11434}"
+ROUTER_URL="${ROUTER_URL:-http://192.168.1.4:11434}"
 ROUTER_URL="${ROUTER_URL%/}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 REQUESTED_MODEL="${REQUESTED_MODEL:-${1:-local-active}}"

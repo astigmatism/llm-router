@@ -10,9 +10,9 @@ services:
     restart: unless-stopped
     ports:
       # 11434 = Ollama-compatible router API.
-      - "${ROUTER_BIND_IP:-192.168.1.21}:11434:11434"
+      - "${ROUTER_BIND_IP:-192.168.1.4}:11434:11434"
       # 11435 = unauthenticated human admin portal.
-      - "${ROUTER_BIND_IP:-192.168.1.21}:${ADMIN_PUBLIC_PORT:-11435}:${ADMIN_PORT:-11435}"
+      - "${ROUTER_BIND_IP:-192.168.1.4}:${ADMIN_PUBLIC_PORT:-11435}:${ADMIN_PORT:-11435}"
     environment:
       HOST: "0.0.0.0"
       PORT: "11434"

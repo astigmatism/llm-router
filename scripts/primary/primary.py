@@ -64,7 +64,7 @@ def admin(path, body=None):
             k, v = line.split('=', 1)
             parts = shlex.split(v, comments=True)
             env[k.strip()] = parts[0] if parts else ''
-    return http('http://' + env.get('ROUTER_BIND_IP', '192.168.1.21') + ':' +
+    return http('http://' + env.get('ROUTER_BIND_IP', '192.168.1.4') + ':' +
         env.get('ADMIN_PUBLIC_PORT', '11435') + '/admin/api/' + path, body,
         {env.get('ADMIN_SESSION_HEADER', 'X-Admin-Token'): env['ADMIN_TOKEN']})
 

@@ -12,7 +12,7 @@ import requests
 spec = importlib.util.spec_from_file_location('installed_primary', '/home/astigmatism/apps/local-ai-primary/primary.py')
 primary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(primary)
-BASE = 'http://192.168.1.21:11434'
+BASE = 'http://192.168.1.4:11434'
 MODEL = os.environ.get('QUEUE_TEST_MODEL', 'qwen3.8-27b-abliterated-q6_k')
 
 

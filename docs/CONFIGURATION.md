@@ -10,13 +10,13 @@ All configuration is environment-variable driven. `.env.example` is the starting
 |---|---:|---|
 | `HOST` | `0.0.0.0` | Interface for the Ollama-compatible API listener inside the container. |
 | `PORT` | `11434` | Ollama-compatible API port inside the container. |
-| `ROUTER_BIND_IP` | `192.168.1.21` | Host IP used by Compose for published ports. |
+| `ROUTER_BIND_IP` | `192.168.1.4` | Host IP used by Compose for published ports. |
 | `ROUTER_PUBLIC_PORT` | `11434` | Host port for the Ollama-compatible router API. |
 
 Clients should use the API listener, for example:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 ## Admin portal listener
@@ -31,8 +31,8 @@ http://192.168.1.21:11434
 The human dashboard is available at:
 
 ```text
-http://192.168.1.21:11435/
-http://192.168.1.21:11435/admin
+http://192.168.1.4:11435/
+http://192.168.1.4:11435/admin
 ```
 
 The admin portal and its admin-port JSON APIs are intentionally unauthenticated. This is a local/LAN trust assumption; do not publish the admin port to untrusted networks.

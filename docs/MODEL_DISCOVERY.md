@@ -173,26 +173,26 @@ Consumers must retain their last safe limits or choose conservative fallbacks wh
 Fetch the one-entry catalog:
 
 ```bash
-curl -i http://192.168.1.21:11434/v1/models
+curl -i http://192.168.1.4:11434/v1/models
 ```
 
 Fetch and save an ETag:
 
 ```bash
-curl -i http://192.168.1.21:11434/v1/models/local-active
+curl -i http://192.168.1.4:11434/v1/models/local-active
 ```
 
 Revalidate a previously received entry:
 
 ```bash
-curl -i http://192.168.1.21:11434/v1/models/local-active \
+curl -i http://192.168.1.4:11434/v1/models/local-active \
   -H 'If-None-Match: "previous-etag"'
 ```
 
 Use the same stable ID for inference:
 
 ```bash
-curl -fsS http://192.168.1.21:11434/v1/responses \
+curl -fsS http://192.168.1.4:11434/v1/responses \
   -H 'content-type: application/json' \
   -d '{"model":"local-active","input":"Reply with ok.","stream":false}'
 ```

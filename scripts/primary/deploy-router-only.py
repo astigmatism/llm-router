@@ -155,7 +155,7 @@ def main():
     deadline = time.monotonic() + 120
     while True:
         try:
-            with urllib.request.urlopen('http://192.168.1.21:11434/health', timeout=3) as response:
+            with urllib.request.urlopen('http://192.168.1.4:11434/health', timeout=3) as response:
                 if response.status == 200: break
         except Exception:
             pass

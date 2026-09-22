@@ -7,7 +7,7 @@ This historical topology guide describes an Ollama-backed installation. Current 
 Current raw Ollama is exposed on the LAN at:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 OpenWebUI currently uses Docker DNS `ollama:11434`, and that alias resolves to the raw Ollama container. ComfyUI and the voice assistant are expected to use the LAN endpoint. The migration objective is to make the router the only public Ollama-compatible endpoint.
@@ -17,8 +17,8 @@ OpenWebUI currently uses Docker DNS `ollama:11434`, and that alias resolves to t
 The desired target is a split listener setup:
 
 ```text
-http://192.168.1.21:11434 = Ollama-compatible router API
-http://192.168.1.21:11435 = unauthenticated human admin portal
+http://192.168.1.4:11434 = Ollama-compatible router API
+http://192.168.1.4:11435 = unauthenticated human admin portal
 ```
 
 If raw Ollama is still published on `11434`, move it behind the Docker network before binding the router API to `11434`, or temporarily set `ROUTER_PUBLIC_PORT` to another port only for migration testing.
@@ -36,7 +36,7 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-ROUTER_BIND_IP=192.168.1.21
+ROUTER_BIND_IP=192.168.1.4
 ROUTER_PUBLIC_PORT=11434
 ADMIN_ENABLED=true
 ADMIN_BIND_HOST=0.0.0.0
@@ -83,14 +83,14 @@ docker logs -f llm-router
 Confirm the router is reachable:
 
 ```bash
-curl http://192.168.1.21:11434/
-curl http://192.168.1.21:11434/api/version
+curl http://192.168.1.4:11434/
+curl http://192.168.1.4:11434/api/version
 ```
 
 Open admin portal, no token required:
 
 ```text
-http://192.168.1.21:11435/
+http://192.168.1.4:11435/
 ```
 
 ## Responses/Codex production handoff
@@ -105,7 +105,7 @@ web_search = "disabled"
 
 [model_providers.llm_router]
 name = "LLM Router"
-base_url = "http://192.168.1.21:11434/v1"
+base_url = "http://192.168.1.4:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false
 ```
@@ -113,12 +113,12 @@ requires_openai_auth = false
 Before production cutover, run both smoke tests against the candidate deployment without changing the marker:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
-ADMIN_URL=http://192.168.1.21:11435 \
+ROUTER_URL=http://192.168.1.4:11434 \
+ADMIN_URL=http://192.168.1.4:11435 \
 REQUESTED_MODEL=local-active \
 ./scripts/responses-smoke-test.sh
 
-ROUTER_URL=http://192.168.1.21:11434 \
+ROUTER_URL=http://192.168.1.4:11434 \
 REQUESTED_MODEL=local-active \
 ./scripts/codex-responses-smoke-test.sh
 ```
@@ -132,8 +132,8 @@ Strict-mode rollback is configuration-only: set `REWRITE_REQUESTED_MODEL_TO_ACTI
 Run:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 \
-ADMIN_URL=http://192.168.1.21:11435 \
+ROUTER_URL=http://192.168.1.4:11434 \
+ADMIN_URL=http://192.168.1.4:11435 \
 ./scripts/curl-smoke-test.sh '<active-model>'
 ```
 
@@ -149,7 +149,7 @@ Expected:
 UNTIL Forever
 ```
 
-Also check the admin request history at `http://192.168.1.21:11435/`. The two smoke-test chat requests should show:
+Also check the admin request history at `http://192.168.1.4:11435/`. The two smoke-test chat requests should show:
 
 ```text
 forwardedKeepAlive: -1
@@ -174,7 +174,7 @@ OLLAMA_BASE_URL: "http://ai-router:11434"
 or during transition:
 
 ```yaml
-OLLAMA_BASE_URL: "http://192.168.1.21:11434"
+OLLAMA_BASE_URL: "http://192.168.1.4:11434"
 ```
 
 Prefer `http://ai-router:11434` if OpenWebUI is attached to the same Docker network and can resolve the router service. Verify:
@@ -192,13 +192,13 @@ Caution: OpenWebUI may persist connection settings in its database. If traffic d
 Search current ComfyUI app files and workflow JSON for:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 Use the router API URL:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 If raw Ollama is still occupying `11434` during a temporary migration, use the temporary `ROUTER_PUBLIC_PORT` value, then return clients to `11434` after cutover.
@@ -210,7 +210,7 @@ Recommended improvement: make the ComfyUI Ollama prompt bridge read a single env
 Set the voice assistant Ollama base URL to:
 
 ```text
-http://192.168.1.21:11434
+http://192.168.1.4:11434
 ```
 
 The voice assistant should not select or swap models. It should call the active model only. If it cannot supply a model, either configure it to send the active model or deliberately set `USE_ACTIVE_MODEL_WHEN_MISSING=true` after accepting the behavior.
@@ -237,14 +237,14 @@ ADMIN_PUBLIC_PORT=11435
 Verify direct raw endpoint is no longer reachable from the LAN:
 
 ```bash
-ROUTER_URL=http://192.168.1.21:11434 ADMIN_URL=http://192.168.1.21:11435 RAW_URL=http://old-raw-ollama-host:11434 ./scripts/check-cutover.sh
+ROUTER_URL=http://192.168.1.4:11434 ADMIN_URL=http://192.168.1.4:11435 RAW_URL=http://old-raw-ollama-host:11434 ./scripts/check-cutover.sh
 ```
 
 After the final port move, omit `RAW_URL` when there is no suspected raw LAN address, or set it to the old raw Ollama address to confirm that bypass path is gone.
 
 ## Phase 9: deprecate local-ai-llm-legacy
 
-Once the router admin UI covers the needed portal features, stop publishing `local-ai-llm-legacy` on `192.168.1.21:8001`. Keep it temporarily available for comparison only if needed, then archive it.
+Once the router admin UI covers the needed portal features, stop publishing `local-ai-llm-legacy` on `192.168.1.4:8001`. Keep it temporarily available for comparison only if needed, then archive it.
 
 ## Acceptance checklist
 
@@ -262,7 +262,7 @@ Once the router admin UI covers the needed portal features, stop publishing `loc
 - Request history shows client identity, endpoint, model, keep-alive rewrite, status, and latency.
 - Responses history distinguishes requested, active, and forwarded model names and records `modelRewritten` plus reasoning telemetry.
 - `ollama ps` contains only the active model after advisory-name tests, and no model-management operation reaches Ollama.
-- Admin dashboard is reachable without a token on `http://192.168.1.21:11435/` and shows upstream health and active loaded state.
+- Admin dashboard is reachable without a token on `http://192.168.1.4:11435/` and shows upstream health and active loaded state.
 - Raw Ollama is not published directly to the LAN.
 
 ## Independent nighttime CUDA vision OOM

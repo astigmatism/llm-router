@@ -68,7 +68,7 @@ context descriptions. It preserves preset IDs, prompts, parameters, tools and
 access grants, verifies Daytime presets remain unchanged, and refreshes the model
 listing without restarting Open WebUI.
 
-API `http://192.168.1.21:11434`; admin `http://192.168.1.21:11435`; container API `http://ai-router:11434`.
+API `http://192.168.1.4:11434`; admin `http://192.168.1.4:11435`; container API `http://ai-router:11434`.
 
 - Router source: a clean checkout of a published Git revision. The image carries that exact revision in its OCI label; see [release workflow](RELEASE.md). Preserve the previous production checkout and images for recovery.
 - Source policy: repository `runtime/primary-model-catalog.json` → `/home/astigmatism/apps/local-ai-primary/model-catalog.json` → publisher → `/home/astigmatism/apps/local-ai-ollama-stack/runtime/router/active-model.json`. The root coding projection and both entries are validated together.

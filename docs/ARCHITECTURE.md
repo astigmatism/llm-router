@@ -152,7 +152,7 @@ returned or written to the event log.
 
 ### Phase 1: API/admin split
 
-The router publishes the Ollama-compatible API on `192.168.1.21:11434` and the human admin portal on `192.168.1.21:11435`. It forwards to raw Ollama at `http://ollama:11434` on the internal Docker network.
+The router publishes the Ollama-compatible API on `192.168.1.4:11434` and the human admin portal on `192.168.1.4:11435`. It forwards to raw Ollama at `http://ollama:11434` on the internal Docker network.
 
 ### Phase 2: client migration
 
@@ -160,4 +160,4 @@ Repoint OpenWebUI, ComfyUI, the voice assistant, and local apps to the router. C
 
 ### Phase 3: final cutover
 
-Raw Ollama loses LAN port exposure. The router remains the public compatibility endpoint at `192.168.1.21:11434`, and the no-token admin portal remains on `192.168.1.21:11435` for trusted local/LAN operators.
+Raw Ollama loses LAN port exposure. The router remains the public compatibility endpoint at `192.168.1.4:11434`, and the no-token admin portal remains on `192.168.1.4:11435` for trusted local/LAN operators.

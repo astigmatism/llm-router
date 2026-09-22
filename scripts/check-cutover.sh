@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROUTER_URL="${ROUTER_URL:-http://192.168.1.21:11434}"
-ADMIN_URL="${ADMIN_URL:-http://192.168.1.21:11435}"
+ROUTER_URL="${ROUTER_URL:-http://192.168.1.4:11434}"
+ADMIN_URL="${ADMIN_URL:-http://192.168.1.4:11435}"
 RAW_URL="${RAW_URL:-}"
 
 echo "Router API version:"
