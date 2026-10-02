@@ -80,6 +80,52 @@ test('llama.cpp Responses adapter preserves explicit finite temperatures', () =>
   }
 });
 
+function prepareResponsesSampling(originalFields) {
+  const adapter = new LlamaCppBackendAdapter({}, nonReasoningLlamaModel);
+  return adapter.prepareResponses({
+    originalBody: { input: 'adapter unit input', ...originalFields },
+    upstreamBody: { messages: [{ role: 'user', content: 'adapter unit input' }] },
+    stream: false
+  });
+}
+
+test('llama.cpp Responses adapter forwards validated top-level seed, stop, and sampling fields', () => {
+  const prepared = prepareResponsesSampling({ seed: 9, stop: 'DONE', top_k: 12, repeat_penalty: 1.1 });
+  assert.equal(prepared.body.seed, 9);
+  assert.deepEqual(prepared.body.stop, ['DONE']);
+  assert.equal(prepared.body.top_k, 12);
+  assert.equal(prepared.body.repeat_penalty, 1.1);
+  assert.deepEqual(prepared.samplingControls, ['repeat_penalty', 'seed', 'stop', 'top_k']);
+  assert.equal(prepared.seedForwarded, true);
+
+  const random = prepareResponsesSampling({ seed: -1 });
+  assert.equal(Object.hasOwn(random.body, 'seed'), false);
+  assert.equal(random.seedForwarded, false);
+  assert.deepEqual(random.samplingAcceptedAsDefault, ['seed']);
+
+  const omitted = prepareResponsesSampling({});
+  assert.deepEqual(omitted.samplingControls, []);
+  assert.equal(omitted.seedForwarded, false);
+});
+
+test('llama.cpp Responses adapter rejects invalid sampling and Ollama options objects', () => {
+  for (const [fields, code, param] of [
+    [{ seed: 4294967296 }, 'INVALID_SAMPLING_OPTION', 'seed'],
+    [{ stop: [1] }, 'INVALID_SAMPLING_OPTION', 'stop'],
+    [{ tfs_z: 0.5 }, 'UNSUPPORTED_SAMPLING_OPTION', 'tfs_z'],
+    [{ options: { seed: 1 } }, 'UNSUPPORTED_OPTION', 'options']
+  ]) {
+    assert.throws(
+      () => prepareResponsesSampling(fields),
+      (error) => error instanceof BackendAdapterError
+        && error.statusCode === 400
+        && error.code === code
+        && error.param === param,
+      JSON.stringify(fields)
+    );
+  }
+});
+
 test('normalizes bounded output limits without changing Ollama profiles globally', () => {
   const marker = { default_output_tokens: 512, max_output_tokens: 4096 };
   assert.equal(normalizeOutputLimit({}, marker), 512);

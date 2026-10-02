@@ -1086,6 +1086,14 @@ async function handleProxy(request, response, url, context) {
               : {})
           });
         }
+        if (Array.isArray(prepared.samplingControls)) {
+          // Field names and booleans only; sampling values and content are not recorded.
+          Object.assign(commonRecord, {
+            samplingControls: prepared.samplingControls,
+            seedForwarded: prepared.seedForwarded,
+            samplingAcceptedAsDefault: prepared.samplingAcceptedAsDefault
+          });
+        }
         if (prepared.reasoning.outputLimitCapped) {
           await persistEvent(context.store, {
             type: 'output_limit_capped',

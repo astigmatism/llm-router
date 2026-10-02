@@ -625,6 +625,379 @@ test('Chat Completions preserves omitted and explicit temperatures in llama.cpp 
   }
 });
 
+function generationBodies(fixture) {
+  return fixture.backend.requests
+    .filter((request) => request.pathname === '/v1/chat/completions')
+    .map((request) => request.body);
+}
+
+function backendCallCount(fixture) {
+  return fixture.backend.requests
+    .filter((request) => ['/apply-template', '/tokenize', '/v1/chat/completions'].includes(request.pathname))
+    .length;
+}
+
+async function settledRecords(fixture, count) {
+  for (let attempt = 0; attempt < 100 && fixture.context.store.recentRequests(count).length < count; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return fixture.context.store.recentRequests(count).reverse();
+}
+
+const FORWARDED_OLLAMA_SAMPLING = {
+  seed: 123,
+  stop: ['<END>', '\n\n'],
+  top_p: 0.8,
+  top_k: 20,
+  min_p: 0.05,
+  typical_p: 0.9,
+  repeat_last_n: 64,
+  repeat_penalty: 1.05,
+  presence_penalty: 0.5,
+  frequency_penalty: 0.25,
+  mirostat: 2,
+  mirostat_tau: 5,
+  mirostat_eta: 0.1
+};
+
+test('native Ollama sampling options reach llama.cpp with exact values and value-free history', async () => {
+  const fixture = await makeFixture();
+  try {
+    const schema = {
+      type: 'object',
+      properties: { prompt: { type: 'string' } },
+      required: ['prompt']
+    };
+    // The comfyui-image-frontend Prompt Assistant request shape.
+    const chat = await post(fixture.apiPort, '/api/chat', {
+      model: 'nighttime',
+      messages: [{ role: 'user', content: 'PRIVATE_PROMPT_ASSISTANT_TEXT' }],
+      stream: false,
+      think: false,
+      format: schema,
+      options: { temperature: 0.1, num_predict: 2048, ...FORWARDED_OLLAMA_SAMPLING }
+    });
+    assert.equal(chat.status, 200, await chat.text());
+
+    const generate = await post(fixture.apiPort, '/api/generate', {
+      model: 'nighttime',
+      prompt: 'PRIVATE_GENERATE_TEXT',
+      stream: false,
+      options: { num_predict: 32, seed: 4294967295, stop: ['###'] }
+    });
+    assert.equal(generate.status, 200, await generate.text());
+
+    const [chatBody, generateBody] = generationBodies(fixture);
+    for (const [field, value] of Object.entries(FORWARDED_OLLAMA_SAMPLING)) {
+      assert.deepEqual(chatBody[field], value, field);
+    }
+    assert.equal(chatBody.temperature, 0.1);
+    assert.equal(chatBody.max_tokens, 2048);
+    assert.deepEqual(chatBody.chat_template_kwargs, { enable_thinking: false });
+    assert.deepEqual(chatBody.response_format, {
+      type: 'json_schema',
+      json_schema: { name: 'response', schema, strict: true }
+    });
+    assert.equal(Object.hasOwn(chatBody, 'options'), false);
+    assert.equal(generateBody.seed, 4294967295);
+    assert.deepEqual(generateBody.stop, ['###']);
+    assert.equal(generateBody.max_tokens, 32);
+
+    const [chatRecord, generateRecord] = await settledRecords(fixture, 2);
+    assert.deepEqual(chatRecord.samplingControls, [...Object.keys(FORWARDED_OLLAMA_SAMPLING), 'temperature'].sort());
+    assert.equal(chatRecord.seedForwarded, true);
+    assert.deepEqual(chatRecord.samplingAcceptedAsDefault, []);
+    assert.equal(chatRecord.forwardedTemperature, 0.1);
+    assert.deepEqual(generateRecord.samplingControls, ['seed', 'stop']);
+    assert.equal(generateRecord.seedForwarded, true);
+    const stored = JSON.stringify([chatRecord, generateRecord]);
+    assert.doesNotMatch(stored, /PRIVATE_PROMPT_ASSISTANT_TEXT|PRIVATE_GENERATE_TEXT|<END>|###/);
+    assert.doesNotMatch(stored, /4294967295/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('top-level sampling fields take precedence over Ollama options on every llama.cpp route', async () => {
+  const fixture = await makeFixture();
+  try {
+    const native = await post(fixture.apiPort, '/api/chat', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'PRECEDENCE_NATIVE' }],
+      stream: false,
+      seed: 7,
+      stop: 'TOP',
+      options: { num_predict: 32, seed: 123, stop: ['OPTION'], top_k: 40 }
+    });
+    assert.equal(native.status, 200, await native.text());
+
+    const nullFallsThrough = await post(fixture.apiPort, '/api/chat', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'PRECEDENCE_NULL' }],
+      stream: false,
+      seed: null,
+      options: { num_predict: 32, seed: 5 }
+    });
+    assert.equal(nullFallsThrough.status, 200, await nullFallsThrough.text());
+
+    const openai = await post(fixture.apiPort, '/v1/chat/completions', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'PRECEDENCE_OPENAI' }],
+      stream: false,
+      max_tokens: 32,
+      seed: 0,
+      stop: 'END',
+      top_p: 0.5,
+      top_k: 10,
+      presence_penalty: 0.4,
+      frequency_penalty: 0.3,
+      options: { top_p: 0.9, min_p: 0.02 }
+    });
+    assert.equal(openai.status, 200, await openai.text());
+
+    const [nativeBody, nullBody, openaiBody] = generationBodies(fixture);
+    assert.equal(nativeBody.seed, 7);
+    assert.deepEqual(nativeBody.stop, ['TOP']);
+    assert.equal(nativeBody.top_k, 40);
+    assert.equal(nullBody.seed, 5);
+    assert.equal(openaiBody.seed, 0);
+    assert.deepEqual(openaiBody.stop, ['END']);
+    assert.equal(openaiBody.top_p, 0.5);
+    assert.equal(openaiBody.top_k, 10);
+    assert.equal(openaiBody.min_p, 0.02);
+    assert.equal(openaiBody.presence_penalty, 0.4);
+    assert.equal(openaiBody.frequency_penalty, 0.3);
+
+    const records = await settledRecords(fixture, 3);
+    assert.deepEqual(records.map((record) => record.seedForwarded), [true, true, true]);
+    assert.deepEqual(records[2].samplingControls, ['frequency_penalty', 'min_p', 'presence_penalty', 'seed', 'stop', 'top_k', 'top_p']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('seed -1 and removed llama.cpp samplers are accepted only as explicit backend defaults', async () => {
+  const fixture = await makeFixture();
+  try {
+    const random = await post(fixture.apiPort, '/api/chat', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'RANDOM_SEED' }],
+      stream: false,
+      options: { num_predict: 32, seed: -1, penalize_newline: false, tfs_z: 1 }
+    });
+    assert.equal(random.status, 200, await random.text());
+    const [body] = generationBodies(fixture);
+    for (const field of ['seed', 'penalize_newline', 'tfs_z', 'penalize_nl']) {
+      assert.equal(Object.hasOwn(body, field), false, field);
+    }
+    const [record] = await settledRecords(fixture, 1);
+    assert.equal(record.seedForwarded, false);
+    assert.deepEqual(record.samplingAcceptedAsDefault, ['penalize_newline', 'seed', 'tfs_z']);
+    assert.deepEqual(record.samplingControls, []);
+
+    const calls = backendCallCount(fixture);
+    for (const [field, value] of [['penalize_newline', true], ['tfs_z', 0.95]]) {
+      const response = await post(fixture.apiPort, '/api/chat', {
+        model: 'local-active',
+        messages: [{ role: 'user', content: 'REMOVED_SAMPLER' }],
+        stream: false,
+        options: { num_predict: 32, [field]: value }
+      });
+      const payload = await response.json();
+      assert.equal(response.status, 400, JSON.stringify(payload));
+      assert.equal(payload.error.code, 'UNSUPPORTED_SAMPLING_OPTION');
+      assert.match(payload.error.message, new RegExp(`options\\.${field}`));
+    }
+    assert.equal(backendCallCount(fixture), calls);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('invalid sampling values are rejected with 400 before template, tokenizer, or generation calls', async () => {
+  const fixture = await makeFixture();
+  try {
+    const cases = [
+      ['seed', -2], ['seed', 1.5], ['seed', '123'], ['seed', 4294967296], ['seed', true],
+      ['stop', 5], ['stop', ['ok', 1]],
+      ['top_k', 1.5], ['top_k', -1],
+      ['top_p', '0.9'], ['min_p', 'low'], ['repeat_penalty', false],
+      ['repeat_last_n', -2],
+      ['mirostat', 3]
+    ];
+    for (const [field, value] of cases) {
+      const response = await post(fixture.apiPort, '/api/chat', {
+        model: 'local-active',
+        messages: [{ role: 'user', content: 'INVALID_SAMPLING' }],
+        stream: false,
+        options: { num_predict: 32, [field]: value }
+      });
+      const payload = await response.json();
+      assert.equal(response.status, 400, `${field}=${JSON.stringify(value)} ${JSON.stringify(payload)}`);
+      assert.equal(payload.error.code, 'INVALID_SAMPLING_OPTION', `${field}=${JSON.stringify(value)}`);
+      assert.match(payload.error.message, new RegExp(`^options\\.${field} must be`));
+    }
+
+    const seedMessage = await post(fixture.apiPort, '/api/chat', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'INVALID_SEED_MESSAGE' }],
+      stream: false,
+      options: { seed: 2 ** 40 }
+    });
+    assert.equal((await seedMessage.json()).error.message,
+      'options.seed must be an integer from 0 to 4294967295, or -1 for a random seed.');
+
+    const openai = await post(fixture.apiPort, '/v1/chat/completions', {
+      model: 'local-active',
+      messages: [{ role: 'user', content: 'INVALID_OPENAI_SEED' }],
+      stream: false,
+      max_tokens: 32,
+      seed: 'abc',
+      options: { seed: 1 }
+    });
+    const openaiPayload = await openai.json();
+    assert.equal(openai.status, 400);
+    assert.equal(openaiPayload.error.code, 'INVALID_SAMPLING_OPTION');
+    assert.equal(openaiPayload.error.param, 'seed');
+    assert.equal(openaiPayload.error.type, 'invalid_request_error');
+
+    assert.equal(backendCallCount(fixture), 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('every documented Ollama option is forwarded, accepted as a backend default, or rejected on llama.cpp', async () => {
+  const fixture = await makeFixture();
+  try {
+    // Independent of the adapter tables: Ollama's documented request options.
+    const forwarded = {
+      ...FORWARDED_OLLAMA_SAMPLING,
+      temperature: { value: 0.3, field: 'temperature' },
+      num_predict: { value: 77, field: 'max_tokens' }
+    };
+    const acceptedAsDefault = { penalize_newline: false, tfs_z: 1 };
+    const forbidden = {
+      num_keep: 5, numa: false, num_ctx: 1024, num_batch: 2, num_gpu: 1, main_gpu: 0,
+      use_mmap: true, use_mlock: false, num_thread: 8, low_vram: false, f16_kv: true,
+      vocab_only: false, logits_all: false, embedding_only: false,
+      rope_frequency_base: 10000, rope_frequency_scale: 1, num_gqa: 1
+    };
+    const documented = [...Object.keys(forwarded), ...Object.keys(acceptedAsDefault), ...Object.keys(forbidden)];
+    assert.equal(new Set(documented).size, documented.length);
+
+    const dispositions = {};
+    for (const key of documented) {
+      const spec = forwarded[key];
+      const value = forbidden[key] ?? acceptedAsDefault[key] ?? (spec?.value ?? spec);
+      const before = generationBodies(fixture).length;
+      const response = await post(fixture.apiPort, '/api/chat', {
+        model: 'local-active',
+        messages: [{ role: 'user', content: `OPTION_COVERAGE_${key}` }],
+        stream: false,
+        options: { [key]: value }
+      });
+      const payload = await response.json();
+      if (response.status === 400) {
+        dispositions[key] = payload.error.code;
+        assert.equal(generationBodies(fixture).length, before, key);
+        continue;
+      }
+      assert.equal(response.status, 200, `${key}: ${JSON.stringify(payload)}`);
+      const upstream = generationBodies(fixture).at(-1);
+      const field = spec?.field ?? key;
+      if (Object.hasOwn(upstream, field)) {
+        assert.deepEqual(upstream[field], value, key);
+        dispositions[key] = 'forwarded';
+      } else {
+        let record = null;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          record = fixture.context.store.recentRequests(1)[0];
+          if (record?.samplingAcceptedAsDefault?.includes(key)) break;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        assert.ok(record?.samplingAcceptedAsDefault?.includes(key), `${key} disappeared without forwarding or rejection`);
+        dispositions[key] = 'accepted_as_default';
+      }
+    }
+    assert.deepEqual(dispositions, Object.fromEntries(documented.map((key) => [key,
+      Object.hasOwn(forwarded, key) ? 'forwarded'
+        : (Object.hasOwn(acceptedAsDefault, key) ? 'accepted_as_default' : 'BACKEND_CONTROL_FORBIDDEN')])));
+
+    for (const [body, code, param] of [
+      [{ options: { future_sampler: 1 } }, 'UNSUPPORTED_OPTION', 'options.future_sampler'],
+      [{ options: { 'bad key!': 1 } }, 'UNSUPPORTED_OPTION', 'options'],
+      [{ options: 'temperature=0' }, 'INVALID_OPTIONS', 'options']
+    ]) {
+      const response = await post(fixture.apiPort, '/v1/chat/completions', {
+        model: 'local-active',
+        messages: [{ role: 'user', content: 'UNKNOWN_OPTION' }],
+        stream: false,
+        max_tokens: 32,
+        ...body
+      });
+      const payload = await response.json();
+      assert.equal(response.status, 400, JSON.stringify(payload));
+      assert.equal(payload.error.code, code);
+      assert.equal(payload.error.param, param);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('Responses forwards top-level llama.cpp sampling fields and rejects an Ollama options object', async () => {
+  const fixture = await makeFixture();
+  try {
+    const response = await post(fixture.apiPort, '/v1/responses', {
+      model: 'local-active',
+      input: 'RESPONSES_SAMPLING',
+      stream: false,
+      store: false,
+      max_output_tokens: 32,
+      temperature: 0.2,
+      seed: 42,
+      stop: ['END'],
+      top_p: 0.5
+    });
+    assert.equal(response.status, 200, await response.text());
+    const [body] = generationBodies(fixture);
+    assert.equal(body.seed, 42);
+    assert.deepEqual(body.stop, ['END']);
+    assert.equal(body.top_p, 0.5);
+    assert.equal(body.temperature, 0.2);
+    const [record] = await settledRecords(fixture, 1);
+    assert.deepEqual(record.samplingControls, ['seed', 'stop', 'temperature', 'top_p']);
+    assert.equal(record.seedForwarded, true);
+    assert.deepEqual(record.samplingAcceptedAsDefault, []);
+
+    const calls = backendCallCount(fixture);
+    for (const [extra, code, param] of [
+      [{ seed: -5 }, 'INVALID_SAMPLING_OPTION', 'seed'],
+      [{ options: { seed: 1 } }, 'UNSUPPORTED_OPTION', 'options'],
+      [{ options: { num_ctx: 4096 } }, 'BACKEND_CONTROL_FORBIDDEN', 'options.num_ctx'],
+      [{ penalize_newline: true }, 'UNSUPPORTED_SAMPLING_OPTION', 'penalize_newline']
+    ]) {
+      const rejected = await post(fixture.apiPort, '/v1/responses', {
+        model: 'local-active',
+        input: 'RESPONSES_SAMPLING_REJECTED',
+        stream: false,
+        store: false,
+        max_output_tokens: 32,
+        ...extra
+      });
+      const payload = await rejected.json();
+      assert.equal(rejected.status, 400, JSON.stringify(payload));
+      assert.equal(payload.error.code, code);
+      assert.equal(payload.error.param, param);
+      assert.equal(payload.error.type, 'invalid_request_error');
+    }
+    assert.equal(backendCallCount(fixture), calls);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('temperature fix leaves max-to-xhigh, output caps, tools, and discovery unchanged', async () => {
   const fixture = await makeFixture({
     reasoning: true,

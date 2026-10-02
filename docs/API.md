@@ -113,6 +113,32 @@ For a `llama_cpp` active profile, `/v1/chat/completions`, `/v1/responses`, and `
 
 `context_length_exceeded` is the stable OpenAI-compatible classification code; clients should route on it rather than parse the arithmetic message. Native `/api/chat` and `/api/generate` use the same guard but retain the router's native `{error:{code,message}}` envelope. The router never truncates, summarizes, or forwards an over-capacity request.
 
+## llama.cpp sampling controls
+
+A `llama_cpp` profile (including both primary residents) translates every generation route to llama.cpp `/v1/chat/completions`. No sampling control is silently dropped: each Ollama option is either forwarded with validation, accepted only at the value matching llama.cpp's fixed behavior, or rejected with HTTP 400 before template application, tokenization or generation. The legacy Ollama backend is unaffected and still passes `options` through verbatim.
+
+On `/api/chat`, `/api/generate` and `/v1/chat/completions`, each control is read from the top-level field first and then from `options`, using nullish precedence (`body.seed ?? body.options.seed`). A top-level `null` therefore falls back to `options`. The router does not substitute omitted values; llama.cpp then applies its server launch defaults.
+
+| Ollama option | llama.cpp field | Accepted values |
+|---|---|---|
+| `temperature` | `temperature` | Existing behavior: numeric, forwarded when present. |
+| `num_predict` | `max_tokens`, or `n_predict: -1` | Existing output-limit policy; `-1` selects unrestricted output. |
+| `seed` | `seed` | JSON integer `0`–`4294967295`. `-1` requests a random seed and is not forwarded, so llama.cpp chooses one. Any other value is rejected. |
+| `stop` | `stop` | A string (sent as a one-element array) or an array of strings. |
+| `top_p`, `min_p`, `typical_p`, `repeat_penalty`, `presence_penalty`, `frequency_penalty`, `mirostat_tau`, `mirostat_eta` | same name | Finite JSON number. |
+| `top_k` | `top_k` | Integer `>= 0`. |
+| `repeat_last_n` | `repeat_last_n` | Integer `>= -1` (`-1` is the context size). |
+| `mirostat` | `mirostat` | `0`, `1` or `2`. |
+| `penalize_newline` | none | Only `false` is accepted, because llama.cpp no longer penalizes newlines. `true` returns `UNSUPPORTED_SAMPLING_OPTION`. |
+| `tfs_z` | none | Only `1` (disabled) is accepted, because llama.cpp has no tail-free sampler. Other values return `UNSUPPORTED_SAMPLING_OPTION`. |
+| `num_ctx`, `num_keep`, `num_batch`, `num_gpu`, `main_gpu`, `tensor_split`, `split_mode`, `numa`, `num_thread`, `use_mmap`, `use_mlock`, `low_vram`, `f16_kv`, `vocab_only`, `logits_all`, `embedding_only`, `rope_frequency_base`, `rope_frequency_scale`, `num_gqa`, cache and slot keys | none | Always `BACKEND_CONTROL_FORBIDDEN`; the router pins the backend runtime. |
+
+`options` uses a strict allowlist on llama.cpp profiles. Any key not listed above returns `UNSUPPORTED_OPTION`. `options.reasoning_effort` and `options.reasoning_budget_tokens` remain accepted and are handled by the reasoning policy. A non-object `options` returns `INVALID_OPTIONS`. Wrong-typed or out-of-range values return `INVALID_SAMPLING_OPTION`, whose `param` names the field that supplied the value, such as `options.seed` or `seed`. `/v1/chat/completions` errors use the OpenAI envelope; native routes use `{error:{code,message}}`.
+
+`/v1/responses` and `/responses` accept the same controls as top-level fields (`seed`, `stop`, `top_p`, `top_k`, and so on) with the same validation; `temperature` and `max_output_tokens` keep their existing mapping. Responses has no `options` object, so a supplied one returns `UNSUPPORTED_OPTION`.
+
+Request history records only field names and booleans: `samplingControls` lists the sampling fields sent to llama.cpp (including `temperature`), `seedForwarded` reports whether an explicit seed was sent, and `samplingAcceptedAsDefault` lists controls accepted without forwarding (`seed` for `-1`, `penalize_newline`, `tfs_z`). Sampling values, stop strings and message content are never recorded.
+
 ## OpenAI Responses compatibility
 
 `POST /v1/responses` is a stateless compatibility endpoint for Codex CLI. `POST /responses` is an equivalent alias. Both translate to the existing Ollama `/api/chat` operation; neither proxies an arbitrary client-selected path.
@@ -149,6 +175,7 @@ The router implements `GET /v1/models` and `GET /v1/models/{id}`. In primary mod
 | `store` | May be omitted or `false`; `true` and other values receive HTTP 400. |
 | `temperature` | Maps to Ollama `options.temperature`. |
 | `max_output_tokens` | Maps to Ollama `options.num_predict`. |
+| `seed`, `stop`, `top_p`, `top_k`, `min_p`, other sampling fields | llama.cpp profiles only: validated and forwarded as described in [llama.cpp sampling controls](#llamacpp-sampling-controls). The legacy Ollama backend ignores them. |
 
 Unknown optional fields are ignored only when doing so does not claim unsupported behavior. Any non-null `previous_response_id` is rejected because the adapter does not persist response state. WebSocket Responses transport is not implemented.
 
@@ -290,6 +317,11 @@ Common codes:
 | `INVALID_REASONING_CAPABILITIES` | Active-profile reasoning metadata is incomplete or inconsistent. |
 | `UNSUPPORTED_TOOLS` | Reject policy blocked native tool controls for an active model without tool support. |
 | `UNSUPPORTED_TOOL_HISTORY` | The active model lacks tool support and the conversation contains prior tool calls/results that cannot be safely dropped. |
+| `BACKEND_CONTROL_FORBIDDEN` | A llama.cpp request supplied a runtime/load option such as `options.num_ctx`. |
+| `INVALID_SAMPLING_OPTION` | A llama.cpp sampling value has the wrong type or is out of range, such as `seed` outside `0`–`4294967295`. |
+| `UNSUPPORTED_SAMPLING_OPTION` | A sampler removed from llama.cpp (`penalize_newline`, `tfs_z`) was requested with a non-default value. |
+| `UNSUPPORTED_OPTION` | A llama.cpp request supplied an unrecognized `options` key, or Responses supplied an `options` object. |
+| `INVALID_OPTIONS` | `options` is not an object. |
 | `UPSTREAM_REQUEST_FAILED` | Raw Ollama request failed before response. |
 | `API_NOT_ON_ADMIN_PORT` | `/api/*` was requested from the admin portal listener instead of the router API listener. |
 

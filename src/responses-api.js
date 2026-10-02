@@ -1141,6 +1141,13 @@ function outcomeBase(started, pathname, body, activeModel, translated, toolPolic
     ...(translated && Object.hasOwn(translated, 'forwardedTemperature')
       ? { forwardedTemperature: translated.forwardedTemperature }
       : {}),
+    ...(Array.isArray(translated?.samplingControls)
+      ? {
+          samplingControls: translated.samplingControls,
+          seedForwarded: translated.seedForwarded,
+          samplingAcceptedAsDefault: translated.samplingAcceptedAsDefault
+        }
+      : {}),
     promptCacheKeyPresent: translated?.promptCacheKeyPresent
       ?? (isPlainObject(body) && Object.hasOwn(body, 'prompt_cache_key')),
     promptCacheKeyDisposition: translated?.promptCacheKeyDisposition ?? null,
@@ -1289,6 +1296,11 @@ export async function handleResponsesRequest(request, response, pathname, contex
       translated.temperatureForwarding = backendRequest.temperatureForwarding ?? null;
       if (Object.hasOwn(backendRequest, 'forwardedTemperature')) {
         translated.forwardedTemperature = backendRequest.forwardedTemperature;
+      }
+      if (Array.isArray(backendRequest.samplingControls)) {
+        translated.samplingControls = backendRequest.samplingControls;
+        translated.seedForwarded = backendRequest.seedForwarded;
+        translated.samplingAcceptedAsDefault = backendRequest.samplingAcceptedAsDefault;
       }
       if (backendRequest.reasoning) {
         Object.assign(translated, {

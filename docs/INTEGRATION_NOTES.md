@@ -28,6 +28,8 @@ After changing environment variables, verify OpenWebUI did not keep a database-s
 
 For Open WebUI workflow/custom model compatibility, prefer protecting behavior at the router rather than modifying Open WebUI source. Set `REWRITE_REQUESTED_MODEL_TO_ACTIVE=true` for the router when Open WebUI should be allowed to send any configured base-model name while the router forwards the request to the deployed active Ollama model. The router preserves non-model request parameters such as `options`, `format`, messages, and streaming settings, and still normalizes `keep_alive` to the configured forced value. Boolean `think` controls are preserved; string controls are mapped through the active marker's `supported_think_levels` and `reasoning_effort_map`. Enabled thinking is then dropped if `/api/show` does not advertise `thinking`.
 
+On `llama_cpp` profiles, including the primary residents, Ollama `options` are translated rather than passed through. Sampling parameters (`seed`, `stop`, `top_k`, `top_p`, `min_p`, `repeat_penalty`, and so on) are forwarded to llama.cpp. Runtime parameters such as `num_ctx`, `num_batch`, `num_keep`, `num_thread`, `num_gpu`, `use_mmap` and `use_mlock`, and any unrecognized option, return HTTP 400 instead of being ignored. Leave those Open WebUI advanced parameters unset. The complete mapping is in [llama.cpp sampling controls](API.md#llamacpp-sampling-controls).
+
 If Open WebUI sends native tools to a deployed profile whose active marker has `capability_profile.tools: false`, set `UNSUPPORTED_TOOLS_POLICY=drop`. Capability selection follows the rewritten active marker, not Open WebUI's stored model name or a backend/model-name heuristic. New ordinary turns then continue without tool controls; conversations that already contain assistant tool calls or tool-result messages receive the explicit `UNSUPPORTED_TOOL_HISTORY` error and must use a tool-capable active profile or start fresh.
 
 A `llama_cpp` profile may set `capability_profile.tools: true` only after its server flags and chat template have been probed successfully for structured function calls. The router then exposes `tools` in `x_ollama_router.capabilities`, forwards definitions and history through Chat Completions, and translates calls for Ollama-native and Responses clients. Switching profiles changes this behavior entirely through the marker; no router model-name list is involved.
@@ -62,6 +64,8 @@ http://192.168.1.4:11434
 ```
 
 The admin portal is on `11435` and is not an Ollama API endpoint.
+
+Ollama-protocol nodes and frontends that send `options.seed` (or a top-level `seed`) get reproducible llama.cpp sampling for seeds from `0` to `4294967295`; `-1` requests a random seed. Larger seeds, such as unreduced 64-bit ComfyUI seeds, return HTTP 400 `INVALID_SAMPLING_OPTION`, so reduce them (for example `seed % 4294967296`) before sending. See [llama.cpp sampling controls](API.md#llamacpp-sampling-controls).
 
 Recommended improvement: refactor the custom node to read one base URL environment variable rather than embedding raw Ollama URLs in Python source or workflow JSON.
 

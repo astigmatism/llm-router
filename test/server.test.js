@@ -272,7 +272,19 @@ test('API chat preserves non-model parameters and forces keep_alive to -1', asyn
         keep_alive: '5m',
         think: false,
         messages: [{ role: 'user', content: 'hello' }],
-        options: { temperature: 0.2, num_ctx: 4096 }
+        // The Ollama backend passthrough must keep llama.cpp-only sampling
+        // policy out of its path: every option, even ones the llama.cpp adapter
+        // rejects, reaches raw Ollama verbatim.
+        options: {
+          temperature: 0.2,
+          num_ctx: 4096,
+          seed: 123,
+          stop: ['<END>'],
+          top_k: 20,
+          penalize_newline: true,
+          num_batch: 64,
+          future_sampler: 1
+        }
       })
     });
 
@@ -285,7 +297,17 @@ test('API chat preserves non-model parameters and forces keep_alive to -1', asyn
     assert.equal(chatRequest.body.keep_alive, -1);
     assert.equal(chatRequest.body.think, false);
     assert.deepEqual(chatRequest.body.messages, [{ role: 'user', content: 'hello' }]);
-    assert.deepEqual(chatRequest.body.options, { temperature: 0.2, num_ctx: 4096 });
+    assert.deepEqual(chatRequest.body.options, {
+      temperature: 0.2,
+      num_ctx: 4096,
+      seed: 123,
+      stop: ['<END>'],
+      top_k: 20,
+      penalize_newline: true,
+      num_batch: 64,
+      future_sampler: 1
+    });
+    assert.equal(Object.hasOwn(chatRequest.body, 'seed'), false);
 
     const requestsResponse = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/requests?limit=1`);
     assert.equal(requestsResponse.status, 200);
@@ -293,6 +315,8 @@ test('API chat preserves non-model parameters and forces keep_alive to -1', asyn
     assert.equal(history.requests[0].incomingKeepAlive, '5m');
     assert.equal(history.requests[0].forwardedKeepAlive, -1);
     assert.equal(history.requests[0].keepAliveNormalized, true);
+    assert.equal(Object.hasOwn(history.requests[0], 'samplingControls'), false);
+    assert.equal(Object.hasOwn(history.requests[0], 'seedForwarded'), false);
   } finally {
     await fixture.cleanup();
   }

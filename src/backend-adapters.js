@@ -146,6 +146,41 @@ const STRICT_REASONING_CONTROL_FIELDS = new Set([
   'chat_template_kwargs'
 ]);
 
+// Ollama runtime/load options. The router pins the backend, so none of these
+// can be honored per request; presence alone is rejected.
+const BACKEND_CONTROL_OPTIONS = [
+  'num_ctx',
+  'num_gpu',
+  'main_gpu',
+  'tensor_split',
+  'split_mode',
+  'numa',
+  'num_thread',
+  'cache_prompt',
+  'cache_ram',
+  'cache_idle_slots',
+  'cache_reuse',
+  'n_cache_reuse',
+  'cache_path',
+  'id_slot',
+  'slot_id',
+  'slot_action',
+  'slot_save_path',
+  'slot_restore_path',
+  'num_keep',
+  'num_batch',
+  'use_mmap',
+  'use_mlock',
+  'low_vram',
+  'f16_kv',
+  'vocab_only',
+  'logits_all',
+  'embedding_only',
+  'rope_frequency_base',
+  'rope_frequency_scale',
+  'num_gqa'
+];
+
 function rejectUnsupportedFields(body, { allowTools = false, allowVision = false } = {}) {
   for (const field of STRICT_REASONING_CONTROL_FIELDS) {
     if (Object.hasOwn(body || {}, field)) {
@@ -177,26 +212,7 @@ function rejectUnsupportedFields(body, { allowTools = false, allowVision = false
     );
   }
   const options = isPlainObject(body?.options) ? body.options : {};
-  for (const field of [
-    'num_ctx',
-    'num_gpu',
-    'main_gpu',
-    'tensor_split',
-    'split_mode',
-    'numa',
-    'num_thread',
-    'cache_prompt',
-    'cache_ram',
-    'cache_idle_slots',
-    'cache_reuse',
-    'n_cache_reuse',
-    'cache_path',
-    'id_slot',
-    'slot_id',
-    'slot_action',
-    'slot_save_path',
-    'slot_restore_path'
-  ]) {
+  for (const field of BACKEND_CONTROL_OPTIONS) {
     if (Object.hasOwn(options, field)) {
       throw new BackendAdapterError(
         400,
@@ -206,6 +222,143 @@ function rejectUnsupportedFields(body, { allowTools = false, allowVision = false
       );
     }
   }
+  if (body?.options !== undefined && body.options !== null && !isPlainObject(body.options)) {
+    throw new BackendAdapterError(400, 'INVALID_OPTIONS', 'options must be an object when provided.', 'options');
+  }
+  // Strict allowlist: an Ollama option the llama.cpp translation does not
+  // understand would otherwise vanish while the backend silently applies its
+  // own server default.
+  for (const field of Object.keys(options)) {
+    if (LLAMA_ACCEPTED_OPTIONS.has(field)) continue;
+    const named = /^[A-Za-z0-9_.-]{1,64}$/.test(field);
+    throw new BackendAdapterError(
+      400,
+      'UNSUPPORTED_OPTION',
+      `${named ? `options.${field}` : 'An options field'} is not supported by the active llama.cpp profile and would otherwise be ignored.`,
+      named ? `options.${field}` : 'options'
+    );
+  }
+}
+
+function invalidSampling(param, requirement) {
+  return new BackendAdapterError(400, 'INVALID_SAMPLING_OPTION', `${param} must be ${requirement}.`, param);
+}
+
+function finiteSampling(value, param) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw invalidSampling(param, 'a finite number');
+  return value;
+}
+
+function integerSampling(value, param, { min = null, allowed = null } = {}) {
+  const valid = typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && (min === null || value >= min)
+    && (allowed === null || allowed.includes(value));
+  if (!valid) {
+    const requirement = allowed
+      ? `one of ${allowed.join(', ')}`
+      : (min === null ? 'an integer' : `an integer greater than or equal to ${min}`);
+    throw invalidSampling(param, requirement);
+  }
+  return value;
+}
+
+// llama.cpp stores the sampler seed as uint32; -1 is its random-seed request.
+const MAX_LLAMA_SEED = 0xFFFFFFFF;
+const RANDOM_SEED_REQUEST = Symbol('random seed requested');
+
+function seedSampling(value, param) {
+  if (typeof value === 'number' && value === -1) return RANDOM_SEED_REQUEST;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > MAX_LLAMA_SEED) {
+    throw invalidSampling(param, `an integer from 0 to ${MAX_LLAMA_SEED}, or -1 for a random seed`);
+  }
+  return value;
+}
+
+function stopSampling(value, param) {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) return [...value];
+  throw invalidSampling(param, 'a string or an array of strings');
+}
+
+// Ollama sampling options forwarded to llama.cpp /v1/chat/completions under
+// the same field name. Each validator returns the normalized value to forward.
+const LLAMA_SAMPLING_FIELDS = new Map([
+  ['seed', seedSampling],
+  ['stop', stopSampling],
+  ['top_p', finiteSampling],
+  ['top_k', (value, param) => integerSampling(value, param, { min: 0 })],
+  ['min_p', finiteSampling],
+  ['typical_p', finiteSampling],
+  ['repeat_last_n', (value, param) => integerSampling(value, param, { min: -1 })],
+  ['repeat_penalty', finiteSampling],
+  ['presence_penalty', finiteSampling],
+  ['frequency_penalty', finiteSampling],
+  ['mirostat', (value, param) => integerSampling(value, param, { allowed: [0, 1, 2] })],
+  ['mirostat_tau', finiteSampling],
+  ['mirostat_eta', finiteSampling]
+]);
+
+// Ollama sampling options removed from llama.cpp. Only the value that matches
+// the backend's fixed behavior is honest to accept; anything else is rejected.
+const LLAMA_DEFAULT_ONLY_SAMPLING = new Map([
+  ['penalize_newline', { value: false, description: 'false (llama.cpp no longer penalizes newlines)' }],
+  ['tfs_z', { value: 1, description: '1 (tail-free sampling is not available in llama.cpp)' }]
+]);
+
+// Option fields consumed elsewhere in the llama.cpp translation.
+const ROUTER_HANDLED_OPTIONS = ['temperature', 'num_predict', 'reasoning_effort', 'reasoning_budget_tokens'];
+
+const LLAMA_ACCEPTED_OPTIONS = new Set([
+  ...ROUTER_HANDLED_OPTIONS,
+  ...LLAMA_SAMPLING_FIELDS.keys(),
+  ...LLAMA_DEFAULT_ONLY_SAMPLING.keys()
+]);
+
+function sampledValue(request, options, name) {
+  const topLevel = request[name];
+  if (topLevel !== undefined && topLevel !== null) return { value: topLevel, param: name };
+  const option = options[name];
+  if (option !== undefined && option !== null) return { value: option, param: `options.${name}` };
+  return null;
+}
+
+export function llamaSamplingControls(body) {
+  const request = isPlainObject(body) ? body : {};
+  const options = isPlainObject(request.options) ? request.options : {};
+  const controls = {};
+  const acceptedAsDefault = [];
+  // Top-level values take precedence with the same nullish semantics as
+  // llamaTemperature, so a top-level null falls through to options.
+  for (const [name, validate] of LLAMA_SAMPLING_FIELDS) {
+    const supplied = sampledValue(request, options, name);
+    if (!supplied) continue;
+    const normalized = validate(supplied.value, supplied.param);
+    if (normalized === RANDOM_SEED_REQUEST) acceptedAsDefault.push(name);
+    else controls[name] = normalized;
+  }
+  for (const [name, neutral] of LLAMA_DEFAULT_ONLY_SAMPLING) {
+    const supplied = sampledValue(request, options, name);
+    if (!supplied) continue;
+    if (supplied.value !== neutral.value) {
+      throw new BackendAdapterError(
+        400,
+        'UNSUPPORTED_SAMPLING_OPTION',
+        `${supplied.param} is not supported by the llama.cpp backend; only ${neutral.description} is accepted.`,
+        supplied.param
+      );
+    }
+    acceptedAsDefault.push(name);
+  }
+  return { controls, acceptedAsDefault: acceptedAsDefault.sort() };
+}
+
+function samplingMetadata(temperature, sampling) {
+  return {
+    samplingControls: [...Object.keys(temperature.controls), ...Object.keys(sampling.controls)].sort(),
+    seedForwarded: Object.hasOwn(sampling.controls, 'seed'),
+    samplingAcceptedAsDefault: sampling.acceptedAsDefault
+  };
 }
 
 function imageSource(value, param, { allowRawBase64 = false } = {}) {
@@ -1598,6 +1751,9 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
     }
     const reasoning = normalizeLlamaReasoningRequest(body, this.activeModel, protocol);
     const toolRequest = normalizeLlamaToolRequest(reasoning.cleanBody, this.activeModel, protocol);
+    // Validate sampling before template application, tokenization, or a
+    // generation journal so an invalid value never reaches the backend.
+    const sampling = llamaSamplingControls(body);
     const outputTokens = reasoning.outputTokens;
     const mappedMessages = messagesForLlama(
       messages,
@@ -1618,9 +1774,7 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
       ...reasoning.controls,
       ...toolRequest.controls,
       ...structuredOutputControls(body),
-      ...(body?.seed === undefined ? {} : { seed: body.seed }),
-      ...(body?.stop === undefined ? {} : { stop: body.stop }),
-      ...(body?.top_p === undefined && body?.options?.top_p === undefined ? {} : { top_p: body?.top_p ?? body?.options?.top_p })
+      ...sampling.controls
     };
     return {
       upstreamPath: '/v1/chat/completions',
@@ -1636,7 +1790,8 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
       temperatureForwarding: temperature.forwarding,
       ...(Object.hasOwn(temperature, 'forwardedTemperature')
         ? { forwardedTemperature: temperature.forwardedTemperature }
-        : {})
+        : {}),
+      ...samplingMetadata(temperature, sampling)
     };
   }
 
@@ -1657,8 +1812,20 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
   }
 
   prepareResponses(translated) {
-    const reasoning = normalizeLlamaReasoningRequest(translated.originalBody || {}, this.activeModel, 'responses');
+    const originalBody = isPlainObject(translated.originalBody) ? translated.originalBody : {};
+    const reasoning = normalizeLlamaReasoningRequest(originalBody, this.activeModel, 'responses');
+    if (originalBody.options !== undefined && originalBody.options !== null) {
+      // Responses has no Ollama options object; accepting one here would
+      // silently ignore every control inside it.
+      throw new BackendAdapterError(
+        400,
+        'UNSUPPORTED_OPTION',
+        'Responses requests do not accept an Ollama options object; use top-level sampling fields.',
+        'options'
+      );
+    }
     const toolRequest = normalizeLlamaToolRequest(translated.upstreamBody, this.activeModel, 'responses');
+    const sampling = llamaSamplingControls({ ...originalBody, options: undefined });
     const outputTokens = reasoning.outputTokens;
     const messages = messagesForLlama(
       translated.upstreamBody.messages,
@@ -1676,7 +1843,8 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
       ...(outputTokens === null ? { n_predict: -1 } : { max_tokens: outputTokens }),
       ...reasoning.controls,
       ...toolRequest.controls
-      , ...structuredOutputControls(translated.upstreamBody)
+      , ...structuredOutputControls(translated.upstreamBody),
+      ...sampling.controls
     };
     return {
       path: '/v1/chat/completions',
@@ -1689,7 +1857,8 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
       temperatureForwarding: temperature.forwarding,
       ...(Object.hasOwn(temperature, 'forwardedTemperature')
         ? { forwardedTemperature: temperature.forwardedTemperature }
-        : {})
+        : {}),
+      ...samplingMetadata(temperature, sampling)
     };
   }
 
