@@ -74,7 +74,7 @@ const chat = (model, content = '17*19', extra = {}) => ({ ...(model ? { model } 
 test('qualified Daytime context extensions update aliases and actual admission boundaries', async (t) => {
   const f = await fixture(t);
   const night = structuredClone(f.marker.models[1]);
-  for (const context of [147456, 163840]) {
+  for (const context of [147456, 163840, 262144]) {
     const day = f.marker.models[0];
     Object.assign(day, { context_length: context, total_context_length: context,
       display_name: `Daytime (${context / 1024}K)` });
@@ -92,10 +92,11 @@ test('qualified Daytime context extensions update aliases and actual admission b
     assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary}`))).status, 200);
     assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary + 1}`))).status, 400);
   }
-  Object.assign(f.marker.models[0], { context_length: 262144, total_context_length: 262144 });
+  // One token beyond the native 256K window, with consistent totals, exceeds the contract.
+  Object.assign(f.marker.models[0], { context_length: 262145, total_context_length: 262145 });
   Object.assign(f.marker, f.marker.models[0]);
   await fs.writeFile(f.file, JSON.stringify(f.marker));
-  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG' });
+  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /1–262144 tokens/ });
 });
 
 test('catalog lists canonical identities, resolves aliases deliberately, and protects metadata writers', async (t) => {
@@ -146,9 +147,9 @@ test('catalog lists canonical identities, resolves aliases deliberately, and pro
   const show = await (await f.post('/api/show', { model: EVERYDAY })).json();
   assert.deepEqual(show.capabilities, ['completion', 'thinking', 'tools', 'vision']);
   assert.equal(show.model_info.context_length, 131072);
-  f.marker.models[1].context_length = 262144;
+  Object.assign(f.marker.models[1], { context_length: 262145, total_context_length: 262145 });
   await fs.writeFile(f.file, JSON.stringify(f.marker));
-  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG' });
+  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /1–262144 tokens/ });
 });
 
 test('stable native services preserve reasoning off/max and selected-backend failures', async (t) => {
