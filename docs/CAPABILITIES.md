@@ -156,3 +156,33 @@ During an AI Runtime configuration switch, a subscriber sees this sequence:
 curl -s http://192.168.1.4:11434/v1/router/capabilities?include=load
 curl -N http://192.168.1.4:11434/v1/router/events
 ```
+
+## Preferring Nighttime with a Daytime fallback
+
+The router never substitutes one service for another; a client that prefers `nighttime` decides when to use `daytime` instead. `daytime` (and `local-active`) exists in every AI Runtime configuration. `nighttime` exists only in paired configurations, and the model behind it can change between them; for example, an MTP3 variant has a different canonical ID. Send service IDs, never canonical IDs.
+
+Before a request, resolve the service from the current document:
+
+| Document state | Action |
+|---|---|
+| `router.accepting_requests` is false (draining for a switch, or maintenance) | **Wait** and retry the same choice later. A switch normally finishes within a few minutes, and the configuration may be different afterwards. Do not fall back: Daytime is draining too. |
+| The preferred model is listed and `available` | Use the preferred service. |
+| The preferred service is in `offline_services`, is listed with `available: false`, or is absent | Use the first listed, `available` fallback whose capabilities cover the request. |
+| Nothing usable | Report it as temporarily unavailable and retry later. |
+
+The document can lag a request by up to a poll interval, so classify each failed response too. Every router error body carries `error.code`:
+
+| Response | Meaning | Action |
+|---|---|---|
+| 503 `SERVICE_OFFLINE` | The current configuration deliberately stops this service | Fall back immediately; do not count it as a failed attempt |
+| 503 `BACKEND_UNAVAILABLE` | The service's backend is not healthy | Fall back if one is available; otherwise retry with backoff |
+| 404 `MODEL_NOT_FOUND` | The ID is not offered at all | Fall back if configured, and log it: it usually means a stale or misspelled ID |
+| 503 `BACKEND_DRAINING` or `MAINTENANCE_MODE` | Router is switching configuration or in maintenance | Wait and retry the same service; resolve again afterwards |
+| Other 5xx, 408, 429, or a network error | Transient | Retry the same service with backoff |
+| Other 4xx | The request is invalid | Fail; do not retry or fall back |
+
+Native Ollama and Chat Completions errors use `{"error": {"code": "…", "message": "…"}}`. Responses errors use the OpenAI shape `{"error": {"message": "…", "type": "server_error", "param": "model", "code": "…"}}`. A client library that expects a string `error` must handle the object form.
+
+Return to the preferred service as soon as it is available again; do not stay on the fallback. When the service changes, take limits from the model that will actually serve the request: `context_window`, `metadata.context_safety_reserve`, `slots`, `input_modalities` and `capabilities`. Daytime and Nighttime differ in context size, and either may be larger. Daytime is not the abliterated model and may refuse requests that Nighttime answers. Its single slot is shared with coding agents, so fallback requests can queue behind long generations; the router has no queue deadline.
+
+The [client handoff](handoffs/2026-10-07-capability-subscribers.md) applies these rules to each consuming project. Reference clients implement the subscriber, `resolve` and the error classification: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+, browsers). The router's test suite runs the JavaScript client against the router, and `python3 -m unittest discover -s docs/clients` tests the Python client.

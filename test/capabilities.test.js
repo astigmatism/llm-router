@@ -385,3 +385,56 @@ test('the event stream enforces its subscriber limit and ends on shutdown', asyn
   await until(() => second.state.ended);
   assert.equal(f.context.capabilities.pollTimer, null);
 });
+
+test('the reference client follows changes and classifies every unavailable state', async (t) => {
+  const client = await import('../docs/clients/router-watch.mjs');
+  const f = await fixture(t, { edit: exclusive });
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const seen = [];
+  const watch = client.watchRouter(f.base, (doc) => seen.push(doc), { signal: controller.signal });
+  await watch.ready;
+  // Solo configuration: nighttime is offline by design, so it falls back to daytime.
+  assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), 'daytime');
+  assert.equal(client.resolveService(watch.current, 'nighttime'), client.UNAVAILABLE);
+  assert.equal(client.modelFor(watch.current, 'daytime').context_window, 163840);
+  const offline = await f.post('/v1/chat/completions', chat('nighttime'));
+  assert.equal(client.classifyError(offline.status, await offline.text()), client.FALLBACK);
+  const offlineResponses = await f.post('/v1/responses', { model: 'nighttime', input: 'hi', stream: false });
+  assert.equal(client.classifyError(offlineResponses.status, await offlineResponses.json()), client.FALLBACK);
+
+  // A runtime publication restoring Nighttime is pushed to the client.
+  await until(() => f.context.capabilities.subscribers.size === 1);
+  await f.rewrite((marker) => {
+    marker.models.push(structuredClone(template.models[1]));
+    Object.assign(marker.models[1], { backend_url: `http://127.0.0.1:${f.backends[1].server.address().port}`,
+      runtime_output_policy: marker.models[0].runtime_output_policy });
+    marker.configuration = { id: 'qwen27b-q6k-with-nighttime', exclusive: false };
+    marker.offline_services = [];
+  });
+  assert.equal((await f.admin('reload-config')).status, 200);
+  await until(() => watch.current.ids.nighttime === EVERYDAY, 3000);
+  assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), 'nighttime');
+
+  // An unhealthy Nighttime falls back; a draining router waits instead of switching.
+  f.backends[1].state.healthy = false;
+  const unhealthy = await f.post('/api/chat', { model: 'nighttime', messages: [{ role: 'user', content: 'hi' }], think: false, stream: false });
+  assert.equal(unhealthy.status, 503);
+  assert.equal(client.classifyError(unhealthy.status, await unhealthy.json()), client.FALLBACK);
+  f.backends[1].state.healthy = true;
+  assert.equal((await f.admin('runtime-drain', { enabled: true, reason: 'test' })).status, 200);
+  await until(() => watch.current.router.draining === true, 3000);
+  assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), client.WAIT);
+  const draining = await f.post('/v1/chat/completions', chat('nighttime'));
+  assert.equal(client.classifyError(draining.status, await draining.text()), client.WAIT);
+  assert.equal((await f.admin('runtime-drain', { enabled: false })).status, 200);
+  await until(() => watch.current.router.accepting_requests === true, 3000);
+
+  // Malformed requests are never retried or redirected; network failures are retried.
+  const invalid = await f.post('/v1/chat/completions', { model: 'nighttime', messages: 'not-an-array' });
+  assert.ok(invalid.status >= 400 && invalid.status < 500);
+  assert.equal(client.classifyError(invalid.status, await invalid.text()), client.FAIL);
+  assert.equal(client.classifyError(null), client.RETRY);
+  assert.equal(client.classifyError(503, '{"error":"legacy string"}'), client.RETRY);
+  assert.ok(seen.length >= 3);
+});

@@ -29,6 +29,7 @@ npm run lint:syntax
 python3 scripts/primary/test_primary.py
 python3 scripts/primary/test_deploy_router_only.py
 python3 integrations/open-webui/test-align-primary.py
+python3 -m unittest discover -s docs/clients
 ```
 
 The separate `scripts/primary/deploy-nighttime-context.py` migration tests 64K
