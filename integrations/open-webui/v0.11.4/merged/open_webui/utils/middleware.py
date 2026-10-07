@@ -1,4 +1,4 @@
-from open_webui.utils.router_completion import incomplete_fields, finalize_items, ROUTER_MODELS
+from open_webui.utils.router_completion import incomplete_fields, finalize_items
 # router-terminal-policy-v1
 import ast
 import asyncio
@@ -4825,7 +4825,9 @@ async def streaming_chat_response_handler(response, ctx):
                 content_parts = []
 
             usage = None
-            router_state = {'status': 'in_progress'} if model_id in ROUTER_MODELS else {}
+            # Router terminal state comes from the x_router metadata in the stream itself;
+            # model IDs change with every runtime configuration and are never consulted.
+            router_state = {}
             last_response_id = None
 
             def full_output():

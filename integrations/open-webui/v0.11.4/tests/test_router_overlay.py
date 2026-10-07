@@ -16,6 +16,16 @@ from open_webui.utils import router_completion as rc
 from open_webui.utils import session_pool
 
 
+class ApplicationImportTests(unittest.TestCase):
+    def test_the_whole_application_imports(self):
+        # Overlay files import each other; a stale name breaks startup, not just one route.
+        import importlib
+
+        for module in ('open_webui.utils.middleware', 'open_webui.utils.response', 'open_webui.routers.tasks',
+                       'open_webui.utils.context_compaction', 'open_webui.main'):
+            importlib.import_module(module)
+
+
 class TerminalStateTests(unittest.TestCase):
     def test_terminal_frames_are_classified_without_model_ids(self):
         done = rc.terminal_metadata({'model': 'any-new-canonical-id', 'done': True, 'done_reason': 'stop'})

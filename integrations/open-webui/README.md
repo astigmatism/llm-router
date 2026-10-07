@@ -18,7 +18,10 @@ cd integrations/open-webui/v0.11.4
 docker build --build-arg VCS_REF="$(git rev-parse HEAD)" -t local/open-webui:v0.11.4-router-v<N> .
 docker run --rm --network none -e WEBUI_SECRET_KEY=isolated-test-only -v "$PWD/tests:/tests:ro" \
   --entrypoint python local/open-webui:v0.11.4-router-v<N> -m unittest discover -s /tests -v
+tests/boot-smoke.sh local/open-webui:v0.11.4-router-v<N>    # required: the whole app must start
 ```
+
+Never deploy an image that hasn't passed `boot-smoke.sh`. On 2026-10-07, an overlay that passed its unit tests failed at startup because `middleware.py` still imported a removed name. Open WebUI was down for about 6 minutes until rollback.
 
 **Deploy:** recreate the container in place with the new image tag, following the header of `~/deployments/open-webui/compose.yml` on the host. Supply `WEBUI_SECRET_KEY` from the running container's environment; never print it. Keep the previous image for rollback. The host notes are in `~/docs/open-webui.md` on 192.168.1.20. Open WebUI is user data there: production changes need the owner's go-ahead.
 
