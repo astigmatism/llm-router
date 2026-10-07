@@ -122,29 +122,9 @@ Change only your own project. Don't modify the router, AI Runtime, or production
 
 Line numbers are from the surveyed commits; confirm them before editing.
 
-### DeepSeek Harness (`dsh-container`, dev clone `~/projects/dsh-container-dev`, surveyed at `ee91e90`): highest risk
+### DeepSeek Harness (`dsh-container`)
 
-- **Current state:**
-  - Provider `local-everyday` ("Nighttime") is pinned to the **full model ID** `qwen3.8-27b-abliterated-q6_k` (`config/settings.yaml:52-81`). Provider `local-ollama` uses `local-active`.
-  - The same IDs are hard-coded in `seed/plugins/dsh-router-model-discovery.js:9-27` and in the compaction `modelPolicies` (`seed/profile/managed/cordis.patch.yml:64-70`).
-  - While the MTP3 variant was published earlier today, that ID did not exist. The plugin would have thrown `ROUTER_MODEL_NOT_FOUND`.
-- **Validation is all-or-nothing.** `synchronizeResidentSettings` (`:375-417`) throws if either model is missing or unhealthy, so a solo configuration freezes every provider update.
-- **Worst case, Harness won't start:** `entrypoint.sh:40-43` runs `scripts/migrate-resident-models.mjs --startup`. That script exits 22 when Nighttime is missing or unhealthy, and the container does not start.
-- **Required changes:**
-  - Move `local-everyday` to the service ID `nighttime`. `daytime` is clearer than `local-active` for the other provider. Migrate existing settings and compaction policies without losing user choices.
-  - Daytime stays required. Nighttime becomes optional: when it is offline or unavailable, keep the provider but point its requests at `daytime`, using Daytime's limits (context window, `maxConcurrency`, inputs, reasoning). When Nighttime returns, restore it. Label the fallback in the provider's display name or status.
-  - Also handle `SERVICE_OFFLINE` and `BACKEND_DRAINING` at request time (for example in `dsh-llm-retry`), so the gap before the next synchronization doesn't fail requests.
-  - Subscribe to `/v1/router/events` and call `synchronize()` on each `capabilities` event. Keep the 30 s poll as the fallback.
-  - The startup migration must succeed while Nighttime is offline.
-- **Tests and verification that encode the old rule:**
-  - `tests/router-provider-remote.test.mjs:149` and `:230` ("missing Nighttime leaves state unchanged").
-  - `scripts/verify-router-contract.mjs:18-51` (exactly two healthy providers).
-  - `scripts/verify.sh:255-266, :389`.
-  - `scripts/verify-resident-client.mjs:100-138` (live request per model).
-  - `verify-router-startup.mjs`, `verify-local-model-profiles.mjs`, `verify-dsh-context-compaction.mjs`.
-
-  Today a Portal update would fail verification and roll back during a solo configuration. Accept Nighttime as "offline by design" when it appears in `offline_services`.
-- **Release:** `./scripts/check.sh --host` locally, then CI with `--build`, then the Portal update. Production Harness is on 192.168.1.5; another Harness runs on 192.168.1.4. Don't edit either. The vendored `ollama-router/` is a stale router copy; don't use it as a model for this behavior.
+Superseded by the targeted handoff [deepseek-harness.md](deepseek-harness.md). It is based on `origin/main` at `e82ce7d`, which already supports an optional Nighttime. The owner decided Harness does **not** fall back automatically: Nighttime is shown as offline or unavailable, and the user switches the session.
 
 ### ComfyUI Image Frontend (`~/projects/comfyui-image-frontend`, surveyed at `03dcd4a`)
 
