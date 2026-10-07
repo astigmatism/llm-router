@@ -1,0 +1,14 @@
+[Unit]
+Description=Open WebUI model-list sync: follow LLM Router change events
+Documentation=https://github.com/astigmatism/llm-router/tree/main/integrations/open-webui/model-sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/open-webui-model-sync.py --watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

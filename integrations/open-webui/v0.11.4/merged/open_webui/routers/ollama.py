@@ -47,6 +47,13 @@ from open_webui.utils.payload import (
     apply_system_prompt_to_body,
 )
 from open_webui.utils.session_pool import cleanup_response, get_client_timeout, get_session, stream_wrapper
+from open_webui.utils.router_completion import (
+    ROUTER_CLIENT_NAME,
+    ROUTER_WAIT_MESSAGE,
+    ROUTER_WAIT_SECONDS,
+    router_should_wait,
+    router_wait_delay,
+)
 from pydantic import BaseModel, ConfigDict, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +84,7 @@ async def send_get_request(
         session = await get_session()
         headers: dict = {
             'Content-Type': 'application/json',
+            'X-Client-Name': ROUTER_CLIENT_NAME,
         }
         if key:
             headers['Authorization'] = f'Bearer {key}'
@@ -93,6 +101,29 @@ async def send_get_request(
     except Exception as exc:
         log.error(f'Connection error: {exc}')
         return None
+
+
+async def _router_status_emitter(metadata: dict | None):
+    """A function that shows a status line in the chat being answered, or None."""
+    if not metadata or not metadata.get('chat_id') or not metadata.get('message_id'):
+        return None
+    try:
+        from open_webui.socket.main import get_event_emitter
+
+        emitter = await get_event_emitter(metadata, update_db=False)
+    except Exception as exc:
+        log.debug(f'No status emitter for router wait: {exc}')
+        return None
+    if not emitter:
+        return None
+
+    async def notify(description: str, done: bool):
+        try:
+            await emitter({'type': 'status', 'data': {'description': description, 'done': done, 'hidden': done}})
+        except Exception as exc:
+            log.debug(f'Router wait status not delivered: {exc}')
+
+    return notify
 
 
 async def send_request(
@@ -117,6 +148,7 @@ async def send_request(
 
         headers = {
             'Content-Type': 'application/json',
+            'X-Client-Name': ROUTER_CLIENT_NAME,
             **({'Authorization': f'Bearer {key}'} if key else {}),
         }
 
@@ -129,14 +161,39 @@ async def send_request(
         if api_config and api_config.get('headers'):
             headers.update(await get_custom_headers(api_config['headers'], user, metadata, request=request))
 
-        r = await session.request(
-            method,
-            url,
-            data=payload,
-            headers=headers,
-            ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            timeout=get_client_timeout(stream=stream),
-        )
+        # While the router drains for a configuration switch it rejects new work with 503
+        # BACKEND_DRAINING (or MAINTENANCE_MODE). Nothing has been generated yet, so wait
+        # and retry the same request instead of failing the chat.
+        deadline = time.monotonic() + ROUTER_WAIT_SECONDS
+        attempt = 0
+        waiting_notice = None
+        while True:
+            r = await session.request(
+                method,
+                url,
+                data=payload,
+                headers=headers,
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                timeout=get_client_timeout(stream=stream),
+            )
+            if r.status != 503 or time.monotonic() >= deadline:
+                break
+            try:
+                body = await r.json(loads=JSONCodec.loads)
+            except Exception:
+                body = None
+            if not router_should_wait(r.status, body):
+                break
+            r.release()
+            if waiting_notice is None:
+                waiting_notice = await _router_status_emitter(metadata)
+                log.info('Router is switching configuration; waiting before retrying %s', url)
+            if waiting_notice:
+                await waiting_notice(ROUTER_WAIT_MESSAGE, done=False)
+            await asyncio.sleep(router_wait_delay(attempt))
+            attempt += 1
+        if waiting_notice:
+            await waiting_notice(ROUTER_WAIT_MESSAGE, done=True)
 
         if not r.ok:
             try:

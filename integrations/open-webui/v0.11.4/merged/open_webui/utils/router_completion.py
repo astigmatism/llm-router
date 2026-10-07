@@ -2,7 +2,30 @@
 import asyncio
 import json
 
-ROUTER_MODELS = {'local-active', 'qwen3.8-27b-q8_0', 'qwen3.8-27b-abliterated-q6_k'}
+# Identify Open WebUI in the router's request history (LLM Router client contract §2).
+ROUTER_CLIENT_NAME = 'open-webui'
+
+# The router answers 503 with these codes while it drains for a runtime configuration
+# switch or is in maintenance. Accepted work finishes; new work should wait, then retry
+# the same model (client contract §7, §10). Never retried after output has started.
+ROUTER_WAIT_CODES = frozenset({'BACKEND_DRAINING', 'MAINTENANCE_MODE'})
+ROUTER_WAIT_SECONDS = 600
+ROUTER_WAIT_MESSAGE = 'The model server is switching configuration; waiting for it to finish…'
+
+
+def router_error_code(body):
+    """The router's machine-readable code from a JSON error body, or None."""
+    error = body.get('error') if isinstance(body, dict) else None
+    return error.get('code') if isinstance(error, dict) else None
+
+
+def router_should_wait(status, body):
+    return status == 503 and router_error_code(body) in ROUTER_WAIT_CODES
+
+
+def router_wait_delay(attempt):
+    """2, 4, 8, 16, then 30 seconds between retries."""
+    return min(2 * 2 ** attempt, 30)
 
 
 def error_message(error):
@@ -24,8 +47,10 @@ def incomplete_message(state):
 
 
 def terminal_metadata(payload):
+    # Every Ollama connection here is the LLM Router, which attaches x_router to its
+    # results. Model IDs are never used to decide: they change with each configuration.
     metadata = dict(payload.get('x_router') or {})
-    if metadata or payload.get('model') in ROUTER_MODELS:
+    if metadata or payload.get('done') or payload.get('error'):
         metadata.setdefault('status', 'in_progress')
         if payload.get('done'):
             reason = payload.get('done_reason') or 'missing_finish_reason'

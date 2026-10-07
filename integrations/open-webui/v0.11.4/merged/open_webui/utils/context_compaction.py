@@ -57,6 +57,7 @@ async def compact_messages_for_request(
 
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
     token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
+    token_threshold = _cap_to_model_context(token_threshold, _model_context_window(model_id, models))
     if not _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or len(messages) <= 3:
         return [*system_messages, *messages], previous_summary, False
 
@@ -227,6 +228,36 @@ def _clamp_retention_percentage(value: Any) -> int:
     except (TypeError, ValueError):
         parsed = 40
     return min(50, max(10, parsed))
+
+
+# The LLM Router admits a request when formatted input + output + this reserve fits the
+# serving model's context window (client contract §8). Compaction must start early
+# enough to leave room for the reserve and an answer.
+ROUTER_CONTEXT_SAFETY_RESERVE = 1024
+
+
+def _model_context_window(model_id: str | None, models: dict | None) -> int | None:
+    """The serving model's per-request context window as published by the router.
+
+    A preset carries its base model's ID in info.base_model_id; router models carry the
+    window in their Ollama listing entry (context_length, or x_ollama_router)."""
+    models = models or {}
+    model = models.get(model_id) or {}
+    base_id = (model.get('info') or {}).get('base_model_id')
+    for candidate in (model, models.get(base_id) or {}):
+        listing = candidate.get('ollama') or {}
+        window = listing.get('context_length') or (listing.get('x_ollama_router') or {}).get('context_window')
+        if isinstance(window, int) and window > 0:
+            return window
+    return None
+
+
+def _cap_to_model_context(threshold: int, context_window: int | None) -> int:
+    """Never let the trigger exceed what the serving model can hold with an answer."""
+    if not context_window:
+        return threshold
+    headroom = ROUTER_CONTEXT_SAFETY_RESERVE + max(4096, context_window // 8)
+    return max(1, min(threshold, context_window - headroom))
 
 
 def _resolve_token_threshold(global_threshold: int, global_cap: int, metadata: dict) -> int:

@@ -8,10 +8,14 @@
 # Base pinned by digest (= ghcr.io/open-webui/open-webui:0.11.4).
 FROM ghcr.io/open-webui/open-webui@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
 
-LABEL base.version="v0.11.4" \
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.source="https://github.com/astigmatism/llm-router/tree/main/integrations/open-webui/v0.11.4" \
+      base.version="v0.11.4" \
       base.revision="8bd8b4fac5e059578ac0c74b3c18d11139f88b7d" \
       patch="preserve-router-error-details" \
       router-policy="unrestricted-terminal-v1" \
+      router-contract="1.1" \
       image.version="0.11.4" \
       ported-from="local/open-webui:error-details-git-b790384bc31d587c75be2dc82bd9fcf04cd70054 (v0.11.3)"
 
