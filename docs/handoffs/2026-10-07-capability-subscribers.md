@@ -134,15 +134,9 @@ Superseded by the targeted handoff [comfyui-image-frontend.md](comfyui-image-fro
 
 Superseded by the targeted handoff [playroom.md](playroom.md). It adds a per-game model picker (Automatic, or a specific service) alongside contract conformance.
 
-### Bench Studio (`~/projects/bench-studio-dev`; never edit `~/projects/bench-studio`): do **not** fall back
+### Bench Studio (`~/projects/bench-studio-dev`; never edit `~/projects/bench-studio`)
 
-- **Benchmarks must never swap models.** A benchmark's identity is its model, so Bench Studio must **not** use the Daytime fallback. Its existing rule "an alias never falls back" (`tests/test_integration.py:116-118`) is correct and stays.
-- **What to change is the classification.** When Nighttime is stopped by a solo configuration it vanishes from both router discovery and runtime `services[]`. `resolve` (`common.py:89-92, 106-107`) then raises `ModelConfigurationChanged`, and the run is marked **invalid**. Instead:
-  - When the target appears in `offline_services`, report it as unavailable ("offline in configuration X"), so queued runs wait or block rather than fail.
-  - When `router.accepting_requests` is false (draining), wait. The 90 s grace in `runner.check_current` (`runner.py:287-320`) may be too short for a solo switch.
-- **Subscriber:** run it as a background thread in the long-running runner (`runner.py:534-557`) and write events to the database, so the UI's existing `/api/events` stream (`api.py:536-571`) picks them up. Show offline services and the configuration ID in the model list.
-- **Data sources:** the capabilities document provides `placement.gpus` and slot `load`. Keep using AI Runtime `/api/status` for container identity drift; the router doesn't publish container IDs.
-- **Tests:** `PYTHONPATH=.:vendor .venv/bin/pytest tests vendor/tests`. Deploy by pushing the dev clone's `main`, then the Portal update.
+Superseded by the targeted handoff [bench-studio.md](bench-studio.md), which pins contract 1.1. Benchmarks never fall back. They keep pinning a canonical model per run, which 1.1 §3 permits, and they treat a model that is offline by configuration as "waiting", not as a changed or invalid run.
 
 ### Not affected
 
