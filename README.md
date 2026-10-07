@@ -7,6 +7,8 @@ The deployed primary catalog uses unrestricted output, unrestricted thinking and
 The deployed `primary` runtime exposes two resident models with independent one-request admission: coding `qwen3.8-27b-q8_0` (160K) and everyday `qwen3.8-27b-abliterated-q6_k` (128K). `local-active` remains a coding alias. See [the primary integration contract and deployment report](docs/PRIMARY_INTEGRATION.md) for current operations, clients, validation, and recovery. The single-marker deployment examples below describe legacy operation.
 
 
+**Building a client?** Read the [client contract](docs/CLIENT_CONTRACT.md): the rules every application that uses this router must follow.
+
 A Docker-ready router that sits between AI clients and model inference servers. It enforces model policy, preserves streaming responses, persists request history, collects inference telemetry, and serves an admin portal on a separate port. The legacy Ollama backend also receives `keep_alive: -1` for protected requests.
 
 Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the runtime controller manages the resident model backends.

@@ -1,5 +1,7 @@
 # Deployment capabilities and change events
 
+This document specifies two endpoints. The rules a client must follow when using them are in the [client contract](CLIENT_CONTRACT.md).
+
 Clients use two router endpoints to learn which models they can use right now, what each model can do, and when that changes:
 
 - `GET /v1/router/capabilities` returns one document describing the whole deployment. Read it at startup.

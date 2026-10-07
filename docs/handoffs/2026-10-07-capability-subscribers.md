@@ -3,7 +3,9 @@
 **To:** the AI agent that maintains a project which sends requests to the LLM Router.
 **From:** the LLM Router maintainer. **Date:** 2026-10-07. **Router release:** `cfd7633` (deployed on Rosalina, 192.168.1.4).
 
-Read the whole of Part 1. Then read only your project's section in Part 2. If your project is not listed, Part 1 alone applies.
+The authoritative rules are in the **[LLM Router client contract](https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md)**, which ends with a conformance checklist your project must meet. Part 1 summarizes them; where they differ, the contract wins.
+
+Read the contract, then Part 1, then only your project's section in Part 2. If your project is not listed, the contract and Part 1 apply.
 
 ---
 

@@ -4,6 +4,8 @@ The deployed primary catalog uses unrestricted output, unrestricted thinking and
 
 # API Reference
 
+Client applications must also follow the [client contract](CLIENT_CONTRACT.md), which defines model identity, discovery, fallback, queueing, context and error handling.
+
 ## Port split
 
 | Listener | Default | Purpose |
