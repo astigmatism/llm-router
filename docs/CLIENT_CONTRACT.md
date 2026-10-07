@@ -203,6 +203,19 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 - **Schema versions:** the capabilities document has `schema_version: 1`; model metadata (`x_ollama_router`) has `schema_version: 2`; the capability score carries its own `version`. Fields may be **added** at any time without a version change, and clients MUST ignore fields they don't know. Removing a field or changing its meaning increments the schema version. A client SHOULD warn when it sees a schema version it wasn't written for.
 - **Contract versions:** this contract is versioned at the top. A change that requires client changes increments that version and is announced to client maintainers.
 - **Configurations:** models, context windows, slot counts, the canonical IDs behind service IDs, and the existence of `nighttime` all change with configuration and are not part of the contract. Only the rules for discovering them are.
+- **Copies in client projects:** every client project keeps this contract in its own repository, so whoever works on that project, person or AI agent, sees it there:
+  - **Copy:** keep a verbatim copy at `docs/llm-router-contract.md`. Begin it with this header, then the contract text unchanged:
+
+    ```markdown
+    > **Vendored copy — do not edit.** LLM Router client contract, version <N>, copied from
+    > llm-router commit `<sha>`. Canonical source:
+    > https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md
+    > Replace this copy only when the router maintainer announces a new contract version.
+    ```
+
+  - **Conformance map:** follow the copy with a section `## How <project> upholds this contract`, or put it in its own file linked from there. It maps each item of the conformance checklist (§13) to the code and tests that meet it, and records any deviation the contract permits, such as fallback disabled under §5.
+  - **Agent rule:** add a rule to the project's `AGENTS.md`, or its equivalent: any change that touches router requests, model selection or discovery must uphold `docs/llm-router-contract.md` and keep the conformance map current.
+  - **Updates:** when this contract's version changes, the router maintainer sends each project a handoff to replace its copy and review its map.
 
 ## 12. Data handling
 
@@ -223,6 +236,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [ ] Takes context, reserve, slots and features from the serving model, and recomputes them when it changes. Hard-codes no context size.
 - [ ] Uses read timeouts that allow for queueing, or streams. Doesn't abandon and resubmit queued requests.
 - [ ] Logs model changes and fallbacks, and surfaces refusals from a fallback model instead of retrying them.
+- [ ] Keeps a verbatim copy of this contract at `docs/llm-router-contract.md`, a conformance map, and an `AGENTS.md` rule that upholds it (§11).
 
 ## 14. References
 
