@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1 · 2026-10-07.** Applies to LLM Router `57e4096` and later, with AI Runtime `e0530db` and later.
+**Version 1.1 · 2026-10-07.** Applies to LLM Router `57e4096` and later, with AI Runtime `e0530db` and later. Version 1.1 adds the benchmark exception in §3; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -55,6 +55,12 @@ The router never does any of these:
 - A client SHOULD always send a model. An omitted model selects `daytime`.
 - An unknown ID returns **404 `MODEL_NOT_FOUND`**.
 - A known service that the current configuration stops returns **503 `SERVICE_OFFLINE`**. It is then listed in `offline_services` (§4).
+- **Exception for benchmarking and evaluation clients.** A client whose results must belong to one exact model MAY pin it for a run. At the start of the run it resolves the service ID to its canonical ID (`ids[service]`), records the canonical ID with the model's `revision`, and sends the canonical ID for the rest of the run. The router then never lets that run reach a different model. While pinned, the client treats each response like this:
+  - 404 `MODEL_NOT_FOUND`: the model changed;
+  - 503 `SERVICE_OFFLINE`: the model is offline;
+  - neither is ever a reason to switch models.
+
+  Such a client still discovers models from the capabilities document (§4). It MUST NOT keep canonical IDs as configuration across runs: new runs start from a service ID.
 
 ## 4. Knowing what is available
 
@@ -201,7 +207,7 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 ## 11. Change and compatibility
 
 - **Schema versions:** the capabilities document has `schema_version: 1`; model metadata (`x_ollama_router`) has `schema_version: 2`; the capability score carries its own `version`. Fields may be **added** at any time without a version change, and clients MUST ignore fields they don't know. Removing a field or changing its meaning increments the schema version. A client SHOULD warn when it sees a schema version it wasn't written for.
-- **Contract versions:** this contract is versioned at the top. A change that requires client changes increments that version and is announced to client maintainers.
+- **Contract versions:** this contract is versioned at the top. A change that requires client changes increments the major version (2, 3, …) and is announced to client maintainers. A minor version (1.1, 1.2, …) only clarifies or adds permissions and never requires client changes, so copies of an earlier minor version stay valid until the next update handoff.
 - **Configurations:** models, context windows, slot counts, the canonical IDs behind service IDs, and the existence of `nighttime` all change with configuration and are not part of the contract. Only the rules for discovering them are.
 - **Copies in client projects:** every client project keeps this contract in its own repository, so whoever works on that project, person or AI agent, sees it there:
   - **Copy:** keep a verbatim copy at `docs/llm-router-contract.md`. Begin it with this header, then the contract text unchanged:
@@ -226,7 +232,7 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 
 A client conforms when it meets every item below and has a test for each MUST:
 
-- [ ] Sends service IDs only; persists no canonical IDs; sends `X-Client-Name`.
+- [ ] Sends service IDs only, or, for a benchmark, a canonical ID pinned per run (§3). Persists no canonical IDs as configuration. Sends `X-Client-Name`.
 - [ ] Reads the capabilities document at startup without failing when the router or a model is unavailable.
 - [ ] Long-running: subscribes to `/v1/router/events` and polls while disconnected. Request-scoped: reads the document before each request.
 - [ ] Chooses the model per request by capability or by name, with configurable fallback (or, for benchmarks, deliberately none). Returns to the preferred model when it is available again.
@@ -246,3 +252,10 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [Primary integration](PRIMARY_INTEGRATION.md): output policy, queueing, context recovery and archives.
 - Reference clients, tested against the router: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+ and browsers).
 - [Client handoff](handoffs/2026-10-07-capability-subscribers.md): how each current project should change to meet this contract.
+
+## 15. Changes
+
+| Version | Change |
+|---|---|
+| 1.1 | §3: benchmarking and evaluation clients may pin a canonical ID for the duration of a run. §11: minor versions defined. |
+| 1 | Initial contract. |
