@@ -141,5 +141,5 @@ Superseded by the targeted handoff [bench-studio.md](bench-studio.md), which pin
 ### Not affected
 
 - **pokebot:** no LLM code yet. Apply Part 1 when it starts using the router.
-- **Open WebUI:** uses the native connection and the router repo's `integrations/open-webui` helpers. It cannot fall back by itself, so presets based on `nighttime` show `SERVICE_OFFLINE` during a solo configuration. That's a router-side follow-up, not part of this handoff.
+- **Open WebUI** (192.168.1.20): see the targeted handoff [open-webui.md](open-webui.md).
 - **Any other consumer** (for example the Samus client that sets seeds): apply Part 1.
