@@ -31,12 +31,14 @@ export async function readModelCatalog(config) {
     if (upstreams.has(model.backend_url)) invalid('Independent resident entries must use different upstream URLs; use aliases for one service.');
     upstreams.add(model.backend_url);
     // The deployment owner qualifies the actual per-slot allocation before
-    // publishing it. Any one-slot context up to the native 256K window is
-    // admissible; the former 256K/1 legacy profile stays retired.
-    if (!model.context_length || model.context_length > RESIDENT_CONTEXT_LIMIT || model.total_context_length !== model.context_length
-      || model.max_active_requests !== 1 || model.context_safety_reserve !== 1024
+    // publishing it. Any per-request context up to the native 256K window is
+    // admissible. A resident runs one or two backend slots; each slot has the
+    // full per-request window, so the total is the window times the slots.
+    const slots = model.max_active_requests;
+    if (!model.context_length || model.context_length > RESIDENT_CONTEXT_LIMIT || (slots !== 1 && slots !== 2)
+      || model.total_context_length !== model.context_length * slots || model.context_safety_reserve !== 1024
       || model.output_policy !== 'unrestricted' || model.default_output_tokens !== null || model.max_output_tokens !== null || !model.capability_profile) {
-      invalid(`Invalid context, output, capabilities, or one-slot contract for ${model.model}; context must be 1–${RESIDENT_CONTEXT_LIMIT} tokens.`);
+      invalid(`Invalid context, output, capabilities, or slot contract for ${model.model}; context must be 1–${RESIDENT_CONTEXT_LIMIT} tokens per request with one or two slots.`);
     }
     const reasoning = validatedReasoningPolicy(model);
     if (reasoning?.schema_version !== 2 || reasoning.default_level !== 'default'

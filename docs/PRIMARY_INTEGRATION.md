@@ -20,7 +20,7 @@ The primary runtime has two resident services with independent admission. This d
 
 Daytime 160K passed direct and routed 152,147-token retrieval, tool continuation, overflow rejection/recovery and MTP acceptance. Minimum free VRAM was 1188 MiB on the 3090 and 995 MiB on the 4080 SUPER, with no observed CUDA/allocation failure. On the same 133,902-token prompt, 144K versus 160K measured 1146.06 versus 1140.97 prompt tokens/s and 38.05 versus 38.03 generated tokens/s. This is one matched operational comparison, not a repeated benchmark or Harness compaction qualification. The owner explicitly replaced the former 1024 MiB Daytime reserve gate with measured performance and memory stability. Nighttime remains at its separately accepted 128K configuration.
 
-The resident catalog contract accepts any one-slot working context up to 262144 tokens, the native 256K window of the Qwen3.8 models (`RESIDENT_CONTEXT_LIMIT` in `src/model-catalog.js`). The router does not qualify memory or throughput; AI Runtime owns each profile's launch context and marks unqualified experiments, such as a 256K Daytime profile, with deployment warnings. The table above describes the qualified 160K/128K pair. The former 256K/1 legacy capacity profile remains retired.
+The resident catalog contract accepts any per-request working context up to 262144 tokens, the native 256K window of the Qwen3.8 models (`RESIDENT_CONTEXT_LIMIT` in `src/model-catalog.js`), with one or two backend slots. `max_active_requests` is the slot count and the router's admission limit for that resident. Each slot has the full window, so `total_context_length` must equal `context_length` times the slots. AI Runtime publishes two only for an exclusive profile that runs two llama.cpp slots. The router does not qualify memory or throughput; AI Runtime owns each profile's launch context and marks unqualified experiments, such as a 256K Daytime profile, with deployment warnings. The table above describes the qualified 160K/128K pair. The former 256K/1 legacy capacity profile remains retired.
 
 Container/DNS names use Daytime and Nighttime; Stable public service IDs `daytime` and `nighttime` resolve through the catalog; canonical API IDs and `local-active` remain compatible. See [Harness compatibility](HARNESS_PORTAL_COMPATIBILITY.md) for alias discovery and consumer validation.
 
@@ -45,7 +45,7 @@ Generation has no total-duration timer. A 10-second connection timeout and a def
 | Endpoint | Primary behavior |
 |---|---|
 | `/v1/models`, `/api/tags` | Canonical models and all declared aliases, with target-equivalent context/capabilities/health and unrestricted metadata |
-| `/api/ps`, admin model lists | Canonical residents only: two engines, one slot each |
+| `/api/ps`, admin model lists | Canonical residents only, with each resident's slot count |
 | `/api/show` | Canonical or stable service lookup with the resolved target’s capabilities and context |
 | `/v1/chat/completions` | SSE by default; JSON for `stream:false`; preserves finish reasons |
 | `/v1/responses`, `/responses` | JSON by default, SSE for `stream:true`; incomplete/error status preserved |

@@ -338,6 +338,36 @@ test('all supported generation protocols select coding, everyday, alias and defa
   assert.equal(f.context.metrics.snapshot().byModel['local-active'], undefined);
 });
 
+test('a two-slot resident admits two overlapping generations and queues the third', async (t) => {
+  const f = await fixture(t);
+  const day = f.marker.models[0];
+  Object.assign(day, { context_length: 131072, total_context_length: 262144, max_active_requests: 2 });
+  Object.assign(f.marker, day);
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  const { data } = await (await fetch(f.base + '/v1/models')).json();
+  const metadata = data.find((row) => row.id === CODING).x_ollama_router;
+  assert.equal(metadata.context_window, 131072);
+  assert.equal(metadata.active_request_limit, 2);
+  assert.equal(data.find((row) => row.id === EVERYDAY).x_ollama_router.active_request_limit, 1);
+  const first = new AbortController(); const second = new AbortController();
+  const a = await f.post('/v1/chat/completions', chat('daytime', 'HOLD', { stream: true }), first.signal);
+  const b = await f.post('/v1/chat/completions', chat(CODING, 'HOLD', { stream: true }), second.signal);
+  await until(() => f.context.requestGate.active.size === 2 && f.backends[0].state.active === 2);
+  assert.equal(f.context.requestGate.snapshot().active_by_model[CODING], 2);
+  const third = f.post('/v1/chat/completions', chat('local-active'));
+  await until(() => f.context.requestGate.snapshot().queued_count === 1);
+  first.abort(); await a.body.cancel().catch(() => {});
+  assert.equal((await third).status, 200);
+  second.abort(); await b.body.cancel().catch(() => {});
+  await until(() => f.context.requestGate.active.size === 0);
+  // Each slot carries the full per-request window: totals must equal the window times the slots.
+  for (const change of [{ total_context_length: 131072, max_active_requests: 2 }, { total_context_length: 393216, max_active_requests: 3 }]) {
+    Object.assign(f.marker.models[0], change); Object.assign(f.marker, f.marker.models[0]);
+    await fs.writeFile(f.file, JSON.stringify(f.marker));
+    await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /one or two slots/ });
+  }
+});
+
 test('independent gates allow overlap, share aliases, drain both, and release only the cancelled backend', async (t) => {
   const f = await fixture(t);
   const c = new AbortController(); const e = new AbortController();
