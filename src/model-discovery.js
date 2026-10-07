@@ -7,6 +7,7 @@ import {
   validateReasoningCapabilities
 } from './reasoning.js';
 import { upstreamJson } from './upstream.js';
+import { capabilityScore } from './capability-score.js';
 import {
   enforcedContextSafetyReserve,
   formatParameterSize,
@@ -238,8 +239,27 @@ function publicCapabilityProfile(profile) {
     vision: booleanOrNull(profile.vision),
     tools: booleanOrNull(profile.tools),
     reasoning: booleanOrNull(profile.reasoning),
-    speculative: booleanOrNull(profile.speculative)
+    speculative: booleanOrNull(profile.speculative),
+    nsfw: booleanOrNull(profile.nsfw)
   };
+}
+
+// Parameter count and file size are fixed for a published model revision.
+// Remember them so a briefly unreachable backend, or a reload that discards
+// discovery caches, does not erase the model's capability score.
+const MODEL_FACT_LIMIT = 64;
+
+function rememberModelFacts(facts, activeModel, live) {
+  const key = `${activeModel.model}\u0000${activeModel.revision ?? ''}`;
+  const known = facts.get(key) || {};
+  const next = {
+    parameters: live?.parameters ?? known.parameters ?? null,
+    size_bytes: live?.size_bytes ?? known.size_bytes ?? null
+  };
+  facts.delete(key);
+  facts.set(key, next);
+  while (facts.size > MODEL_FACT_LIMIT) facts.delete(facts.keys().next().value);
+  return next;
 }
 
 // Hardware placement published by the runtime. Card names only: GPU UUIDs,
@@ -314,6 +334,7 @@ export class ActiveModelDiscovery {
     this.generation = 0;
     this.cached = null;
     this.pending = null;
+    this.modelFacts = options.modelFacts || new Map();
   }
 
   invalidate() {
@@ -384,6 +405,9 @@ export class ActiveModelDiscovery {
     if (activeModel.catalog_mode) warnings.push(...liveMismatchWarnings(activeModel, loadedModel, live));
     const uniqueWarnings = [...new Set(warnings)];
     const raw = isPlainObject(activeModel.raw) ? activeModel.raw : {};
+    const contextWindow = loadedContext ?? activeModel.context_length ?? architecturalContext;
+    const inputModalities = normalizeModalities(activeModel, capabilities);
+    const facts = activeModel.catalog_mode ? rememberModelFacts(this.modelFacts, activeModel, live) : null;
 
     const entry = {
       id: this.config.routerModelAlias,
@@ -398,7 +422,7 @@ export class ActiveModelDiscovery {
         display_name: activeModel.raw?.display_name ?? activeModel.model,
         profile: activeModel.profile || null,
         updated_at: updatedAt,
-        context_window: loadedContext ?? activeModel.context_length ?? architecturalContext,
+        context_window: contextWindow,
         total_context_window: activeModel.total_context_length ?? loadedContext ?? activeModel.context_length ?? architecturalContext,
         context_safety_reserve: enforcedContextSafetyReserve(activeModel),
         active_request_limit: activeModel.max_active_requests ?? null,
@@ -414,11 +438,21 @@ export class ActiveModelDiscovery {
           family: nonEmptyText(raw.family),
           parameter_size: formatParameterSize(live?.parameters) ?? nonEmptyText(raw.parameter_size),
           capability_profile: publicCapabilityProfile(activeModel.capability_profile),
+          // Declared by the runtime catalog for each model; never inferred from a name.
+          nsfw: booleanOrNull(activeModel.capability_profile?.nsfw),
+          capability_score: capabilityScore({
+            parameters: facts.parameters,
+            sizeBytes: facts.size_bytes,
+            contextWindow,
+            vision: inputModalities?.includes('image') === true,
+            tools: capabilities?.includes('tools') === true,
+            reasoning: capabilities?.includes('thinking') === true
+          }),
           placement: placementMetadata(raw),
           qualification_notes: [...(activeModel.deployment_warnings || [])],
           live
         } : {}),
-        input_modalities: normalizeModalities(activeModel, capabilities),
+        input_modalities: inputModalities,
         capabilities,
         reasoning: reasoningMetadata(activeModel, capabilities, uniqueWarnings),
         sources: {
@@ -508,6 +542,8 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
     this.residents = new Map();
   }
 
+  // Residents share the parent's fact cache, which survives invalidate().
+
   invalidate() {
     super.invalidate();
     this.residents?.clear();
@@ -531,7 +567,8 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
     const entries = await Promise.all(selected.map(async (model) => {
       if (!this.residents.has(model.model)) {
         this.residents.set(model.model, new ActiveModelDiscovery(this.config, {
-          readActiveModel: () => selectModel(this.config, model.model)
+          readActiveModel: () => selectModel(this.config, model.model),
+          modelFacts: this.modelFacts
         }));
       }
       const { entry } = await this.residents.get(model.model).get(model);

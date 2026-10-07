@@ -21,12 +21,16 @@ const RECONNECT_RETRY_MS = 3000;
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('base64url');
 const errorCode = (error) => (typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'MODEL_DISCOVERY_FAILED');
 
-function modelSummary(entry, acceptingRequests) {
+function modelSummary(entry, acceptingRequests, compatibilityAlias) {
   const meta = entry.x_ollama_router || {};
+  const aliases = Array.isArray(meta.aliases) ? [...meta.aliases] : [];
   return {
     id: entry.id,
+    // The stable ID clients should send for this model: its service alias
+    // (daytime, nighttime), not the compatibility alias or canonical ID.
+    service: aliases.find((alias) => alias !== compatibilityAlias) ?? entry.id,
     display_name: meta.display_name ?? entry.id,
-    aliases: Array.isArray(meta.aliases) ? [...meta.aliases] : [],
+    aliases,
     // A listed model is usable only while its backend answers health checks
     // and the router is admitting new requests.
     available: acceptingRequests && (meta.health ? meta.health.available === true : true),
@@ -34,6 +38,10 @@ function modelSummary(entry, acceptingRequests) {
     context_window: meta.context_window ?? null,
     input_modalities: meta.input_modalities ?? null,
     capabilities: meta.capabilities ?? null,
+    // Declared per model by the runtime; null when the catalog does not say.
+    nsfw: typeof meta.nsfw === 'boolean' ? meta.nsfw : null,
+    // Higher is more capable; comparable only between models of this router.
+    capability_score: meta.capability_score?.value ?? null,
     metadata: meta
   };
 }
@@ -78,7 +86,7 @@ export class CapabilityPublisher {
       warnings.push(errorCode(error));
     }
     if (Array.isArray(catalog?.warnings)) warnings.push(...catalog.warnings);
-    const models = entries.map((entry) => modelSummary(entry, router.accepting_requests));
+    const models = entries.map((entry) => modelSummary(entry, router.accepting_requests, config.routerModelAlias));
     const ids = {};
     for (const model of models) {
       ids[model.id] = model.id;

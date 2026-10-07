@@ -174,9 +174,15 @@ test('capabilities document describes residents, configuration and live facts, a
 
   const [day, night] = doc.models;
   assert.deepEqual({ ...day, metadata: undefined }, {
-    id: CODING, display_name: 'Daytime (160K)', aliases: ['local-active', 'daytime'], available: true, slots: 1,
-    context_window: 163840, input_modalities: ['text', 'image'], capabilities: ['completion', 'thinking', 'tools', 'vision'], metadata: undefined
+    id: CODING, service: 'daytime', display_name: 'Daytime (160K)', aliases: ['local-active', 'daytime'], available: true, slots: 1,
+    context_window: 163840, input_modalities: ['text', 'image'], capabilities: ['completion', 'thinking', 'tools', 'vision'],
+    nsfw: false, capability_score: 68.5, metadata: undefined
   });
+  // Nighttime is declared NSFW; Daytime's larger context makes it the more capable model.
+  assert.deepEqual([night.service, night.nsfw, night.capability_score], ['nighttime', true, 67.1]);
+  assert.ok(day.capability_score > night.capability_score);
+  assert.deepEqual(day.metadata.capability_score.components, { size: 26.3, context: 22.2, features: 20 });
+  assert.equal(day.metadata.capability_score.inputs.bits_per_weight, 8.4);
   // The summary embeds exactly the /v1/models metadata for the canonical row.
   const { data } = await (await fetch(f.base + '/v1/models')).json();
   assert.deepEqual(day.metadata, data.find((row) => row.id === CODING).x_ollama_router);
@@ -187,7 +193,8 @@ test('capabilities document describes residents, configuration and live facts, a
   assert.equal(day.metadata.family, null);
   assert.deepEqual(day.metadata.placement, { gpu_count: 2, gpus: ['RTX 3090', 'RTX 4080 SUPER'], vision_encoder: 'gpu', vision_gpu: 'RTX 3080', vision_gpu_shared: true, exclusive: false });
   assert.deepEqual(night.metadata.placement, { gpu_count: 2, gpus: null, vision_encoder: 'cpu', vision_gpu: null, vision_gpu_shared: null, exclusive: false });
-  assert.deepEqual(day.metadata.capability_profile, { name: 'qwen38-27b-golden-vision-tools', text: true, streaming: true, vision: true, tools: true, reasoning: true, speculative: true });
+  assert.deepEqual(day.metadata.capability_profile, { name: 'qwen38-27b-golden-vision-tools', text: true, streaming: true, vision: true, tools: true, reasoning: true, speculative: true, nsfw: false });
+  assert.deepEqual([day.metadata.nsfw, night.metadata.nsfw], [false, true]);
   assert.equal(night.metadata.capability_profile.speculative, false);
   assert.deepEqual(day.metadata.qualification_notes, ['160K is the total prompt, history, reasoning, and output capacity.']);
   assert.equal(day.metadata.sources.backend_props, true);
@@ -287,6 +294,22 @@ test('an unusable catalog still yields a truthful document', async (t) => {
   assert.deepEqual(doc.models, []);
   assert.deepEqual(doc.warnings, ['INVALID_MODEL_CATALOG']);
   assert.equal(doc.default_model, null);
+});
+
+test('a capability score survives a backend outage and a catalog reload', async (t) => {
+  const f = await fixture(t);
+  const before = (await f.capabilities()).models[1];
+  assert.equal(before.capability_score, 67.1);
+  f.backends[1].state.healthy = false;
+  f.backends[1].server.closeAllConnections();
+  const close = new Promise((resolve) => f.backends[1].server.close(resolve));
+  await close;
+  assert.equal((await f.admin('reload-config')).status, 200);
+  const during = (await f.capabilities()).models[1];
+  assert.equal(during.available, false);
+  assert.equal(during.metadata.live, null);
+  assert.equal(during.capability_score, 67.1);
+  assert.equal(during.metadata.capability_score.basis, 'computed');
 });
 
 test('backend facts that contradict the catalog mark only that model incomplete', async (t) => {
@@ -396,6 +419,9 @@ test('the reference client follows changes and classifies every unavailable stat
   await watch.ready;
   // Solo configuration: nighttime is offline by design, so it falls back to daytime.
   assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), 'daytime');
+  assert.equal(client.pickService(watch.current, { nsfw: true }), client.UNAVAILABLE);
+  assert.equal(client.pickService(watch.current, { nsfw: true, fallbackAny: true }), 'daytime');
+  assert.equal(client.pickService(watch.current, { nsfw: false, require: ['vision', 'tools'] }), 'daytime');
   assert.equal(client.resolveService(watch.current, 'nighttime'), client.UNAVAILABLE);
   assert.equal(client.modelFor(watch.current, 'daytime').context_window, 163840);
   const offline = await f.post('/v1/chat/completions', chat('nighttime'));
@@ -415,6 +441,11 @@ test('the reference client follows changes and classifies every unavailable stat
   assert.equal((await f.admin('reload-config')).status, 200);
   await until(() => watch.current.ids.nighttime === EVERYDAY, 3000);
   assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), 'nighttime');
+  // Most capable NSFW model, and most capable model overall.
+  assert.equal(client.pickService(watch.current, { nsfw: true, fallbackAny: true }), 'nighttime');
+  assert.equal(client.pickService(watch.current), 'daytime');
+  assert.equal(client.pickService(watch.current, { exclude: ['daytime'] }), 'nighttime');
+  assert.throws(() => client.pickService(watch.current, { require: ['telepathy'] }), /unknown required feature/);
 
   // An unhealthy Nighttime falls back; a draining router waits instead of switching.
   f.backends[1].state.healthy = false;
@@ -425,6 +456,7 @@ test('the reference client follows changes and classifies every unavailable stat
   assert.equal((await f.admin('runtime-drain', { enabled: true, reason: 'test' })).status, 200);
   await until(() => watch.current.router.draining === true, 3000);
   assert.equal(client.resolveService(watch.current, 'nighttime', ['daytime']), client.WAIT);
+  assert.equal(client.pickService(watch.current, { nsfw: true }), client.WAIT);
   const draining = await f.post('/v1/chat/completions', chat('nighttime'));
   assert.equal(client.classifyError(draining.status, await draining.text()), client.WAIT);
   assert.equal((await f.admin('runtime-drain', { enabled: false })).status, 200);

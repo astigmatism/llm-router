@@ -6,7 +6,8 @@ Copy this file into a project, or port it. One RouterWatch per process; share it
     watch.fetch()                                    # at startup; tolerate failure
     threading.Thread(target=watch.run_forever, daemon=True).start()
 
-    service = resolve(watch.doc, "nighttime", ["daytime"])
+    service = resolve(watch.doc, "nighttime", ["daytime"])          # by name, with fallbacks
+    service = pick_service(watch.doc, nsfw=True, fallback_any=True)  # or by capability
     if service == WAIT: ...                          # router draining: wait, do not switch
     elif service == UNAVAILABLE: ...                 # nothing usable: retry later
     else: limits = model_for(watch.doc, service)     # send `service` as the model ID
@@ -46,6 +47,37 @@ def resolve(doc, preferred, fallbacks=()):
         if model and model["available"]:
             return service
     return UNAVAILABLE
+
+
+_FEATURES = {
+    "vision": lambda m: "image" in (m.get("input_modalities") or []),
+    "tools": lambda m: "tools" in (m.get("capabilities") or []),
+    "reasoning": lambda m: "thinking" in (m.get("capabilities") or []),
+}
+
+
+def pick_service(doc, *, nsfw=None, require=(), exclude=(), fallback_any=False):
+    """The most capable usable service matching the filters, WAIT, or UNAVAILABLE.
+
+    nsfw: True selects only models declared NSFW (abliterated), False only models
+    declared not NSFW, None either. require: features the request needs, from
+    "vision", "tools", "reasoning". exclude: service IDs that just failed.
+    fallback_any: when no model matches `nsfw`, use the most capable usable model.
+    Models rank by capability_score, then context_window.
+    """
+    if doc is None:
+        return UNAVAILABLE
+    if not doc["router"]["accepting_requests"]:
+        return WAIT
+    unknown = [feature for feature in require if feature not in _FEATURES]
+    if unknown:
+        raise ValueError("unknown required feature: " + ", ".join(unknown))
+    usable = [m for m in doc["models"] if m["available"] and m["service"] not in exclude
+              and m["id"] not in exclude and all(_FEATURES[f](m) for f in require)]
+    rank = lambda m: (m.get("capability_score") is not None, m.get("capability_score") or 0, m.get("context_window") or 0)
+    matching = [m for m in usable if nsfw is None or m.get("nsfw") is nsfw]
+    candidates = matching or (usable if fallback_any else [])
+    return max(candidates, key=rank)["service"] if candidates else UNAVAILABLE
 
 
 def model_for(doc, service):

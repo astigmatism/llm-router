@@ -41,6 +41,7 @@ The response is always HTTP 200 with a truthful document, including when no mode
   "default_model": "qwen3.8-27b-ud-q6_k_xl-tensor-next",   // used when a request omits model
   "models": [{
     "id": "qwen3.8-27b-ud-q6_k_xl-tensor-next",
+    "service": "daytime",                // the stable ID to send for this model
     "display_name": "Qwen3.8 27B Q6_K (160K)",
     "aliases": ["local-active", "daytime"],
     "available": true,                   // backend healthy and router accepting requests
@@ -48,6 +49,8 @@ The response is always HTTP 200 with a truthful document, including when no mode
     "context_window": 163840,            // per request; every slot has the full window
     "input_modalities": ["text", "image"],
     "capabilities": ["completion", "thinking", "tools", "vision"],
+    "nsfw": false,                       // declared by the runtime; true for abliterated models
+    "capability_score": 68.3,            // higher is more capable; see "Capability score"
     "metadata": { /* identical to this model's x_ollama_router in /v1/models */ }
   }],
   "offline_services": [],                // see below
@@ -73,7 +76,9 @@ The response is always HTTP 200 with a truthful document, including when no mode
 
 | Field | Meaning |
 |---|---|
-| `capability_profile` | Qualified flags from the runtime: `text`, `streaming`, `vision`, `tools`, `reasoning`, `speculative`, and the profile `name` |
+| `capability_profile` | Qualified flags from the runtime: `text`, `streaming`, `vision`, `tools`, `reasoning`, `speculative`, `nsfw`, and the profile `name` |
+| `nsfw` | `true` when the runtime declares the model abliterated (refusals removed, suitable for NSFW content), `false` when it declares it not, `null` when the catalog does not say. Never inferred from a model's name. |
+| `capability_score` | `{value, version, basis, components: {size, context, features}, inputs: {parameters, bits_per_weight, context_window, vision, tools, reasoning}}`; see below |
 | `placement` | `gpu_count`, `gpus` (text GPU card names, in the runtime's text GPU order), `vision_encoder` (`gpu`/`cpu`), `vision_gpu`, `vision_gpu_shared`, `exclusive`. GPU UUIDs, paths and URLs are never published. |
 | `live` | What the running process reports: `slots`, `slot_context_window`, `vision`, `model_context_window` (GGUF training context), `parameters`, `size_bytes`, `build`. Null when the backend cannot be reached. |
 | `parameter_size`, `family` | `parameter_size` is formatted from the live parameter count (for example `27.3B`); `family` comes only from the catalog. Each is null when unknown, never guessed. |
@@ -81,6 +86,30 @@ The response is always HTTP 200 with a truthful document, including when no mode
 | `sources.backend_props` | Whether `/props` answered |
 
 `model_context_window` is now the model's native training context when llama.cpp reports it. `context_window` remains the per-request limit to budget against.
+
+### Capability score
+
+`capability_score` ranks the models of this router, from 0 to 100, higher being more capable. It is computed automatically from published facts only. Availability, load and speed never change it, so it moves only when a model or its configuration changes.
+
+| Component | Points | Source |
+|---|---:|---|
+| `size` | up to 55 | Parameter count on a log scale (1B = 0, 1T = 55), multiplied by quantization fidelity. Fidelity comes from the effective bits per weight (file size × 8 ÷ parameters): 1.0 at 8 bits or more, 0.97 at 6, 0.94 at 5, 0.88 at 4, 0.75 at 3, 0.5 at 2, linear between. Both counts come from the running llama.cpp process. |
+| `context` | up to 25 | Per-request `context_window` on a log scale (4K = 0, 256K or more = 25) |
+| `features` | up to 20 | Vision 7, tools 7, reasoning 6 |
+
+On 2026-10-07 production scored Daytime (27B Q6_K_XL, 160K) **68.3** and Nighttime (27B abliterated Q6_K, 96K) **64.9**. Both are 27B models, so Daytime ranks higher on its larger context and higher precision. Parameter count and size are remembered for each model revision, so a briefly unreachable backend keeps its score. A model whose facts were never observed scores `null` with `basis: "incomplete"`. `version` changes if the formula changes.
+
+The score cannot measure how well a model actually answers. It can't weigh a fine-tune or abliteration against its base model, or a mixture-of-experts model (counted by total parameters) against a dense one. Use measured benchmarks such as Bench Studio's for those decisions.
+
+### Choosing by capability
+
+To choose by what a model can do rather than by name, filter `models` and take the highest `capability_score`:
+
+- **Most capable model:** keep every model with `available` true and the features the request needs, then pick the highest score.
+- **Most capable NSFW model:** apply the same filter, keeping only models where `nsfw` is `true`.
+- **NSFW first, then anything:** if no NSFW model is usable, choose the most capable usable model instead.
+
+The reference clients provide this as `pick_service(doc, nsfw=True, require=["vision"], fallback_any=True)` (Python) and `pickService(doc, { nsfw: true, require: ['vision'], fallbackAny: true })` (JavaScript). Both return the model's `service` ID, `WAIT` while the router drains, or `UNAVAILABLE`. Send the returned `service` (for example `nighttime`) as the request's model.
 
 ### Offline services
 
@@ -185,4 +214,4 @@ Native Ollama and Chat Completions errors use `{"error": {"code": "…", "messag
 
 Return to the preferred service as soon as it is available again; do not stay on the fallback. When the service changes, take limits from the model that will actually serve the request: `context_window`, `metadata.context_safety_reserve`, `slots`, `input_modalities` and `capabilities`. Daytime and Nighttime differ in context size, and either may be larger. Daytime is not the abliterated model and may refuse requests that Nighttime answers. Its single slot is shared with coding agents, so fallback requests can queue behind long generations; the router has no queue deadline.
 
-The [client handoff](handoffs/2026-10-07-capability-subscribers.md) applies these rules to each consuming project. Reference clients implement the subscriber, `resolve` and the error classification: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+, browsers). The router's test suite runs the JavaScript client against the router, and `python3 -m unittest discover -s docs/clients` tests the Python client.
+The [client handoff](handoffs/2026-10-07-capability-subscribers.md) applies these rules to each consuming project. Choosing `pick_service(doc, nsfw=True, fallback_any=True)` expresses the same Nighttime-then-Daytime rule by capability instead of by name. It also keeps working if an NSFW model is ever served under another ID. Reference clients implement the subscriber, `resolve`, `pick_service` and the error classification: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+, browsers). The router's test suite runs the JavaScript client against the router, and `python3 -m unittest discover -s docs/clients` tests the Python client.

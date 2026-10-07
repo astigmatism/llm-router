@@ -113,7 +113,8 @@
     "reasoning": true,
     "speculative": true,
     "prompt_cache_volatile": true,
-    "prompt_cache_persistence": false
+    "prompt_cache_persistence": false,
+    "nsfw": false
   },
   "deployment_warnings": [],
   "updated_at": "2026-09-12T04:40:39.571770+00:00",
@@ -257,7 +258,8 @@
         "reasoning": true,
         "speculative": true,
         "prompt_cache_volatile": true,
-        "prompt_cache_persistence": false
+        "prompt_cache_persistence": false,
+        "nsfw": false
       },
       "deployment_warnings": [],
       "updated_at": "2026-09-12T04:40:39.571770+00:00",
@@ -391,7 +393,8 @@
         "reasoning": true,
         "speculative": false,
         "prompt_cache_volatile": true,
-        "prompt_cache_persistence": false
+        "prompt_cache_persistence": false,
+        "nsfw": true
       },
       "deployment_warnings": [],
       "updated_at": "2026-09-12T04:40:39.571770+00:00",

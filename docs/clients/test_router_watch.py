@@ -9,12 +9,16 @@ import router_watch as rw
 
 
 def document(revision, *, accepting=True, night=True, night_available=True, offline=False):
-    models = [{"id": "day-model", "aliases": ["local-active", "daytime"], "available": accepting,
-               "slots": 1, "context_window": 163840, "metadata": {"context_safety_reserve": 1024}}]
+    models = [{"id": "day-model", "service": "daytime", "aliases": ["local-active", "daytime"], "available": accepting,
+               "slots": 1, "context_window": 163840, "nsfw": False, "capability_score": 68.3,
+               "input_modalities": ["text", "image"], "capabilities": ["completion", "thinking", "tools", "vision"],
+               "metadata": {"context_safety_reserve": 1024}}]
     ids = {"day-model": "day-model", "local-active": "day-model", "daytime": "day-model"}
     if night:
-        models.append({"id": "night-model", "aliases": ["nighttime"], "available": accepting and night_available,
-                       "slots": 1, "context_window": 98304, "metadata": {"context_safety_reserve": 1024}})
+        models.append({"id": "night-model", "service": "nighttime", "aliases": ["nighttime"], "available": accepting and night_available,
+                       "slots": 1, "context_window": 98304, "nsfw": True, "capability_score": 64.9,
+                       "input_modalities": ["text"], "capabilities": ["completion", "thinking", "tools"],
+                       "metadata": {"context_safety_reserve": 1024}})
         ids.update({"night-model": "night-model", "nighttime": "night-model"})
     return {"object": "router.capabilities", "schema_version": 1, "revision": revision,
             "router": {"accepting_requests": accepting}, "models": models, "ids": ids,
@@ -56,6 +60,21 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(rw.resolve(None, "nighttime", ["daytime"]), "nighttime")
         self.assertEqual(rw.model_for(document("f"), "nighttime")["context_window"], 98304)
         self.assertIsNone(rw.model_for(document("g", night=False), "nighttime"))
+
+    def test_picks_the_most_capable_matching_service(self):
+        paired, solo = document("a"), document("b", night=False, offline=True)
+        self.assertEqual(rw.pick_service(paired), "daytime")                       # highest score
+        self.assertEqual(rw.pick_service(paired, nsfw=True), "nighttime")          # most capable NSFW
+        self.assertEqual(rw.pick_service(paired, nsfw=False), "daytime")
+        self.assertEqual(rw.pick_service(solo, nsfw=True), rw.UNAVAILABLE)
+        self.assertEqual(rw.pick_service(solo, nsfw=True, fallback_any=True), "daytime")
+        self.assertEqual(rw.pick_service(paired, nsfw=True, require=["vision"], fallback_any=True), "daytime")
+        self.assertEqual(rw.pick_service(paired, nsfw=True, exclude=["nighttime"], fallback_any=True), "daytime")
+        self.assertEqual(rw.pick_service(document("c", night_available=False), nsfw=True, fallback_any=True), "daytime")
+        self.assertEqual(rw.pick_service(document("d", accepting=False), nsfw=True), rw.WAIT)
+        self.assertEqual(rw.pick_service(None), rw.UNAVAILABLE)
+        with self.assertRaises(ValueError):
+            rw.pick_service(paired, require=["telepathy"])
 
     def test_classifies_router_errors(self):
         body = lambda code: json.dumps({"error": {"code": code, "message": "m"}})

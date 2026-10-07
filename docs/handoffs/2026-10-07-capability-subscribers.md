@@ -24,7 +24,10 @@ AI Runtime changes the models behind the router by hand, and with no warning to 
 The base address is `http://192.168.1.4:11434` on the LAN, or `http://ai-router:11434` from a container on Rosalina's `local-ai-ollama_default` network. Neither endpoint needs a token.
 
 - **`GET /v1/router/capabilities`:** one JSON document describing what can be used right now.
-  - Every usable model: `id`, `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, and full `metadata` (for example `metadata.context_safety_reserve` and `metadata.reasoning.efforts`).
+  - Every usable model: `id`, `service` (the stable ID to send), `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, and full `metadata` (for example `metadata.context_safety_reserve` and `metadata.reasoning.efforts`).
+  - Each model also carries `nsfw` and `capability_score`:
+    - `nsfw` is `true` for abliterated models (refusals removed). The runtime declares it per model; today Nighttime is `true` and Daytime `false`.
+    - `capability_score` is an automatic 0–100 ranking from parameter count, quantization, context and features (higher is more capable). Today Daytime scores about 68.3 and Nighttime about 64.9.
   - `ids`, which maps every accepted ID to its current model.
   - `offline_services`: services the current configuration deliberately stopped, such as `nighttime` with reason `exclusive_configuration`.
   - `configuration`: the AI Runtime configuration ID.
@@ -40,7 +43,11 @@ The base address is `http://192.168.1.4:11434` on the LAN, or `http://ai-router:
 ### Required behavior
 
 1. **Send service IDs only.** Use `nighttime` and `daytime` (`local-active` still works for Daytime). Never configure, store or compare full model IDs such as `qwen3.8-27b-…`; they change between configurations. To record which model actually served a request, log the response's `model` field or `ids[service]`, and treat it as information only.
-2. **Make the fallback configurable.** Provide a preferred model (default `nighttime` where you use Nighttime today) and an ordered fallback list (default `daytime`), each settable from your normal configuration source. An empty fallback list disables fallback.
+2. **Make the choice configurable.** Use whichever of these fits why you want Nighttime:
+   - **By capability (preferred when you want Nighttime because it is uncensored):** choose the most capable usable model with `nsfw: true` that has the features you need, and fall back to the most capable usable model of any kind. The reference clients' `pick_service(doc, nsfw=True, require=[...], fallback_any=True)` (`pickService` in JavaScript) does exactly this. It returns the model's `service` ID to send, `WAIT`, or `UNAVAILABLE`. With today's models it gives `nighttime` in a paired configuration and `daytime` in a solo one.
+   - **By name:** provide a preferred model (default `nighttime`) and an ordered fallback list (default `daytime`), using `resolve(doc, preferred, fallbacks)`.
+
+   Make it settable from your normal configuration source, for example "NSFW required / preferred / not needed" or the preferred and fallback IDs. Fallback must be possible to disable.
 3. **At startup, fetch the capabilities document and keep it.** Do not fail startup when the router is unreachable or Nighttime is offline. Start in a degraded state and recover.
 4. **Subscribe for the life of the process.** Keep a background subscriber on `/v1/router/events` (a thread or task in your long-running process). When it disconnects, poll the capabilities endpoint every 30 s with `If-None-Match`, and reconnect with backoff starting at the stream's `retry:` value (3 s), up to 30 s. Treat 60 s without any bytes, keepalives included, as a dead connection.
 5. **Pick the service from the current document before each request:**
@@ -49,14 +56,14 @@ The base address is `http://192.168.1.4:11434` on the LAN, or `http://ai-router:
    |---|---|
    | `router.accepting_requests` is false | **Wait** and retry later with the same preference. Do not fall back: the whole router is switching. A switch usually finishes in under a few minutes. |
    | The preferred service is listed and `available` | Use it. |
-   | The preferred service is in `offline_services`, is listed with `available: false`, or is missing | Use the first fallback that is listed, `available`, and supports what the request needs (vision, tools, reasoning). |
+   | The preferred service is in `offline_services`, is listed with `available: false`, or is missing | Use the first fallback that is listed, `available`, and supports what the request needs (vision, tools, reasoning). By capability: the most capable such model, NSFW ones first. |
    | Nothing is usable | Report "temporarily unavailable" and retry later. |
 
 6. **Also classify every failed response.** The document can be a few seconds behind. Read `error.code`:
 
    | HTTP status and `error.code` | Action |
    |---|---|
-   | 503 `SERVICE_OFFLINE` | Fall back immediately. This is not a failure: don't count it toward retry caps, budgets or circuit breakers. |
+   | 503 `SERVICE_OFFLINE` | Fall back immediately (with `pick_service`, pass the failed service in `exclude`). This is not a failure: don't count it toward retry caps, budgets or circuit breakers. |
    | 503 `BACKEND_UNAVAILABLE` | Fall back if a fallback is available; otherwise retry with backoff. |
    | 404 `MODEL_NOT_FOUND` | Fall back if one is configured, and log a warning (it usually means a stale or misspelled ID). |
    | 503 `BACKEND_DRAINING` or `MAINTENANCE_MODE` | Wait (backoff from 2 s up to 30 s, for at least 10 minutes in total), then pick the service again from step 5. |
@@ -86,14 +93,15 @@ These are tested against the router, including production. Copy one of them, or 
   - `RouterWatch(base).fetch()` for the startup document;
   - `RouterWatch.run_forever(stop)`, to run in a daemon thread;
   - `resolve(doc, "nighttime", ["daytime"])`, which returns a service ID, `WAIT`, or `UNAVAILABLE`;
+  - `pick_service(doc, nsfw=True, require=["vision"], exclude=(), fallback_any=True)`, the capability-based equivalent;
   - `model_for(doc, service)` for the target model's limits;
   - `classify_error(status, body)`, which returns `FALLBACK`, `WAIT`, `RETRY` or `FAIL`.
-- **JavaScript** (Node 18+ or browsers): <https://github.com/astigmatism/llm-router/blob/main/docs/clients/router-watch.mjs>. It provides the same functions as `watchRouter`, `resolveService`, `modelFor` and `classifyError`.
+- **JavaScript** (Node 18+ or browsers): <https://github.com/astigmatism/llm-router/blob/main/docs/clients/router-watch.mjs>. It provides the same functions as `watchRouter`, `resolveService`, `pickService`, `modelFor` and `classifyError`.
 - **asyncio projects:** port the stream loop to `httpx.AsyncClient.stream("GET", …)`, or run the thread version. Keep the same decision functions.
 
 ### Acceptance tests (add to your own suite; no live router required)
 
-- Paired document → `nighttime`. Solo document with `offline_services: [nighttime]` → `daytime`. Nighttime listed but `available: false` → `daytime`.
+- Paired document → `nighttime`. Solo document with `offline_services: [nighttime]` → `daytime`. Nighttime listed but `available: false` → `daytime`. With selection by capability, the same three documents give the same answers.
 - `accepting_requests: false` → wait, with no switch. Fallback list empty and Nighttime offline → unavailable, not an exception.
 - Nighttime offline → available again: the next request uses `nighttime`.
 - Each error code in the table, with the exact body shapes above, produces the stated action. `SERVICE_OFFLINE` does not consume retry or budget allowances.
@@ -143,7 +151,7 @@ Line numbers are from the surveyed commits; confirm them before editing.
   - `CIF_OLLAMA_MODEL` defaults to `nighttime` (`backend/app/config.py:240`).
   - Before every compose or evaluate call it reads `/api/tags`. It returns 503 when `nighttime` isn't listed by name, or when `health.available` is false (`ollama.py:165-172, 1016-1021`), so in a solo configuration the prompt assistant stops working.
 - **Required changes:**
-  - Add `CIF_OLLAMA_FALLBACK_MODELS` (default `daytime`).
+  - Prefer selection by capability, because Nighttime is chosen for being uncensored: the most capable `nsfw: true` model with `image` input for vision checks, then the most capable usable model. Alternatively add `CIF_OLLAMA_FALLBACK_MODELS` (default `daytime`) next to `CIF_OLLAMA_MODEL`.
   - Choose the model from the capabilities document instead of the `/api/tags` name check.
   - Run the subscriber as a lifespan task next to `_health_loop` (`queue_worker.py:3478-3522`), and report the model in use and whether it is a fallback on the status endpoint and in the UI.
 - **Error handling.** Today `error` bodies are ignored and 503s are retried three times with 0.25 s backoff:

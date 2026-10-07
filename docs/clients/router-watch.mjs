@@ -3,7 +3,8 @@
 //
 //   const watch = watchRouter('http://192.168.1.4:11434', (doc) => log(doc.configuration), { signal });
 //   await watch.ready.catch(() => {});            // tolerate an unreachable router at startup
-//   const service = resolveService(watch.current, 'nighttime', ['daytime']);
+//   const service = resolveService(watch.current, 'nighttime', ['daytime']);        // by name
+//   const service = pickService(watch.current, { nsfw: true, fallbackAny: true });  // by capability
 //   if (service === WAIT) ...                      // router draining: wait, do not switch
 //   else if (service === UNAVAILABLE) ...          // nothing usable: retry later
 //   else modelFor(watch.current, service)          // limits for the model `service` targets
@@ -28,6 +29,32 @@ export function resolveService(doc, preferred, fallbacks = []) {
     if (model?.available) return service;
   }
   return UNAVAILABLE;
+}
+
+const FEATURES = {
+  vision: (m) => (m.input_modalities || []).includes('image'),
+  tools: (m) => (m.capabilities || []).includes('tools'),
+  reasoning: (m) => (m.capabilities || []).includes('thinking')
+};
+
+// The most capable usable service matching the filters, WAIT, or UNAVAILABLE.
+// nsfw: true = only models declared NSFW (abliterated), false = only models
+// declared not NSFW, undefined/null = either. require: subset of
+// ['vision', 'tools', 'reasoning']. exclude: service IDs that just failed.
+// fallbackAny: when no model matches `nsfw`, use the most capable usable model.
+export function pickService(doc, { nsfw = null, require = [], exclude = [], fallbackAny = false } = {}) {
+  if (!doc) return UNAVAILABLE;
+  if (!doc.router.accepting_requests) return WAIT;
+  const unknown = require.filter((feature) => !FEATURES[feature]);
+  if (unknown.length) throw new Error(`unknown required feature: ${unknown.join(', ')}`);
+  const usable = doc.models.filter((m) => m.available && !exclude.includes(m.service) && !exclude.includes(m.id)
+    && require.every((feature) => FEATURES[feature](m)));
+  const matching = usable.filter((m) => nsfw === null || nsfw === undefined || m.nsfw === nsfw);
+  const candidates = matching.length ? matching : (fallbackAny ? usable : []);
+  if (!candidates.length) return UNAVAILABLE;
+  const rank = (m) => [m.capability_score === null || m.capability_score === undefined ? 0 : 1, m.capability_score ?? 0, m.context_window ?? 0];
+  const better = (a, b) => { const x = rank(a); const y = rank(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
+  return candidates.reduce((best, m) => (better(m, best) ? m : best)).service;
 }
 
 export function modelFor(doc, service) {
