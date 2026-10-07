@@ -66,6 +66,38 @@ export function enforcedContextSafetyReserve(activeModel) {
   return nonNegativeInteger(activeModel?.context_safety_reserve, DEFAULT_CONTEXT_SAFETY_RESERVE);
 }
 
+// llama.cpp `/v1/models` entries carry model facts read from the loaded GGUF.
+export function llamaModelMeta(model) {
+  const meta = isPlainObject(model?.meta) ? model.meta : null;
+  if (!meta) return null;
+  return {
+    n_ctx_train: positiveInteger(meta.n_ctx_train),
+    n_params: positiveInteger(meta.n_params),
+    size: positiveInteger(meta.size)
+  };
+}
+
+// Ollama-style size label such as "27.3B" or "750M"; null when unknown.
+export function formatParameterSize(parameters) {
+  const count = positiveInteger(parameters);
+  if (count === null) return null;
+  if (count >= 1e9) return `${Number((count / 1e9).toFixed(1))}B`;
+  return `${Math.max(1, Math.round(count / 1e6))}M`;
+}
+
+// Native details report only what the catalog or the running model states.
+export function llamaModelDetails(activeModel, parameters = null) {
+  const raw = isPlainObject(activeModel?.raw) ? activeModel.raw : {};
+  const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  return {
+    backend: LLAMA_CPP_KIND,
+    format: 'gguf',
+    family: text(raw.family),
+    parameter_size: formatParameterSize(parameters) ?? text(raw.parameter_size),
+    quantization_level: raw.quantization ?? null
+  };
+}
+
 function clonedConfig(config, upstreamUrl) {
   return { ...config, upstreamUrl: String(upstreamUrl || config.upstreamUrl).replace(/\/+$/, '') };
 }
@@ -1581,13 +1613,16 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
         upstreamJson(this.upstreamConfig, '/slots', { timeoutMs: 10000 })
       ]);
       const model = models.body?.data?.find((entry) => entry?.id === this.activeModel.model) || models.body?.data?.[0];
+      const slotList = Array.isArray(slots.body) ? slots.body : null;
       return {
         models: model ? [{
           name: this.activeModel.model,
           model: this.activeModel.model,
           context_length: this.activeModel.context_length,
           total_context_length: this.activeModel.total_context_length,
-          slots: Array.isArray(slots.body) ? slots.body.length : null,
+          slots: slotList ? slotList.length : null,
+          slot_contexts: slotList ? slotList.map((slot) => positiveInteger(slot?.n_ctx)) : null,
+          meta: llamaModelMeta(model),
           expires_at: '9999-12-31T23:59:59Z'
         }] : []
       };
@@ -1596,7 +1631,31 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
     }
   }
 
+  // Server-wide facts that llama.cpp reports about the process actually
+  // running. Discovery compares them with the published catalog.
+  async props() {
+    try {
+      const props = await upstreamJson(this.upstreamConfig, '/props', { timeoutMs: 5000 });
+      return props.ok && props.body && typeof props.body === 'object' && !Array.isArray(props.body)
+        ? { ok: true, body: props.body }
+        : { ok: false, body: null };
+    } catch {
+      return { ok: false, body: null };
+    }
+  }
+
+  async modelMeta() {
+    try {
+      const models = await upstreamJson(this.upstreamConfig, '/v1/models', { timeoutMs: 3000 });
+      const model = models.body?.data?.find((entry) => entry?.id === this.activeModel.model) || models.body?.data?.[0];
+      return llamaModelMeta(model);
+    } catch {
+      return null;
+    }
+  }
+
   async show() {
+    const meta = await this.modelMeta();
     return {
       ok: true,
       status: 200,
@@ -1608,7 +1667,7 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
           ...(this.activeModel.capability_profile?.tools === true ? ['tools'] : []),
           ...(this.activeModel.capability_profile?.vision === true ? ['vision'] : [])
         ],
-        details: { backend: 'llama_cpp', format: 'gguf', family: 'qwen3', parameter_size: '27B', quantization_level: this.activeModel.raw?.quantization },
+        details: llamaModelDetails(this.activeModel, meta?.n_params),
         model_info: { context_length: this.activeModel.context_length },
         ...(this.activeModel.catalog_mode ? { x_ollama_router: {
           display_name: this.activeModel.raw?.display_name ?? this.activeModel.model,

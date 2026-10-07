@@ -111,3 +111,13 @@ test('configures a non-empty stable public model alias and discovery cache TTL',
   assert.equal(configured.routerModelMetadataTtlMs, 2500);
   assert.throws(() => loadConfig({ ROUTER_MODEL_ALIAS: '   ' }), /must be a non-empty string/);
 });
+
+test('configures capability polling and event stream limits with safe minimums', () => {
+  const defaults = loadConfig({});
+  assert.deepEqual([defaults.capabilityPollMs, defaults.eventsHeartbeatMs, defaults.eventsMaxSubscribers], [5000, 15000, 64]);
+  const low = loadConfig({ ROUTER_CAPABILITY_POLL_MS: '10', ROUTER_EVENTS_HEARTBEAT_MS: '1', ROUTER_EVENTS_MAX_SUBSCRIBERS: '0' });
+  assert.deepEqual([low.capabilityPollMs, low.eventsHeartbeatMs, low.eventsMaxSubscribers], [1000, 1000, 1]);
+  const published = publicConfig(loadConfig({ ROUTER_EVENTS_MAX_SUBSCRIBERS: '8' }));
+  assert.equal(published.eventsMaxSubscribers, 8);
+  assert.equal(published.capabilityPollMs, 5000);
+});

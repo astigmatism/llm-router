@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readActiveModel } from './active-model.js';
-import { readModelCatalog, selectModel } from './model-catalog.js';
+import { findOfflineService, readModelCatalog, selectModel, serviceOfflineMessage } from './model-catalog.js';
 import {
   parseDefaultThink,
   thinkLevelToReasoningEffort,
@@ -9,6 +9,7 @@ import {
 import { upstreamJson } from './upstream.js';
 import {
   enforcedContextSafetyReserve,
+  formatParameterSize,
   resolveBackendAdapter,
   validatedReasoningPolicy
 } from './backend-adapters.js';
@@ -224,6 +225,76 @@ function entryEtag(entry) {
   return `"${digest}"`;
 }
 
+const nonEmptyText = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+const booleanOrNull = (value) => (typeof value === 'boolean' ? value : null);
+
+// Public subset of the runtime capability profile: qualification flags only.
+function publicCapabilityProfile(profile) {
+  if (!isPlainObject(profile)) return null;
+  return {
+    name: nonEmptyText(profile.name),
+    text: booleanOrNull(profile.text),
+    streaming: booleanOrNull(profile.streaming),
+    vision: booleanOrNull(profile.vision),
+    tools: booleanOrNull(profile.tools),
+    reasoning: booleanOrNull(profile.reasoning),
+    speculative: booleanOrNull(profile.speculative)
+  };
+}
+
+// Hardware placement published by the runtime. Card names only: GPU UUIDs,
+// device paths, and backend URLs stay private.
+function placementMetadata(raw) {
+  const textGpus = Array.isArray(raw?.text_gpu_uuids) ? raw.text_gpu_uuids
+    : (Array.isArray(raw?.gpu_uuids) ? raw.gpu_uuids : null);
+  const names = Array.isArray(raw?.gpu_names) && raw.gpu_names.length && raw.gpu_names.every((name) => nonEmptyText(name))
+    ? raw.gpu_names.map((name) => name.trim())
+    : null;
+  const encoder = raw?.mmproj_offload === 'gpu' || raw?.mmproj_offload === 'cpu' ? raw.mmproj_offload : null;
+  return {
+    gpu_count: textGpus ? textGpus.length : (names ? names.length : null),
+    gpus: names,
+    vision_encoder: encoder,
+    vision_gpu: encoder === 'gpu' ? nonEmptyText(raw?.vision_gpu_name) : null,
+    vision_gpu_shared: encoder === 'gpu' ? booleanOrNull(raw?.vision_gpu_shared) : null,
+    exclusive: raw?.exclusive === true
+  };
+}
+
+// Facts reported by the running llama.cpp process: slot layout from /slots,
+// GGUF facts from /v1/models, and modalities/build from /props.
+function liveBackendFacts(loadedModel, props) {
+  const propsBody = props?.ok ? props.body : null;
+  if (!loadedModel && !propsBody) return null;
+  const contexts = Array.isArray(loadedModel?.slot_contexts) ? loadedModel.slot_contexts : null;
+  const known = contexts?.filter((value) => value !== null) ?? [];
+  const unique = [...new Set(known)];
+  return {
+    slots: Number.isSafeInteger(loadedModel?.slots) ? loadedModel.slots : null,
+    slot_context_window: contexts && known.length === contexts.length && unique.length === 1 ? unique[0] : null,
+    vision: booleanOrNull(propsBody?.modalities?.vision),
+    model_context_window: loadedModel?.meta?.n_ctx_train ?? null,
+    parameters: loadedModel?.meta?.n_params ?? null,
+    size_bytes: loadedModel?.meta?.size ?? null,
+    build: nonEmptyText(propsBody?.build_info)
+  };
+}
+
+// The runtime verifies these before publication; a disagreement here means
+// the advertised capacity or capability is not what the backend provides.
+function liveMismatchWarnings(activeModel, loadedModel, live) {
+  if (!live) return [];
+  const warnings = [];
+  const slots = activeModel.max_active_requests;
+  if (live.slots !== null && slots && live.slots !== slots) warnings.push('BACKEND_SLOT_COUNT_MISMATCH');
+  const contexts = Array.isArray(loadedModel?.slot_contexts) ? loadedModel.slot_contexts : [];
+  if (activeModel.context_length && contexts.some((value) => value !== null && value !== activeModel.context_length)) {
+    warnings.push('BACKEND_SLOT_CONTEXT_MISMATCH');
+  }
+  if (activeModel.capability_profile?.vision === true && live.vision === false) warnings.push('BACKEND_VISION_MISMATCH');
+  return warnings;
+}
+
 export function ifNoneMatchMatches(header, etag) {
   if (typeof header !== 'string' || !header.trim()) return false;
   return header.split(',').some((candidate) => {
@@ -290,10 +361,12 @@ export class ActiveModelDiscovery {
   }
 
   async refresh(activeModel, key, generation) {
-    const [ps, show, health] = await Promise.all([
+    const adapter = activeModel.catalog_mode ? resolveBackendAdapter(this.config, activeModel) : null;
+    const [ps, show, health, props] = await Promise.all([
       this.readUpstreamPs(activeModel),
       this.readUpstreamShow(activeModel),
-      activeModel.catalog_mode ? resolveBackendAdapter(this.config, activeModel).health() : null
+      adapter ? adapter.health() : null,
+      typeof adapter?.props === 'function' ? adapter.props() : null
     ]);
     const warnings = [...(activeModel.metadata_warnings || [])];
     if (activeModel.loadedFrom !== 'file') warnings.push('ACTIVE_MODEL_MARKER_UNAVAILABLE');
@@ -307,7 +380,10 @@ export class ActiveModelDiscovery {
     const loadedModel = ps.available ? matchingLoadedModel(ps.body, activeModel.model) : null;
     const loadedContext = loadedContextWindow(loadedModel);
     const architecturalContext = show.available ? modelContextWindow(show.body) : null;
+    const live = activeModel.catalog_mode ? liveBackendFacts(loadedModel, props) : null;
+    if (activeModel.catalog_mode) warnings.push(...liveMismatchWarnings(activeModel, loadedModel, live));
     const uniqueWarnings = [...new Set(warnings)];
+    const raw = isPlainObject(activeModel.raw) ? activeModel.raw : {};
 
     const entry = {
       id: this.config.routerModelAlias,
@@ -326,7 +402,7 @@ export class ActiveModelDiscovery {
         total_context_window: activeModel.total_context_length ?? loadedContext ?? activeModel.context_length ?? architecturalContext,
         context_safety_reserve: enforcedContextSafetyReserve(activeModel),
         active_request_limit: activeModel.max_active_requests ?? null,
-        model_context_window: architecturalContext,
+        model_context_window: live?.model_context_window ?? architecturalContext,
         output_policy: activeModel.output_policy ?? 'legacy',
         max_output_tokens: activeModel.max_output_tokens ?? null,
         default_output_tokens: activeModel.default_output_tokens ?? null,
@@ -334,6 +410,14 @@ export class ActiveModelDiscovery {
         ...(health ? { health: { available: health.ok, status: health.status },
           aliases: activeModel.aliases, artifact: activeModel.raw.artifact ?? null,
           revision: activeModel.revision, quantization: activeModel.raw.quantization ?? null } : {}),
+        ...(activeModel.catalog_mode ? {
+          family: nonEmptyText(raw.family),
+          parameter_size: formatParameterSize(live?.parameters) ?? nonEmptyText(raw.parameter_size),
+          capability_profile: publicCapabilityProfile(activeModel.capability_profile),
+          placement: placementMetadata(raw),
+          qualification_notes: [...(activeModel.deployment_warnings || [])],
+          live
+        } : {}),
         input_modalities: normalizeModalities(activeModel, capabilities),
         capabilities,
         reasoning: reasoningMetadata(activeModel, capabilities, uniqueWarnings),
@@ -343,7 +427,8 @@ export class ActiveModelDiscovery {
           ollama_show: show.available,
           ...((activeModel.backend_kind || 'ollama') === 'llama_cpp'
             ? { backend_status: ps.available, backend_metadata: show.available }
-            : {})
+            : {}),
+          ...(activeModel.catalog_mode ? { backend_props: props?.ok === true } : {})
         },
         complete: uniqueWarnings.length === 0,
         warnings: uniqueWarnings
@@ -435,10 +520,14 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
         throw new ModelDiscoveryError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(requestedId)} was not found.`, 'model', 'invalid_request_error');
       }
       const result = await super.get(catalog.models[0]);
-      return { entries: [result.entry], etag: result.etag };
+      return { entries: [result.entry], etag: result.etag, catalog };
     }
     const selected = requestedId === null ? catalog.models : catalog.models.filter((m) => m.model === requestedId || m.aliases.includes(requestedId));
-    if (!selected.length) throw new ModelDiscoveryError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(requestedId)} was not found.`, 'model', 'invalid_request_error');
+    if (!selected.length) {
+      const offline = findOfflineService(catalog, requestedId);
+      if (offline) throw new ModelDiscoveryError(503, 'SERVICE_OFFLINE', serviceOfflineMessage(offline, catalog.configuration), 'model', 'server_error');
+      throw new ModelDiscoveryError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(requestedId)} was not found.`, 'model', 'invalid_request_error');
+    }
     const entries = await Promise.all(selected.map(async (model) => {
       if (!this.residents.has(model.model)) {
         this.residents.set(model.model, new ActiveModelDiscovery(this.config, {
@@ -458,6 +547,6 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
         }
       }
     }
-    return { entries, etag: entryEtag(entries) };
+    return { entries, etag: entryEtag(entries), catalog };
   }
 }

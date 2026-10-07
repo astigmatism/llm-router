@@ -31,7 +31,7 @@ async function fixture(t, env = {}) {
       if (req.url === '/props') return json(res, 200, { default_generation_settings: { params: { n_predict: state.launchLimit } } });
       if (req.url === '/health') return json(res, state.healthy ? 200 : 503, { status: state.healthy ? 'ok' : 'unavailable' });
       if (req.url === '/v1/models') return json(res, 200, { data: [{ id: entry.model }] });
-      if (req.url === '/slots') return json(res, 200, [{ n_ctx: entry.context_length }]);
+      if (req.url === '/slots') return json(res, 200, Array.from({ length: entry.max_active_requests }, () => ({ n_ctx: entry.context_length })));
       if (req.url === '/apply-template') return json(res, 200, { prompt: JSON.stringify(body) });
       if (req.url === '/tokenize') {
         if (body.content.includes('HOLD_TOKENIZER')) return;
@@ -348,6 +348,8 @@ test('a two-slot resident admits two overlapping generations and queues the thir
   const metadata = data.find((row) => row.id === CODING).x_ollama_router;
   assert.equal(metadata.context_window, 131072);
   assert.equal(metadata.active_request_limit, 2);
+  // The backend reports the same two full-window slots the catalog declares.
+  assert.deepEqual([metadata.live.slots, metadata.live.slot_context_window, metadata.complete], [2, 131072, true]);
   assert.equal(data.find((row) => row.id === EVERYDAY).x_ollama_router.active_request_limit, 1);
   const first = new AbortController(); const second = new AbortController();
   const a = await f.post('/v1/chat/completions', chat('daytime', 'HOLD', { stream: true }), first.signal);

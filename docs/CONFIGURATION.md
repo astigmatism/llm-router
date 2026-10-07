@@ -56,6 +56,9 @@ The router uses Node's native HTTP transport. `OLLAMA_UPSTREAM_TIMEOUT_MS` bound
 | `ACTIVE_MODEL` | empty | Temporary fallback only. |
 | `ROUTER_MODEL_ALIAS` | `local-active` | Non-empty, stable public ID for the active router slot. Exact requests for this alias always resolve to the active physical model. |
 | `ROUTER_MODEL_METADATA_TTL_MS` | `5000` | Cache lifetime in milliseconds for `/api/ps` and `/api/show` discovery enrichment. Marker changes invalidate immediately regardless of TTL. |
+| `ROUTER_CAPABILITY_POLL_MS` | `5000` | While at least one `/v1/router/events` subscriber is connected, how often the router rechecks backend health and the marker for changes it was not notified of. Minimum `1000`. Reload, drain and maintenance changes are pushed immediately regardless. |
+| `ROUTER_EVENTS_HEARTBEAT_MS` | `15000` | Interval between event-stream keepalive comments. Minimum `1000`. |
+| `ROUTER_EVENTS_MAX_SUBSCRIBERS` | `64` | Concurrent `/v1/router/events` subscribers; more receive 503 `TOO_MANY_SUBSCRIBERS`. Minimum `1`. |
 
 Marker format:
 

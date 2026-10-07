@@ -46,6 +46,7 @@ Generation has no total-duration timer. A 10-second connection timeout and a def
 |---|---|
 | `/v1/models`, `/api/tags` | Canonical models and all declared aliases, with target-equivalent context/capabilities/health and unrestricted metadata |
 | `/api/ps`, admin model lists | Canonical residents only, with each resident's slot count |
+| `/v1/router/capabilities`, `/v1/router/events` | Deployment-wide document and push stream: residents, live backend facts, configuration, offline services, admission and load; see [capabilities](CAPABILITIES.md) |
 | `/api/show` | Canonical or stable service lookup with the resolved target’s capabilities and context |
 | `/v1/chat/completions` | SSE by default; JSON for `stream:false`; preserves finish reasons |
 | `/v1/responses`, `/responses` | JSON by default, SSE for `stream:true`; incomplete/error status preserved |
@@ -53,7 +54,7 @@ Generation has no total-duration timer. A 10-second connection timeout and a def
 | `/api/generate` | Supported text completion with explicit thinking off; enabled reasoning remains unsupported on this route |
 | Embeddings / model management | Unavailable for these profiles |
 
-Unknown models return 404; `daytime`, `local-active` and an omitted model select Daytime; `nighttime` selects Nighttime. Responses remains stateless: send full history; `previous_response_id` and `store:true` are rejected. Generation archives do not implement Responses ID chaining. Native generation's reasoning limitation is explicit; normal chat clients use `/api/chat`.
+Unknown models return 404; `daytime`, `local-active` and an omitted model select Daytime; `nighttime` selects Nighttime. While an exclusive configuration runs, the runtime publishes Nighttime under `offline_services` and its IDs return 503 `SERVICE_OFFLINE`. Responses remains stateless: send full history; `previous_response_id` and `store:true` are rejected. Generation archives do not implement Responses ID chaining. Native generation's reasoning limitation is explicit; normal chat clients use `/api/chat`.
 
 Sampling controls on every route (Ollama `options.seed`, `options.stop`, `options.top_k` and similar, or their top-level equivalents) are validated and forwarded to llama.cpp, or rejected with HTTP 400. They are never silently dropped. The mapping, precedence and history fields are in [llama.cpp sampling controls](API.md#llamacpp-sampling-controls).
 

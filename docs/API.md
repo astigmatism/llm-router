@@ -22,7 +22,16 @@ The admin portal is intentionally unauthenticated for trusted local/LAN use. Do 
 
 ## Primary resident APIs
 
-The deployed two-model API, status codes, output/reasoning policies and streaming defaults are specified in [Primary integration](PRIMARY_INTEGRATION.md#endpoint-behavior). All supported generation routes accept an omitted model (coding), a canonical model ID, or the coding alias. Catalog mode ignores legacy broad rewriting; unknown IDs return 404. Discovery and native metadata describe each resident separately.
+The deployed two-model API, status codes, output/reasoning policies and streaming defaults are specified in [Primary integration](PRIMARY_INTEGRATION.md#endpoint-behavior). All supported generation routes accept an omitted model (coding), a canonical model ID, or the coding alias. Catalog mode ignores legacy broad rewriting; unknown IDs return 404. IDs the runtime declares offline in the current configuration (for example `nighttime` while an exclusive configuration runs) return 503 `SERVICE_OFFLINE`. Discovery and native metadata describe each resident separately.
+
+## Deployment capabilities and events
+
+| Route | Behavior |
+|---|---|
+| `GET /v1/router/capabilities` | One document for the whole deployment: models, aliases, slots, context, capabilities, live backend facts, the runtime configuration, offline services and router admission state. ETag/304. `?include=load` adds active, queued and free slots per model. |
+| `GET /v1/router/events` | Server-Sent Events: `capabilities` events carry the complete document on connect and on every change; `load` events carry occupancy at most once per second; comment heartbeats keep the connection open. |
+
+See [Deployment capabilities and change events](CAPABILITIES.md) for the schema, sources, event timing and client pattern.
 
 ## Legacy single-marker Ollama API reference
 
@@ -313,6 +322,8 @@ Common codes:
 | `MODEL_MANAGEMENT_DISABLED` | Pull/create/delete/copy/push disabled. |
 | `ADMIN_REQUIRED` | Legacy admin auth required for a gated model-management endpoint. |
 | `MAINTENANCE_MODE` | Router maintenance mode rejects generation. |
+| `SERVICE_OFFLINE` | HTTP 503: the requested ID belongs to a service the runtime deliberately stopped in the current configuration. Retry after the configuration changes. |
+| `TOO_MANY_SUBSCRIBERS` | HTTP 503: `/v1/router/events` reached `ROUTER_EVENTS_MAX_SUBSCRIBERS`; poll `/v1/router/capabilities` instead. |
 | `INVALID_THINK_VALUE` | Native `think` is not a boolean or recognized reasoning effort. |
 | `INVALID_REASONING_CAPABILITIES` | Active-profile reasoning metadata is incomplete or inconsistent. |
 | `UNSUPPORTED_TOOLS` | Reject policy blocked native tool controls for an active model without tool support. |

@@ -21,6 +21,13 @@ export class RequestGate {
     this.active = new Map();
     this.queues = new Map();
     this.waiters = new Set();
+    // Optional observer for admission changes (grant, release, enqueue,
+    // cancel). It must be cheap and must not throw into admission.
+    this.onChange = options.onChange || null;
+  }
+
+  changed() {
+    try { this.onChange?.(); } catch { /* observers never affect admission */ }
   }
 
   async init() {
@@ -103,6 +110,7 @@ export class RequestGate {
       if (!this.queues.has(backendKey)) this.queues.set(backendKey, []);
       this.queues.get(backendKey).push(queued);
       signal?.addEventListener('abort', cancel, { once: true });
+      this.changed();
       try { onQueued?.(); }
       catch (error) {
         const queue = this.queues.get(backendKey);
@@ -132,6 +140,7 @@ export class RequestGate {
       startedAt: this.now().toISOString()
     };
     this.active.set(id, entry);
+    this.changed();
     let released = false;
     return {
       id,
@@ -155,6 +164,7 @@ export class RequestGate {
       else entry.resolve(this.grant(entry));
     }
     if (!queue?.length) this.queues.delete(backendKey);
+    this.changed();
     if (this.active.size === 0 && this.queues.size === 0) {
       for (const waiter of this.waiters) waiter();
       this.waiters.clear();

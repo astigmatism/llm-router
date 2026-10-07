@@ -35,6 +35,10 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
   - `GET /v1/models`
   - `GET /v1/models/{alias}`
   - primary catalogs expose resident models and their stable service aliases; legacy mode exposes one active alias
+- Deployment capabilities for other services:
+  - `GET /v1/router/capabilities`: every usable model with its slots, context, modalities, tools/reasoning, live llama.cpp facts and GPU placement, plus the AI Runtime configuration, offline services and router admission state
+  - `GET /v1/router/events`: Server-Sent Events that push the complete document on every change (runtime publication, drain, health) and slot occupancy at most once per second
+  - see [Deployment capabilities and change events](docs/CAPABILITIES.md)
 - Separate browser admin portal, normally `http://192.168.1.4:11435/` or `http://192.168.1.4:11435/admin`.
 - No token or login for the browser admin portal. It is intended for trusted local/LAN use only.
 - Active-model fail-closed policy by default.

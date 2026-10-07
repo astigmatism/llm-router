@@ -37,6 +37,7 @@ import {
   resolveBackendAdapter
 } from './backend-adapters.js';
 import { RequestGate, RequestGateError } from './request-gate.js';
+import { CapabilityPublisher } from './capabilities.js';
 import { queueHeartbeat, endQueuedError, connectionAbort } from './queue-response.js';
 import {
   ModelCatalogDiscovery,
@@ -218,7 +219,7 @@ async function handleModelDiscovery(request, response, pathname, context) {
     const discoveryError = error instanceof ModelDiscoveryError
       ? error
       : new ModelDiscoveryError(500, 'MODEL_DISCOVERY_FAILED', 'Model metadata discovery failed unexpectedly.');
-    if (discoveryError.code !== 'MODEL_NOT_FOUND' && discoveryError.code !== 'METHOD_NOT_ALLOWED') {
+    if (!['MODEL_NOT_FOUND', 'METHOD_NOT_ALLOWED', 'SERVICE_OFFLINE'].includes(discoveryError.code)) {
       await recordDiscoveryFailure(context, discoveryError.code);
     }
     sendJson(response, discoveryError.statusCode, modelDiscoveryErrorPayload(discoveryError), {
@@ -226,6 +227,45 @@ async function handleModelDiscovery(request, response, pathname, context) {
       'x-ollama-router': 'llm-router'
     });
   }
+}
+
+function routerApiError(response, status, code, message) {
+  sendJson(response, status, { error: { message, type: status >= 500 ? 'server_error' : 'invalid_request_error', param: null, code } }, {
+    'cache-control': 'no-cache',
+    'x-ollama-router': 'llm-router'
+  });
+}
+
+async function handleCapabilities(request, response, url, context) {
+  if (request.method !== 'GET') {
+    routerApiError(response, 405, 'METHOD_NOT_ALLOWED', 'The capabilities endpoint only accepts GET requests.');
+    return;
+  }
+  const include = (url.searchParams.get('include') || '').split(',').map((value) => value.trim());
+  const { body, etag } = await context.capabilities.document({ includeLoad: include.includes('load') });
+  const headers = { 'cache-control': 'no-cache', etag, 'x-ollama-router': 'llm-router' };
+  if (ifNoneMatchMatches(request.headers['if-none-match'], etag)) {
+    response.writeHead(304, headers);
+    response.end();
+    return;
+  }
+  sendJson(response, 200, body, headers);
+}
+
+function handleCapabilityEvents(request, response, context) {
+  if (request.method !== 'GET') {
+    routerApiError(response, 405, 'METHOD_NOT_ALLOWED', 'The events endpoint only accepts GET requests.');
+    return;
+  }
+  // The stream outlives this handler; the publisher owns its lifecycle so
+  // graceful shutdown never waits on a subscriber.
+  if (!context.capabilities.subscribe(request, response)) {
+    routerApiError(response, 503, 'TOO_MANY_SUBSCRIBERS', 'The router event stream has reached its subscriber limit. Poll /v1/router/capabilities instead.');
+  }
+}
+
+function notifyCapabilities(context) {
+  void context.capabilities.refresh().catch(() => {});
 }
 
 async function buildSummary(context) {
@@ -351,6 +391,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     }
     const activeModel = await readActiveModel(context.config);
     const runtime = await context.requestGate.setDraining(body.enabled, body.reason);
+    notifyCapabilities(context);
     await persistEvent(context.store, {
       type: 'runtime_drain_changed',
       enabled: body.enabled,
@@ -395,6 +436,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
   if (request.method === 'POST' && pathname === '/admin/api/reload-config') {
     const activeModel = await readActiveModel(context.config);
     context.modelDiscovery.invalidate();
+    notifyCapabilities(context);
     await persistEvent(context.store, { type: 'active_model_marker_reloaded', activeModel });
     sendJson(response, 200, { ok: true, activeModel });
     return;
@@ -409,6 +451,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       return;
     }
     context.state.maintenanceMode = Boolean(body.enabled);
+    notifyCapabilities(context);
     await persistEvent(context.store, { type: 'maintenance_mode_changed', enabled: context.state.maintenanceMode });
     sendJson(response, 200, { ok: true, maintenanceMode: context.state.maintenanceMode });
     return;
@@ -705,9 +748,9 @@ async function ollamaCatalogStatus(context, pathname) {
   return { models: entries.filter((entry) => pathname !== '/api/ps' || entry.x_ollama_router.health?.available).map((entry) => {
     const meta = entry.x_ollama_router;
     return { name: entry.id, model: entry.id, modified_at: meta.updated_at,
-      digest: meta.revision, size: 0, context_length: meta.context_window,
+      digest: meta.revision, size: meta.live?.size_bytes ?? 0, context_length: meta.context_window,
       ...(pathname === '/api/ps' ? { expires_at: '9999-12-31T23:59:59Z', slots: meta.active_request_limit } : {}),
-      details: { format: 'gguf', family: 'qwen3', parameter_size: '27B', quantization_level: meta.quantization },
+      details: { format: 'gguf', family: meta.family ?? null, parameter_size: meta.parameter_size ?? null, quantization_level: meta.quantization },
       capabilities: meta.capabilities, x_ollama_router: meta };
   }) };
 }
@@ -1549,6 +1592,16 @@ async function handleRequest(request, response, context) {
       return;
     }
 
+    if (pathname === '/v1/router/capabilities') {
+      await handleCapabilities(request, response, url, context);
+      return;
+    }
+
+    if (pathname === '/v1/router/events') {
+      handleCapabilityEvents(request, response, context);
+      return;
+    }
+
     if (pathname === '/v1/chat/completions') {
       await handleProxy(request, response, url, context);
       return;
@@ -1590,6 +1643,8 @@ export async function createRouterServer(config = loadConfig()) {
       lastDiscoveryFailureSignature: null
     }
   };
+  context.capabilities = new CapabilityPublisher(context);
+  requestGate.onChange = () => context.capabilities.loadChanged();
 
   await persistEvent(store, {
     type: 'router_startup',
@@ -1627,13 +1682,14 @@ export async function createRouterServer(config = loadConfig()) {
     if (--listeners === 0) context.generationRetention.stop();
   };
   server.once('close', releaseRetention);
+  server.once('close', () => context.capabilities.close());
   adminServer?.once('close', releaseRetention);
   return { server, adminServer, context, waitForIdle };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
-  const { server, adminServer, waitForIdle } = await createRouterServer(config);
+  const { server, adminServer, context, waitForIdle } = await createRouterServer(config);
   server.listen(config.port, config.host, () => {
     console.log(`${config.appName} ${config.version} API listening on http://${config.host}:${config.port}`);
     console.log(`Upstream Ollama: ${config.upstreamUrl}`);
@@ -1661,6 +1717,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         });
       }
     };
+    // End event streams first: server.close() waits for open connections.
+    context.capabilities.close();
     server.close(done);
     if (adminServer) adminServer.close(done);
     setTimeout(() => process.exit(1), 10_000).unref();

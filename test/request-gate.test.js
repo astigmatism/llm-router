@@ -81,3 +81,21 @@ test('FIFO queues share a backend, cancel waiting work, and drain accepted work 
   await assert.rejects(gate.acquire({ ...opts, signal: cancelled.signal }), { name: 'AbortError' });
   assert.equal(gate.snapshot().active_count, 0);
 });
+
+test('request gate notifies its observer of every admission change without letting it fail admission', async () => {
+  let changes = 0;
+  const gate = new RequestGate(null, { onChange: () => { changes += 1; throw new Error('observer failure'); } });
+  const first = await gate.acquire({ endpoint: '/api/chat', limit: 1, backendKey: 'day', model: 'day' });
+  assert.equal(changes, 1);
+  const controller = new AbortController();
+  const queued = gate.acquire({ endpoint: '/api/chat', limit: 1, backendKey: 'day', model: 'day', signal: controller.signal });
+  assert.equal(changes, 2);
+  controller.abort();
+  await assert.rejects(queued);
+  assert.ok(changes >= 3);
+  const before = changes;
+  first.release();
+  assert.ok(changes > before);
+  assert.equal(gate.snapshot().active_count, 0);
+  assert.equal(gate.snapshot().queued_count, 0);
+});

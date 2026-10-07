@@ -10,12 +10,85 @@ function invalid(message) {
   throw new BackendAdapterError(503, 'INVALID_MODEL_CATALOG', message, 'model');
 }
 
+const nonEmptyString = (value) => typeof value === 'string' && value.trim() !== '' && value === value.trim();
+const optionalTimestamp = (value) => value === undefined || value === null
+  || (typeof value === 'string' && Number.isFinite(Date.parse(value)));
+
+// The runtime controller describes the selected configuration. This is
+// presentation metadata: an invalid value is dropped with a warning and never
+// prevents inference with an otherwise valid catalog.
+function runtimeConfiguration(raw, warnings) {
+  const value = raw.configuration;
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !nonEmptyString(value.id)
+    || (value.exclusive !== undefined && typeof value.exclusive !== 'boolean')
+    || (value.runtime_revision !== undefined && value.runtime_revision !== null && !nonEmptyString(value.runtime_revision))
+    || !optionalTimestamp(value.published_at)) {
+    warnings.push('INVALID_RUNTIME_CONFIGURATION');
+    return null;
+  }
+  return {
+    id: value.id,
+    exclusive: value.exclusive ?? null,
+    runtime_revision: value.runtime_revision ?? null,
+    published_at: value.published_at ? new Date(Date.parse(value.published_at)).toISOString() : null
+  };
+}
+
+// Services the runtime knows about but is deliberately not running in the
+// selected configuration, such as Nighttime while an exclusive profile holds
+// every GPU. Requests for them fail as temporarily offline, not as unknown.
+function offlineServices(raw, onlineIds, warnings) {
+  const value = raw.offline_services;
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    warnings.push('INVALID_OFFLINE_SERVICES');
+    return [];
+  }
+  const services = [];
+  const seen = new Set();
+  for (const entry of value) {
+    const aliases = entry?.aliases ?? [];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !nonEmptyString(entry.model)
+      || !Array.isArray(aliases) || !aliases.every(nonEmptyString)
+      || (entry.display_name !== undefined && entry.display_name !== null && !nonEmptyString(entry.display_name))
+      || (entry.reason !== undefined && entry.reason !== null && !nonEmptyString(entry.reason))) {
+      if (!warnings.includes('INVALID_OFFLINE_SERVICES')) warnings.push('INVALID_OFFLINE_SERVICES');
+      continue;
+    }
+    const ids = [entry.model, ...aliases];
+    if (ids.some((id) => onlineIds.has(id) || seen.has(id))) {
+      // A running resident always wins over a stale or conflicting declaration.
+      if (!warnings.includes('OFFLINE_SERVICE_CONFLICT')) warnings.push('OFFLINE_SERVICE_CONFLICT');
+      continue;
+    }
+    for (const id of ids) seen.add(id);
+    services.push({
+      model: entry.model,
+      aliases: [...aliases],
+      display_name: entry.display_name ?? entry.model,
+      role: nonEmptyString(entry.role) ? entry.role : null,
+      reason: entry.reason ?? 'not_running'
+    });
+  }
+  return services;
+}
+
+export function findOfflineService(catalog, id) {
+  return (catalog.offlineServices || []).find((entry) => entry.model === id || entry.aliases.includes(id)) || null;
+}
+
+export function serviceOfflineMessage(service, configuration) {
+  const where = configuration?.id ? ` in runtime configuration ${JSON.stringify(configuration.id)}` : '';
+  return `${service.display_name} is offline${where} (${service.reason}). Select a runtime configuration that includes it, or use an available model.`;
+}
+
 // One atomic marker contains both the default's legacy projection and the
 // complete resident catalog. A request retains this snapshot for its lifetime.
 export async function readModelCatalog(config) {
   const active = await readActiveModel(config);
   if (!Object.hasOwn(active.raw || {}, 'models')) {
-    return { resident: false, defaultModel: active.model, models: [active] };
+    return { resident: false, defaultModel: active.model, models: [active], configuration: null, offlineServices: [], warnings: [] };
   }
   const raw = active.raw;
   if (raw.schema_version !== 3 || !Array.isArray(raw.models) || !raw.models.length) invalid('Expected a nonempty schema-v3 model catalog.');
@@ -64,7 +137,10 @@ export async function readModelCatalog(config) {
   for (const key of ['display_name', 'backend_url', 'context_length', 'default_output_tokens', 'max_output_tokens', 'reasoning_policy', 'output_policy', 'server_default_output_tokens']) {
     if (JSON.stringify(raw[key]) !== JSON.stringify(projection[key])) invalid(`Root coding projection disagrees with its catalog entry: ${key}.`);
   }
-  return { resident: true, defaultModel: raw.default_model, models };
+  const warnings = [];
+  const configuration = runtimeConfiguration(raw, warnings);
+  return { resident: true, defaultModel: raw.default_model, models, configuration,
+    offlineServices: offlineServices(raw, ids, warnings), warnings };
 }
 
 export function selectCatalogModel(catalog, requested) {
@@ -74,7 +150,11 @@ export function selectCatalogModel(catalog, requested) {
   }
   const id = requested?.trim() ?? catalog.defaultModel;
   const selected = catalog.models.find((entry) => entry.model === id || entry.aliases.includes(id));
-  if (!selected) throw new BackendAdapterError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(id)} was not found. Available models: ${catalog.models.map((m) => m.model).join(', ')}.`, 'model');
+  if (!selected) {
+    const offline = findOfflineService(catalog, id);
+    if (offline) throw new BackendAdapterError(503, 'SERVICE_OFFLINE', serviceOfflineMessage(offline, catalog.configuration), 'model');
+    throw new BackendAdapterError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(id)} was not found. Available models: ${catalog.models.map((m) => m.model).join(', ')}.`, 'model');
+  }
   return selected;
 }
 
