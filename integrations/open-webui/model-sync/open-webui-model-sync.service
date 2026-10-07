@@ -1,0 +1,8 @@
+[Unit]
+Description=OpenWebUI model-list day/night routine enforcer (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/open-webui-model-sync.py
