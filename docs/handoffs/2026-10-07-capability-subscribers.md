@@ -130,23 +130,9 @@ Superseded by the targeted handoff [deepseek-harness.md](deepseek-harness.md). I
 
 Superseded by the targeted handoff [comfyui-image-frontend.md](comfyui-image-frontend.md). The owner's rule: use the most capable NSFW model, and the most capable non-NSFW model when no NSFW model is usable.
 
-### Playroom (`~/projects/playroom`, surveyed at `355b03c`)
+### Playroom (`~/projects/playroom`)
 
-- **Current state:**
-  - `httpx` Chat Completions (`playroom/agent.py:53-54`).
-  - `LLM_MODEL` defaults to `nighttime` (`playroom/config.py:15`).
-  - No discovery: a vision and tools "qualify" request runs when agent mode starts (`agent.py:76-91`).
-  - `raise_for_status` treats every error the same. Three attempts and a session-wide cap of six retries, then the session pauses (`agent.py:67-73, 232-234`).
-- **Required changes:**
-  - Add `LLM_FALLBACK_MODELS` (default `daytime`).
-  - Choose the model per request.
-  - Classify errors: `SERVICE_OFFLINE` switches without using `infra_retries`; `BACKEND_DRAINING` waits, without pausing the session or using retries.
-  - Run the qualify request against the model actually chosen, and run it again when the model behind the service changes.
-  - Playroom requires `vision` and `tools`; check the target model has both.
-  - Run the subscriber as an asyncio lifespan task next to `monitor()` (`playroom/app.py:32-36`). Show "nighttime" or "daytime (fallback)" where the UI shows the model (`service.py:75`).
-- **Budget bug to fix.** Each request reserves `LLM_CONTEXT_TOKENS + LLM_MAX_OUTPUT_TOKENS` (133,120). A failed request settles with `actual=None` and keeps the full reservation (`store.py:72-89`), so about three router 503s use up the 500,000-token session limit. A request the router rejected before generating anything must release its reservation. Take the context size for budgeting from the model's `context_window`, not the fixed `131072`.
-- **Timeout.** `LLM_TIMEOUT=90` s is short for a request queued behind Daytime coding work. Raise it, or treat a timeout as retry rather than pause.
-- **Tests:** keep the `playroom.agent.httpx.AsyncClient` seam used by `tests/test_core.py:167-191`. Run `.venv/bin/python -m pytest -q`; the frontend builds with `npm run build`. The deployment checkout is Portal-managed: commit to `main` and let the owner update.
+Superseded by the targeted handoff [playroom.md](playroom.md). It adds a per-game model picker (Automatic, or a specific service) alongside contract conformance.
 
 ### Bench Studio (`~/projects/bench-studio-dev`; never edit `~/projects/bench-studio`): do **not** fall back
 
