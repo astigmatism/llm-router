@@ -126,31 +126,9 @@ Line numbers are from the surveyed commits; confirm them before editing.
 
 Superseded by the targeted handoff [deepseek-harness.md](deepseek-harness.md). It is based on `origin/main` at `e82ce7d`, which already supports an optional Nighttime. The owner decided Harness does **not** fall back automatically: Nighttime is shown as offline or unavailable, and the user switches the session.
 
-### ComfyUI Image Frontend (`~/projects/comfyui-image-frontend`, surveyed at `03dcd4a`)
+### ComfyUI Image Frontend (`~/projects/comfyui-image-frontend`)
 
-- **Current state:**
-  - Ollama-native `httpx` client (`backend/app/services/ollama.py`).
-  - `CIF_OLLAMA_MODEL` defaults to `nighttime` (`backend/app/config.py:240`).
-  - Before every compose or evaluate call it reads `/api/tags`. It returns 503 when `nighttime` isn't listed by name, or when `health.available` is false (`ollama.py:165-172, 1016-1021`), so in a solo configuration the prompt assistant stops working.
-- **Required changes:**
-  - Prefer selection by capability, because Nighttime is chosen for being uncensored: the most capable `nsfw: true` model with `image` input for vision checks, then the most capable usable model. Alternatively add `CIF_OLLAMA_FALLBACK_MODELS` (default `daytime`) next to `CIF_OLLAMA_MODEL`.
-  - Choose the model from the capabilities document instead of the `/api/tags` name check.
-  - Run the subscriber as a lifespan task next to `_health_loop` (`queue_worker.py:3478-3522`), and report the model in use and whether it is a fallback on the status endpoint and in the UI.
-- **Error handling.** Today `error` bodies are ignored and 503s are retried three times with 0.25 s backoff:
-  - `SERVICE_OFFLINE` and `BACKEND_UNAVAILABLE`: switch to the fallback without those retries.
-  - `BACKEND_DRAINING`: wait longer than 0.25–1 s.
-  - Parse `error.code` from the object-form error body.
-- **Model settings:**
-  - `think: "xhigh"` is hard-coded (`ollama.py:48-50`). Check that the target model lists `xhigh` in `metadata.reasoning.efforts` before sending it.
-  - Vision checks must confirm the target model has `image` in `input_modalities`.
-- **Content risk.** Nighttime is chosen on purpose (`docs/audits/creative-direction-2026-09-12.md`, and the `krea2-uncensored-v1` workflow). Daytime may refuse or return output that fails the JSON schema. Report "Nighttime offline; Daytime declined" plainly instead of retrying in a loop.
-- **Housekeeping:**
-  - `.env.example:123` and `README.md:323` still say `192.168.1.21`; the router is `192.168.1.4`.
-  - Compose doesn't join `local-ai-ollama_default`, so `ai-router` won't resolve.
-- **Tests:**
-  - Extend the fake router in `backend/tests/fake_services.py:79-111` with the capabilities and events endpoints and the error codes.
-  - Run with `PYTHONPATH=backend python3 -m pytest -q` and `make validate`.
-  - Update the router prose in `scripts/generate_traceability.py:143-174`, then regenerate `docs/traceability.md`.
+Superseded by the targeted handoff [comfyui-image-frontend.md](comfyui-image-frontend.md). The owner's rule: use the most capable NSFW model, and the most capable non-NSFW model when no NSFW model is usable.
 
 ### Playroom (`~/projects/playroom`, surveyed at `355b03c`)
 
