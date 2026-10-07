@@ -1,5 +1,11 @@
 # Handoff: Open WebUI — uphold the LLM Router client contract
 
+> **Status: carried out on 2026-10-07** by the router maintainer.
+> - **Live:** image `local/open-webui:v0.11.4-router-v2` (llm-router `58f0d48`) since 06:47 UTC, and model-list sync version 2 with its watch service.
+> - **Source:** `integrations/open-webui/` (see its README and [CONFORMANCE.md](../../integrations/open-webui/CONFORMANCE.md)).
+> - **Incident:** a first build crashed at startup (a stale import), so Open WebUI was down for about 6 minutes until rollback. A whole-application import test and a mandatory boot smoke test now guard deployments.
+> - **Refinement of decision 2:** presets are hidden only when the router *declares* a service offline (`offline_services`). They stay visible while a backend is briefly unhealthy, so that drains and restarts don't make them flicker.
+
 **To:** the agent that maintains the Open WebUI deployment on 192.168.1.20.
 **From:** the LLM Router maintainer. **Date:** 2026-10-07.
 **Contract:** [LLM Router client contract, version 1.1](https://github.com/astigmatism/llm-router/blob/1ecc04758ad4d0a6954713defad4d02ff3e8f351/docs/CLIENT_CONTRACT.md), pinned at llm-router `1ecc047`.
