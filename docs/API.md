@@ -63,7 +63,7 @@ Passes through to raw Ollama.
 
 ### `POST /api/show`
 
-Passes through to raw Ollama. This endpoint is considered safe/status-like by default. The exact `ROUTER_MODEL_ALIAS` always resolves to the active model; when `REWRITE_REQUESTED_MODEL_TO_ACTIVE=true`, other `/api/show` model names are also rewritten.
+Passes through to raw Ollama. This endpoint is considered safe/status-like by default. In legacy single-marker mode the exact `ROUTER_MODEL_ALIAS` resolves to the active model whether or not that model declared the name; in resident catalog mode it is an ordinary declared alias that only the configuration's default entry may declare, so a configuration that does not name it answers `404 MODEL_NOT_FOUND` (see [the client contract](CLIENT_CONTRACT.md) §3). When `REWRITE_REQUESTED_MODEL_TO_ACTIVE=true`, other `/api/show` model names are also rewritten.
 
 ### `POST /api/chat`
 
@@ -154,9 +154,11 @@ Request history records only field names and booleans: `samplingControls` lists 
 
 `POST /v1/responses` is a stateless compatibility endpoint for Codex CLI. `POST /responses` is an equivalent alias. Both translate to the existing Ollama `/api/chat` operation; neither proxies an arbitrary client-selected path.
 
-The router implements `GET /v1/models` and `GET /v1/models/{id}`. In primary mode the list has both canonical resident model IDs and a `local-active` compatibility row (or the configured `ROUTER_MODEL_ALIAS`). The alias also resolves through detail lookup and generation requests. Limits, reasoning, health, and capabilities belong to each selected model; the alias inherits its target's metadata without increasing capacity. Native discovery and admin state count canonical residents only. Legacy single-marker mode still exposes its stable alias. The full schema and field semantics are documented in [Stable Active-Model Discovery](MODEL_DISCOVERY.md).
+The router implements `GET /v1/models` and `GET /v1/models/{id}`. In primary mode the list has every canonical resident model ID plus every declared service alias, `local-active` included only while the active configuration's default entry declares it. Alias rows resolve through detail lookup and generation requests. Limits, reasoning, health, and capabilities belong to each selected model; the alias inherits its target's metadata without increasing capacity. Native discovery and admin state count canonical residents only. Legacy single-marker mode still exposes its stable alias. The full schema and field semantics are documented in [Stable Active-Model Discovery](MODEL_DISCOVERY.md).
 
 ### Active-model routing rules
+
+These rules describe legacy single-marker mode. In resident catalog mode the published catalog owns model identity: an omitted `model` selects the active configuration's default entry, which is not necessarily the coding service, an unknown name is 404 `MODEL_NOT_FOUND` rather than 400 `MODEL_NOT_ACTIVE`, and broad requested-model rewriting is ignored. See [the client contract](CLIENT_CONTRACT.md) §3.
 
 - An omitted `model` resolves to the current active-model marker.
 - The exact active model is accepted.

@@ -54,7 +54,7 @@ The router uses Node's native HTTP transport. `OLLAMA_UPSTREAM_TIMEOUT_MS` bound
 |---|---:|---|
 | `ACTIVE_MODEL_FILE` | `/app/runtime/active-model.json` | Marker file written by deployment/profile system. |
 | `ACTIVE_MODEL` | empty | Temporary fallback only. |
-| `ROUTER_MODEL_ALIAS` | `local-active` | Non-empty, stable public ID for the active router slot. Exact requests for this alias always resolve to the active physical model. |
+| `ROUTER_MODEL_ALIAS` | `local-active` | Non-empty, stable public ID for the active router slot. In legacy single-marker mode exact requests for this alias always resolve to the active physical model; in resident catalog mode the published catalog resolves it, so it names the active model only while the configuration's default entry declares it. |
 | `ROUTER_MODEL_METADATA_TTL_MS` | `5000` | Cache lifetime in milliseconds for `/api/ps` and `/api/show` discovery enrichment. Marker changes invalidate immediately regardless of TTL. |
 | `ROUTER_CAPABILITY_POLL_MS` | `5000` | While at least one `/v1/router/events` subscriber is connected, how often the router rechecks backend health and the marker for changes it was not notified of. Minimum `1000`. Reload, drain and maintenance changes are pushed immediately regardless. |
 | `ROUTER_EVENTS_HEARTBEAT_MS` | `15000` | Interval between event-stream keepalive comments. Minimum `1000`. |
@@ -103,7 +103,7 @@ For manual marker updates, `scripts/write-active-model.sh` accepts a capability 
 |---|---:|---|
 | `MODEL_POLICY_MODE` | `active-only` | `active-only`, `allowlist`, or `permissive`. |
 | `ALLOWED_MODELS` | empty | CSV of additional models for `allowlist` mode or exceptions. |
-| `REWRITE_REQUESTED_MODEL_TO_ACTIVE` | `false` | When true, all non-empty client model names are advisory and model-bearing requests—including `/v1/responses` and `/responses`—forward only the active marker model. The exact `ROUTER_MODEL_ALIAS` always resolves to active even when this broader behavior is false; other mismatches retain strict policy behavior. Responses also accepts an omitted model. |
+| `REWRITE_REQUESTED_MODEL_TO_ACTIVE` | `false` | When true, all non-empty client model names are advisory and model-bearing requests—including `/v1/responses` and `/responses`—forward only the active marker model. The exact `ROUTER_MODEL_ALIAS` is admitted for the active slot even when this broader behavior is false; other mismatches retain strict policy behavior. That admission is unconditional in legacy single-marker mode; in resident catalog mode the published catalog resolves the name first, so a configuration whose default entry does not declare the alias answers `404 MODEL_NOT_FOUND`. Responses also accepts an omitted model. |
 | `FORCE_KEEP_ALIVE` | `-1` | Forwarded keep-alive for active protected requests. |
 | `UNSUPPORTED_TOOLS_POLICY` | `passthrough` | `passthrough`, `drop`, or `reject`. When the rewritten active model lacks `tools`, drop mode removes native tool controls and reject mode returns a router error. Unsupported prior tool-use history is always rejected explicitly. |
 | `PROTECTED_MODEL_ENDPOINTS` | `/api/chat,/api/generate,/api/embed,/api/embeddings` | Endpoints receiving keep-alive rewrite. |

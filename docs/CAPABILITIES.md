@@ -192,7 +192,7 @@ curl -N http://192.168.1.4:11434/v1/router/events
 
 ## Preferring Nighttime with a Daytime fallback
 
-The router never substitutes one service for another; a client that prefers `nighttime` decides when to use `daytime` instead. `daytime` (and `local-active`) exists in every AI Runtime configuration. `nighttime` exists only in paired configurations, and the model behind it can change between them; for example, an MTP3 variant has a different canonical ID. Send service IDs, never canonical IDs.
+The router never substitutes one service for another; a client that prefers `nighttime` decides when to use `daytime` instead. `daytime` exists in every configuration that runs a Daytime resident, and a configuration that runs none — an opt-in trial configuration, for instance — has no `daytime` to send. `nighttime` exists only in paired configurations, and the model behind it can change between them; for example, an MTP3 variant has a different canonical ID. Send service IDs, never canonical IDs, and re-read `ids` after any configuration change instead of assuming a name survives it.
 
 Before a request, resolve the service from the current document:
 
