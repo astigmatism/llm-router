@@ -5,6 +5,8 @@
 
 The authoritative rules are in the **[LLM Router client contract](https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md)**, which ends with a conformance checklist your project must meet. Part 1 summarizes them; where they differ, the contract wins.
 
+**2026-10-13:** the contract is now **version 1.2**, pinned at llm-router `0b16686`. This notice stays as the 2026-10-07 survey; each project's live handoff is its targeted file in this directory, and each of those pins 1.2.
+
 Read the contract, then Part 1, then only your project's section in Part 2. If your project is not listed, the contract and Part 1 apply.
 
 ---
@@ -136,7 +138,7 @@ Superseded by the targeted handoff [playroom.md](playroom.md). It adds a per-gam
 
 ### Bench Studio (`~/projects/bench-studio-dev`; never edit `~/projects/bench-studio`)
 
-Superseded by the targeted handoff [bench-studio.md](bench-studio.md), which pins contract 1.1. Benchmarks never fall back. They keep pinning a canonical model per run, which 1.1 §3 permits, and they treat a model that is offline by configuration as "waiting", not as a changed or invalid run.
+Superseded by the targeted handoff [bench-studio.md](bench-studio.md), which pins contract 1.2. Benchmarks never fall back. They keep pinning a canonical model per run, which 1.1 §3 permits, and they treat a model that is offline by configuration as "waiting", not as a changed or invalid run.
 
 ### Not affected
 

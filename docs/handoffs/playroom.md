@@ -1,111 +1,60 @@
-# Handoff: Playroom — model selection, and uphold the LLM Router client contract
+# Handoff: Playroom — contract 1.2: what the model picker may offer, and what an opt-in service must never do
 
 **To:** the AI agent that maintains `playroom`.
-**From:** the LLM Router maintainer. **Date:** 2026-10-07.
-**Contract:** [LLM Router client contract, version 1](https://github.com/astigmatism/llm-router/blob/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md), pinned at llm-router `d5edba8`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md>
+**From:** the LLM Router maintainer. **Date:** 2026-10-13.
+**Contract:** [LLM Router client contract, version 1.2](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md), pinned at llm-router `0b16686`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md>
 
-This is a plan to carry out in this repository. It has two parts: a feature (choose the model, per game, from what is available) and conformance with the router's client contract. Read the contract in full first; it is authoritative wherever this handoff is less precise. File and line references are from `origin/main` at `355b03c`; check them before editing.
+This is contract §11's update handoff for this project: **replace the vendored copy and review the conformance map.** 1.2 asks no client for a code change — see "Why 1.2 is still a minor version" at the end. Where this handoff is less precise than the contract, the contract wins.
 
-## Why
+**Earlier work, done.** The version-1 handoff was carried out: the copy and the agent rule, `playroom/router.py` with the ported `pick_service`/`model_for`/`classify_error` and the asyncio `RouterWatch`, choice by name with fallback disabled, the profile's `model` field and the picker in Game policies. Its plan lives in this file's history at llm-router `3392236`; nothing below re-opens the per-game selection design, and the removal of "Automatic" since then is the baseline this handoff assumes.
 
-- **The model is fixed today.** Playroom sends `LLM_MODEL`, default `nighttime` (`playroom/config.py:15`), on every request, for no particular reason. The UI only displays it (`playroom/service.py:75`, `frontend/src/main.tsx:86`).
-- **The router's models change by hand and without notice.** Paired configurations run Daytime and Nighttime; solo configurations stop Nighttime completely. Contexts and the models behind each name change too.
-- **A solo configuration breaks Playroom.** Every request then fails, the retry cap runs out, and the session pauses with "Model endpoint unavailable or incompatible".
-- **The router now describes what is available and pushes changes:**
-  - `GET /v1/router/capabilities` lists each model with its `service` ID, `display_name`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw` and `capability_score` (automatic, 0–100, higher is more capable), plus `offline_services` and `router.accepting_requests`.
-  - `GET /v1/router/events` pushes the complete document on every change, as Server-Sent Events.
+**Why Playroom reads 1.2 closely.** Playroom is the subscriber that puts a model list in front of a person and stores their choice. 1.2 is the release that says which names may be offered, which may never be chosen, and what answers a request that names nothing at all. Your copy is at **version 1 @ `d5edba8`** (`docs/llm-router-contract.md:1-4`), map at `:255` (table `:266-280`, deviations `:292-297`). Line references below are from this checkout at `27c697f`; check them before editing.
 
-## Part A — feature: choose the model
+## The 1.2 delta, in the order a client reads it
 
-### Behavior (decided by the owner)
+1. **§3: `daytime` is no longer promised in every configuration.** The old row said "Present in **every** configuration." It now says present in every **normal** configuration — every configuration that runs a Daytime resident — and adds: "The AI Runtime may publish a configuration in which no catalog entry declares `daytime`, and then there is none to send. That is not a licence for a client to invent one, or to send something else instead of it." A configuration that never declared it does not list it in `offline_services` either, so the answer is 404 `MODEL_NOT_FOUND`, not 503 `SERVICE_OFFLINE`: there is no `reason` to show, because nothing was stopped.
+2. **§3: a new service ID, `trial`.** Present **only** while a trial configuration is selected, and only under that name. Opt-in: never the configuration the operator falls into, never an alias of `daytime` or anything else, and **404 `MODEL_NOT_FOUND`** in every other configuration. §3 adds "An opt-in service is never a fallback, in either direction"; §5 adds that an opt-in service is **never a candidate** — never drawn by a capability-based choice, never acquired by a name-based fallback list; §10's `MODEL_NOT_FOUND` row ends "Never fall back from an opt-in service such as `trial`". A picker that lists whatever the document lists is where that rule lands.
+3. **§3: new subsection "Two kinds of names."** **Catalog service IDs** — `daytime`, `nighttime`, `trial`, and every other alias the published catalog declares — exist only while some entry declares them: absent is 404, deliberately stopped is 503, and `ids` in the capabilities document lists the names accepted right now. The **compatibility alias** `local-active` is reserved and **not a service**: accepted with no entry declaring it only in the router's **legacy single-marker mode**, and in catalog mode — what this deployment runs — an ordinary declared alias that only the configuration's default entry may declare. In both modes it means "the model this router has active right now", so it is an alias of the active slot, not of `daytime`, and it follows every switch the operator makes. Its stability column now reads "Kept for compatibility. Do not adopt it."
+4. **§3: a request that omits `model` is answered by the active configuration's default, which is not promised to be `daytime`.** Where the old line read "An omitted model selects `daytime`", 1.2 reads: "An omitted model selects the default of the **active configuration**, which this contract does not promise is `daytime`: while a trial configuration is selected, an omitted model is answered by the trial. A client that must not be served by a particular model MUST send an ID." Say this case as explicitly as the named-ID cases, because it is the **only** route by which an opt-in trial ever answers a request that never named it: no fallback, no substitution, no error path. Playroom's own design — a person chooses, and a game with no choice does not start — already closes that route; 1.2 is the reason to pin it down in a test rather than leave it to the design.
+5. **§3 + §4: a catalog entry with no service alias is not addressable and MUST NOT be surfaced.** Such an entry has no name a conformant client may send. The router lists it with `service` set to its canonical ID because it will not invent one, and §3 says the model is "not selectable under this contract and MUST NOT be surfaced as a model a person can choose". §4 gives the reading rule: **`service === id` is how a model with no addressable ID reads.** [MODEL_DISCOVERY.md — a catalog entry with no service alias](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/MODEL_DISCOVERY.md#a-catalog-entry-with-no-service-alias) explains why `service` reports the canonical ID: the router publishes the entry unchanged rather than inventing a name the publisher never declared, and a row the router can resolve is not a row a contract client may send.
+6. **[STABLE_SERVICES.md](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/STABLE_SERVICES.md) now lists `trial`**, recording its context and that it declares **no image input**, and the `daytime` context figure is corrected to **163840** (it said 131072). Both rows describe today's catalog, not promises: §8 still forbids hard-coding a context size, and Playroom's budget already follows `context_window`.
+7. **Two additive diagnostics a client MAY ignore.** `CATALOG_HAS_NO_SERVICE_ID` in the capabilities document's `warnings` (with `complete: false`) says no entry of the active catalog declares a service ID; `MODEL_HAS_NO_SERVICE_ID` in one model's discovery `x_ollama_router.warnings` (with that entry incomplete) says that entry declares none. Both are the router's own finding, both are optional reading — §11 lets fields be added without a version change and clients MUST ignore what they don't know — and neither changes inference or a status code. The runtime's `deployment_warnings` are a separate fact and **still pass through verbatim as `metadata.qualification_notes`**; the new codes never replace or merge into them.
 
-1. **A per-game setting.** Each game's profile gains `model`. It is either `auto` (the default) or a service ID such as `daytime` or `nighttime`. New games start with the deployment default from `LLM_MODEL`, now default `auto`. Change it through the existing `PUT /api/profile` (`playroom/app.py:204-220`), which already pauses the session for review. Accept only `auto`, a service ID listed in the capabilities document, or one listed in `offline_services`.
-2. **Requirements.** Playroom needs image input and function tools: it sends frames as images and uses `tool_choice: "required"` (`agent.py:33-39,54`). A model is **suitable** only when `input_modalities` includes `image`, `capabilities` includes `tools`, and it has passed Playroom's visual and tool check (`qualify_model`, `agent.py:76-91`).
-3. **Automatic.** Before **each decision** (each iteration of `run_agent`, `agent.py:178`), choose the suitable, `available` model with the highest `capability_score`. In the reference client this is `pick_service(doc, require=["vision", "tools"], exclude=<failed>)`.
-   - **Why per decision:** each decision already rebuilds its messages, so switching between decisions is safe, and a model that returns is used again at once.
-   - **Fallback:** if the chosen model fails with `SERVICE_OFFLINE`, `BACKEND_UNAVAILABLE` or `MODEL_NOT_FOUND`, choose again excluding it, without consuming a retry.
-4. **A specific model.** Use only that service. When it is offline or unavailable, **pause** the session with a clear reason, for example "Nighttime is offline in runtime configuration flash-next-solo-128k. Choose Automatic or another model to continue." Never substitute another model for an explicit choice. Resuming works once the model is back.
-5. **Qualification per model.** Cache the result of `qualify_model` by service, canonical model ID (`ids[service]`) and model `revision`.
-   - Run the check before a model's first use, and again whenever any part of that identity changes, for example when a new configuration changes the model behind `nighttime`.
-   - A model that fails the check is unsuitable until its identity changes. Automatic skips it; a specific choice pauses with the reason.
-   - Today the check runs once per agent start, against the fixed configured model (`agent.py:174`).
-6. **Model picker in the UI.** Show the models from the capabilities document, filtered and labelled. Offer **Automatic** first, then each model with:
-   - display name, context window, capability score, and an NSFW badge when `nsfw` is true;
-   - its state: available / unavailable / offline (with the configuration ID) / unsuitable (with the reason, for example "needs image input and tools" or "failed the visual check").
+## What this project must do
 
-   Only suitable, available models are selectable. Offline services from `offline_services` appear disabled with their reason. A saved choice that is no longer listed keeps showing as unavailable, so the user sees why play paused.
-7. **What is serving.** Replace the `MODEL` tile's configured name (`main.tsx:86`) with the selection and the model actually serving, for example `Automatic → Daytime (Flash-Next, 128K)`. Show a notice when Automatic has changed model, or when a specific choice is unavailable. Extend `service.state()` (`service.py:75`) with `model: {selection, service, display_name, canonical, reason, available_models}`, so the existing `/api/live` websocket (`app.py:222`) carries it.
-8. **Activity log.** Record `model_selected` and `model_changed` events, with the reason, in the store so they show in the activity panel. `model_qualified` must name the service that was qualified.
-
-### Notes
-
-- **Load.** Automatic picks the most capable model, which today is usually Daytime. Daytime's slot is shared with the coding agents, so a long Playroom run on Automatic may wait in the router's queue behind them. Choosing `nighttime` explicitly keeps Playroom off Daytime. Mention this next to the picker.
-- **Separate documents.** `docs/player-contract.md` is the agent's gameplay contract and stays separate from the router contract.
-
-## Part B — uphold the router contract
-
-1. **Discovery and subscription.**
-   - Read `/v1/router/capabilities` at startup, without failing to start if the router is unreachable.
-   - Subscribe to `/v1/router/events` in a lifespan task beside `monitor()` (`playroom/app.py:32-36`), using `httpx.AsyncClient.stream`.
-   - While disconnected, poll every 30 s with `If-None-Match`, and reconnect with 3 → 30 s backoff. 60 s without bytes means the stream is dead.
-   - Derive the router base from `LLM_BASE_URL` by removing a trailing `/v1`.
-   - Port `pick_service`, `model_for` and `classify_error` from the reference client, [router_watch.py](https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/clients/router_watch.py), which is tested against the router.
-2. **Errors by `error.code` (contract §10), replacing the uniform `raise_for_status` path (`agent.py:55,67-73`).**
-   - `SERVICE_OFFLINE`, `BACKEND_UNAVAILABLE`, `MODEL_NOT_FOUND`: Automatic chooses again (A.3); a specific choice pauses (A.4). These consume no retries and no `infra_retries`.
-   - `BACKEND_DRAINING`, `MAINTENANCE_MODE`: the router is switching configuration. Don't pause and don't count retries. Show status "waiting: router switching configuration" and back off from 2 s up to 30 s, for at least 10 minutes, then choose again. Pause only if it lasts longer.
-   - Other 5xx and network errors: the existing bounded retry. Other 4xx: fail the decision.
-3. **Fix the budget.** `reserve()` charges `LLM_CONTEXT_TOKENS + LLM_MAX_OUTPUT_TOKENS` (133,120). A failed request settles with `actual=None` and keeps the full reservation (`store.py:76-89`, `agent.py:68`), so about three router errors use up the 500,000-token session limit.
-   - **Router rejections:** when the router answers with an HTTP error before generating anything, settle with `actual=0`.
-   - **Uncertain outcomes:** keep the conservative reservation only for timeouts and transport errors, where usage is unknown.
-   - **Reservation size:** base it on the serving model's `context_window` (capped by `LLM_CONTEXT_TOKENS` only if the operator set one), not the fixed 131072 (`config.py:19`).
-4. **Limits from the serving model.**
-   - Budget each request against the chosen model's `context_window` and `metadata.context_safety_reserve`, and recompute when the model changes.
-   - Keep the 32,768-character text guard (`agent.py:44,189`) as Playroom's own limit.
-   - Don't send more concurrent requests to a model than its `slots`.
-5. **Time.**
-   - `LLM_TIMEOUT=90` (`config.py:17`) is shorter than a realistic wait in the router's queue, and the router has no queue deadline. A timeout also cancels the queued request, so a retry joins the back of the queue.
-   - Raise the default to at least 600 s, or stream with `stream: true` and treat queue keepalives (`: waiting for inference slot`) as activity.
-   - Keep `stream` explicit in every request.
-6. **Requests.**
-   - Send `X-Client-Name: playroom` on every router request, including discovery.
-   - Keep `reasoning_effort: "none"`, `temperature: 0` and the explicit `max_tokens` (`agent.py:54`); every current model accepts them.
-   - Check the chosen model's features before sending (A.2).
-7. **Configuration and documentation.**
-   - `LLM_MODEL` becomes the default selection for new games: `auto` or a service ID, default `auto`.
-   - `LLM_CONTEXT_TOKENS` becomes an optional cap, unset by default.
-   - Update `.env.example` (lines 12-16 set `LLM_MODEL=nighttime`, `LLM_TIMEOUT=90`, `LLM_CONTEXT_TOKENS=131072`), `README.md` and `docs/operations.md:21`.
-   - **Deployment setting:** the live deployment's `~/deployments/playroom/.env` sets `LLM_MODEL=nighttime`. After this change that would make every game without a saved choice an explicit Nighttime selection, which pauses during solo configurations. Don't edit the deployment file. Tell the owner, in your report, to change it to `LLM_MODEL=auto` (or remove it) before deploying.
-
-## Step 1 — put the contract in this repository
-
-1. **Copy:** create `docs/llm-router-contract.md` from the raw URL above, verbatim, under this header (contract §11):
+1. **Replace the copy.** Overwrite `docs/llm-router-contract.md` above the `## How Playroom upholds this contract` heading with the raw 1.2 text verbatim, under this §11 header:
 
    ```markdown
-   > **Vendored copy — do not edit.** LLM Router client contract, version 1, copied from
-   > llm-router commit `d5edba88089070e82bb72600e860fd204df88481`. Canonical source:
+   > **Vendored copy — do not edit.** LLM Router client contract, version 1.2, copied from
+   > llm-router commit `0b1668669214a7c67cbba8008ddc98ffc1e14b72`. Canonical source:
    > https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md
    > Replace this copy only when the router maintainer announces a new contract version.
    ```
 
-2. **Conformance map:** after the copy, add `## How Playroom upholds this contract`, mapping every §13 checklist item to code and tests. Record the permitted deviation (contract §5): a specific model choice never falls back. Complete it before you finish.
-3. **Agent rule:** add to `AGENTS.md`: *"Router integration (model requests, model selection, discovery, retries, budgets) must uphold `docs/llm-router-contract.md`. Update its conformance map with any such change. Never edit the vendored contract text; replace it only when the LLM Router maintainer announces a new version. The router contract is separate from `docs/player-contract.md`."*
+   Keep the map and everything below it, and give §13's new checklist item a row of its own in the map table.
+2. **Re-verify these five items against §13 and record the evidence in the map.** None should need new behavior. Record where you already hold the line; where you don't, say so plainly in your report — that is the useful result.
+   - **The picker must not offer, or a profile store, a name-less entry.** §13's new line is *"Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5)."* `Models.state` builds one row per `models[]` element with no filter (`playroom/models.py:338`), the row coming from `describe` (`:321-332`), and nothing anywhere compares `m["service"]` to `m["id"]`. So an entry with `service` equal to its own canonical `id` and `aliases: []` is listed, and `Models.validate` accepts it into a profile, because the accepted set is `{m["service"]}` plus `offline_services[].aliases` (`services()` at `:97-101`, `validate` at `:103-112`) — a canonical ID reaching a person's dropdown and a saved game policy. The UI only disables radios (`frontend/src/main.tsx:23-24`) rather than filtering, so the row's `selectable` flag is the whole story. Add a fixture row of that shape carrying `MODEL_HAS_NO_SERVICE_ID`, assert it is never offered or accepted, and record the §4 reading rule in the map.
+   - **An opt-in service is never chosen — and note why that is true today.** Playroom removed Automatic: a stored `auto` counts as no selection (`LEGACY_AUTO`, `models.py:17`; `selection()` at `playroom/service.py:109-118`), a game with no selection is refused (`service.py:239-240`, `NO_SELECTION` at `models.py:22`), and the only path is the explicit one (`models.py:169-178`); `pick_service` survives as unimported port code (`playroom/router.py:47-68`, tested at `tests/test_router.py:93-100`, and named as dead at `docs/llm-router-contract.md:261`). That is exactly what §5 demands of an opt-in service. It would still be *listed*, as `unsuitable` and unselectable, because Playroom needs image input and tools (`NEEDS_FEATURES`, `models.py:19`; screened at `:130-131`) and the Strata trial profile declares tools and reasoning but **no image input** (see its `STABLE_SERVICES.md` row), so it fails the `image` half of `REQUIRE`. Verify that against a fixture rather than trusting the table: write the trial-only document, assert the row is listed as unsuitable and never selectable, and that a `model: "trial"` profile is refused or paused. Record in the map that the opt-in rule is met by "the person chooses, and Playroom's feature requirements screen the list", not by a filter for opt-ins; and if you would rather an opt-in service never appear in the list at all, that is a small change of yours to make and record, not something 1.2 requires.
+   - **Every request names its model, and say so in the map.** `request` builds the body with `"model": model["service"]` (`playroom/agent.py:242`) at the project's single send site (`:253`), covering both the visual check (`:431`) and gameplay decisions (`:406`), asserted today at `tests/test_router.py:743-744`. The map only implies this (`docs/llm-router-contract.md:270`); 1.2's rewritten omitted-`model` rule is the reason to write the line, because an unnamed request is the one way an opt-in trial answers a Playroom call nobody aimed at it.
+   - **A configuration that never declared a service.** `services()` accepts a listed `service` or a listed `offline_services[].aliases`, and a saved selection that is no longer listed is surfaced by `state` (`models.py:347-349`); an accepted-but-unsuitable choice persists and fails only at request time (`models.py:187-189`). So a game left pointing at a service the current configuration never declared reaches 404 `MODEL_NOT_FOUND` rather than 503 `SERVICE_OFFLINE`. Record that distinction and the pause wording it produces — "not offered by this configuration" rather than "offline in runtime configuration X", which belongs to `offline_services` — and keep the operator-facing reason from the router. `LLM_MODEL=auto`'s successor (no selection) is unaffected.
+   - **The new warnings stay unread, deliberately.** `complete` and `warnings` appear nowhere in `playroom/`, `frontend/src/` or `tests/` (the only structural check is `RouterWatch._set`, `playroom/router.py:142-143`, and a `schema_version` mismatch merely logs, `:157-163`), so neither new code can break the watch — and `metadata.qualification_notes`/`deployment_warnings` are unread here too, and pass through untouched. Record that as a §11 choice, and that neither code is ever a reason to pause a session, switch model or spend `infra_retries`: `CATALOG_HAS_NO_SERVICE_ID` is the router saying a conformant client has nothing to send, which is the operator's to fix.
+3. **Keep the `AGENTS.md` rule** (`AGENTS.md:5` and the router-contract rule it carries): any change to router requests, model selection or discovery must uphold `docs/llm-router-contract.md` and keep the map current. Leave its wording; 1.2 needs nothing wider.
+4. **Commands:** `.venv/bin/python -m pytest -q` and `cd frontend && npm ci && npm run build` (`README.md:69-76`, `AGENTS.md:5`). The opt-in live acceptance scripts (`tests/qualify_live.py`, `tests/qualify_agent.py`) may run read-only against the live router. Never switch AI Runtime configurations to test: a trial-only document, and a document with no `daytime`, are fixtures.
+5. **Report back:** commit SHA, test and build results, the five re-verifications with what each found, any deployment `.env` note the owner needs, and any place the 1.2 wording is ambiguous or hard to meet.
 
-## Step 2 — tests
+## Why 1.2 is still a minor version
 
-- **Seam:** keep the `playroom.agent.httpx.AsyncClient` test seam (`tests/test_core.py:167-191`). Add a fake router serving the capabilities document, the event stream, and the error bodies.
-- **Unit tests:**
-  - Automatic: picks the highest-scoring suitable model; skips models without image or tools; skips a model that failed qualification; switches on `SERVICE_OFFLINE` without spending retries; uses a returning model again on the next decision.
-  - Specific choice: pauses with a reason when offline, and never substitutes.
-  - Router state: draining waits without pausing or counting retries; the router unreachable at startup.
-  - Qualification: re-runs when `ids[service]` or `revision` changes.
-  - Budget: a router rejection settles at 0; the reservation follows `context_window`.
-  - Requests: `X-Client-Name` is sent; the profile accepts and validates `model`.
-- **UI:** the picker renders all states (`npm run build`; extend `tests/browser.mjs` if it covers the profile panel).
-- **Commands:** `.venv/bin/python -m pytest -q` and `cd frontend && npm ci && npm run build` (`README.md:45-52`, `AGENTS.md`). The opt-in `tests/qualify_agent.py` may be run read-only against the live router; never switch AI Runtime configurations to test.
+§11: *"A minor version (1.1, 1.2, …) only clarifies or adds permissions and never requires client changes, so copies of an earlier minor version stay valid until the next update handoff."*
 
-## Boundaries and release
+- 1.0 §3 already said "A client MUST send service IDs (`daytime`, `nighttime`)" — a closed set — and already forbade configuring, persisting or comparing canonical IDs. 1.2 widens that set to "another service ID the current document advertises" and then withholds opt-in names from every pool. Playroom's accepted set is whatever the document lists, so it was never inside the closed set to begin with: the name-less row is a §3 duty that predates 1.2, and 1.2 only gives it a reading rule and a warning code.
+- `trial` exists only while the operator selects a trial configuration, and taking it up is optional; Playroom's "the person chooses" design means it is simply a name that never gets chosen by the software.
+- The corrected `daytime` guarantee removes a promise the router could not keep; discovering services each cycle and handling 404 without a retry cost is what 1.0 §10 always required, and Playroom does both.
+- The two warnings are additive fields §11 already says clients MUST ignore, and Playroom already ignores them.
 
-- **Repository rules:** follow `AGENTS.md`. Preserve the single RetroArch frame scheduler, never source commercial ROMs, and commit no credentials or user data.
-- **Workflow:** `~/projects/playroom` is both the development workspace and the source that the Service Portal updater builds from. Commit and push to `main`, and leave the checkout clean on `main`, or the updater refuses to run. Deploy only when the owner asks, using Service Portal on 192.168.1.7 ("Update and restart") or `~/deployments/playroom/update-and-restart.sh`.
-- **Out of scope:** don't modify the router or AI Runtime.
-- **Report back:** commit SHAs, test results, screenshots or a description of the picker states, the completed conformance map, any deployment `.env` notes, and any contract ambiguity.
+If re-verifying an item turns up a change you must actually make, report it as a contract defect: that would make 1.2 a 2.0, and the other four subscribers would have to be told again before they replace anything.
+
+## Boundaries
+
+- Follow `AGENTS.md`: preserve the single RetroArch frame scheduler, never source commercial ROMs, commit no credentials or user data.
+- `~/projects/playroom` is both the development workspace and the source the Service Portal updater builds from: commit and push `main`, and leave the checkout clean on `main` or the updater refuses to run. Deploy only when the owner asks (Service Portal on 192.168.1.7, or `~/deployments/playroom/update-and-restart.sh`), and never edit 192.168.1.4.
+- Out of scope: the router, AI Runtime, and the other subscribers. Never switch AI Runtime configurations to test.

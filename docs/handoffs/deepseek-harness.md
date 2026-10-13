@@ -1,109 +1,63 @@
-# Handoff: DeepSeek Harness — uphold the LLM Router client contract
+# Handoff: DeepSeek Harness — contract 1.2: what a configuration really guarantees
 
 **To:** the AI agent that maintains `dsh-container` (DeepSeek Harness).
-**From:** the LLM Router maintainer. **Date:** 2026-10-07.
-**Contract:** [LLM Router client contract, version 1](https://github.com/astigmatism/llm-router/blob/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md), pinned at llm-router `d5edba8`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md>
+**From:** the LLM Router maintainer. **Date:** 2026-10-13.
+**Contract:** [LLM Router client contract, version 1.2](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md), pinned at llm-router `0b16686`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md>
 
-This is a plan to carry out in `dsh-container`. Read the contract in full first; it is authoritative wherever this handoff is less precise. File and line references below are from `origin/main` at `e82ce7d` (2026-10-07); check them before editing.
+This is contract §11's update handoff for this project: **replace the vendored copy and review the conformance map.** 1.2 asks no client for a code change — see "Why 1.2 is still a minor version" at the end. Where this handoff is less precise than the contract, the contract wins.
 
-## Why
+**Earlier plans, done.** The version-1 plan was carried out in `d4dc79d` (copy, map, `AGENTS.md` rule, service IDs, availability), and the opt-in route was added in `54d0162`. Nothing below re-opens those; they are the baseline the map is written against.
 
-AI Runtime switches the router's models by hand and without notice:
+**Why Harness goes first.** Your copy is at **version 1 @ `d5edba8`** (`docs/llm-router-contract.md`, header on line 1), while the map under it was rewritten on 2026-10-13 for the third resident route `local-trial → trial`. Harness is the only subscriber with such a route, and the opt-in service is precisely what 1.2 writes down — so this project is currently mapping new code against text two versions behind, in the exact area that changed. Line and file references below are from `origin/main` at `54d0162`; check them before editing.
 
-- **Paired configurations** run Daytime and Nighttime together.
-- **Solo configurations** stop Nighttime and give Daytime every GPU.
-- **Within either kind,** the context window and the canonical model ID behind a service can change. Today alone the Nighttime ID changed twice (an MTP3 variant), and its window went 128K → 96K.
+## The 1.2 delta, in the order a client reads it
 
-The router now describes the live deployment and pushes changes:
+1. **§3: `daytime` is no longer promised in every configuration.** The old table said "Present in **every** configuration." It now says present in every **normal** configuration — every configuration that runs a Daytime resident — and adds: "The AI Runtime may publish a configuration in which no catalog entry declares `daytime`, and then there is none to send. That is not a licence for a client to invent one, or to send something else instead of it." A configuration that never declared it does not list it in `offline_services` either, so the answer is 404 `MODEL_NOT_FOUND`, not 503 `SERVICE_OFFLINE`.
+2. **§3: a new service ID, `trial`.** Present **only** while a trial configuration is selected, and only under that name. It is opt-in: never the configuration the operator falls into, never an alias of `daytime` or of any other service, and **404 `MODEL_NOT_FOUND`** in every other configuration. §3 states the rule from both directions — "An opt-in service is never a fallback, in either direction" — and §5 adds that an opt-in service is never a candidate for a capability-based choice or a name-based fallback list. §10's `MODEL_NOT_FOUND` row now ends "Never fall back from an opt-in service such as `trial`". This is your `OPT_IN_SERVICES` / `OPT_IN_PROVIDERS` rule (`seed/plugins/dsh-router-model-discovery.js:30-38`) becoming contract text: Harness's reading was right, and 1.2 makes it the rule every client is held to.
+3. **§3: new subsection "Two kinds of names".** It separates the two things a model name can mean. **Catalog service IDs** — `daytime`, `nighttime`, `trial`, and every other alias the published catalog declares — are contract-governed and exist only while some entry declares them: absent is 404, deliberately stopped is 503, and `ids` in the capabilities document lists every name accepted right now. The **compatibility alias** `local-active` is reserved and is **not a service**: it is accepted with no entry declaring it only in the router's **legacy single-marker mode**, and in catalog mode — what this deployment runs — it is an ordinary declared alias that only the configuration's default entry may declare. In both modes it means one thing, "the model this router has active right now", so it is an alias of the active slot and not of `daytime`, and it follows every switch the operator makes. Its stability column now reads "Kept for compatibility. Do not adopt it."
+4. **§3: a request that omits `model` is answered by the active configuration's default, which is not promised to be `daytime`.** The old line was "An omitted model selects `daytime`." It now reads: "An omitted model selects the default of the **active configuration**, which this contract does not promise is `daytime`: while a trial configuration is selected, an omitted model is answered by the trial. A client that must not be served by a particular model MUST send an ID." State this case as explicitly as the named-ID cases, because it is the **only** route by which an opt-in trial ever answers a request that never named it. No fallback path produces it, no substitution produces it, and no error handler produces it — only silence about the model does, so the guarantee has to live in the request.
+5. **§3 + §4: a catalog entry with no service alias is not addressable, and MUST NOT be surfaced.** Such an entry has no name a conformant client may send. The router lists it with `service` set to its canonical ID because it will not invent one, and the contract says the model is "not selectable under this contract and MUST NOT be surfaced as a model a person can choose". §4 gives the reading rule: `service === id` is how a model with **no addressable ID** reads. Why the field falls back to the canonical ID is written up in [MODEL_DISCOVERY.md — a catalog entry with no service alias](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/MODEL_DISCOVERY.md#a-catalog-entry-with-no-service-alias): a row in `/v1/models` says the router can resolve that row, not that a contract client may send it.
+6. **[STABLE_SERVICES.md](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/STABLE_SERVICES.md) now lists `trial`, and the `daytime` context figure is corrected to 163840.** The `daytime` row said 131072. Both rows are what today's catalog declares, not a promise: §8 still forbids hard-coding a context size, §3 still forbids configuring a canonical ID.
+7. **Two additive diagnostics a client MAY ignore.** `CATALOG_HAS_NO_SERVICE_ID` in the capabilities document's `warnings` (with `complete: false`) says no entry of the active catalog declares a service ID; `MODEL_HAS_NO_SERVICE_ID` in that model's discovery `x_ollama_router.warnings` (with its entry incomplete) says this one entry declares none. Both are the router's own finding, both are optional reading — §11 lets fields be added without a version change and clients MUST ignore what they don't know — and neither changes inference or any status code. The runtime's own `deployment_warnings` are a separate fact and **still pass through verbatim as `metadata.qualification_notes`**; the new warnings never replace, merge with or overwrite those notes.
 
-- `GET /v1/router/capabilities`: one document with every usable model, its limits, NSFW flag and capability score, the configuration, offline services, and admission state.
-- `GET /v1/router/events`: Server-Sent Events carrying the complete document on every change.
+## What Harness must do
 
-## What Harness already does well (keep it)
-
-- **Missing Nighttime:** it no longer stops startup. The provider is kept with `residentUnavailable` (`seed/plugins/dsh-router-model-discovery.js:140-148,434-441`), and `docs/optional-residents.md` describes this.
-- **Picker and dispatch:** the picker shows "Nighttime — unavailable", blocks selecting it, and dispatch throws a non-retried `MODEL_UNAVAILABLE` (`scripts/patch-dsh-resident-availability.mjs`).
-- **Streaming and incomplete results:** it always streams; incomplete results are errors; partial tool JSON is never executed (`scripts/patch-unrestricted-policy.mjs:72-86`). There is no total deadline.
-- **Deployment verifier:** it waits through router drains (`scripts/verification-inference.mjs`).
-
-## Decisions (fixed by the owner)
-
-1. **No automatic fallback.** A Harness session is a long conversation; quietly switching models mid-session would change its context window, compaction and refusal behavior. This is the deviation contract §5 permits ("MAY disable fallback"). Nighttime stays a separate choice:
-   - **When it can't serve,** the picker shows exactly one state: **available**, **offline** (with the configuration ID, from `offline_services`), **unavailable** (backend unhealthy), **router switching configuration** (draining or maintenance), or **incomplete metadata**.
-   - **Requests to it** fail immediately with a clear message and consume no retries. The user switches the session to Daytime.
-   - **When it returns,** it becomes selectable again with no action.
-2. **Daytime and Nighttime are independent.** One model's state never blocks updates to the other.
-3. **The contract lives in this repository** (step 1 below), so every future change here is checked against it.
-
-## Step 1 — put the contract in this repository
-
-1. **Copy:** create `docs/llm-router-contract.md` from the raw URL above, verbatim, under this header (contract §11):
+1. **Replace the copy.** Overwrite the text above the map heading in `docs/llm-router-contract.md` with the raw 1.2 text verbatim, under this §11 header (unchanged in shape from your current one):
 
    ```markdown
-   > **Vendored copy — do not edit.** LLM Router client contract, version 1, copied from
-   > llm-router commit `d5edba88089070e82bb72600e860fd204df88481`. Canonical source:
+   > **Vendored copy — do not edit.** LLM Router client contract, version 1.2, copied from
+   > llm-router commit `0b1668669214a7c67cbba8008ddc98ffc1e14b72`. Canonical source:
    > https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md
    > Replace this copy only when the router maintainer announces a new contract version.
    ```
 
-2. **Conformance map:** after the copy, add `## How DeepSeek Harness upholds this contract`. Map every §13 checklist item to the code and tests that meet it. Record the §5 deviation (fallback disabled, with the reason above). Fill it in as you complete step 2; it must be complete before you finish.
-3. **Agent rule:** add to `AGENTS.md`: *"Router integration (provider requests, model discovery, availability, retries, limits) must uphold `docs/llm-router-contract.md`. Update its conformance map with any such change. Never edit the vendored contract text; replace it only when the LLM Router maintainer announces a new version."*
-4. **Existing doc:** update `docs/optional-residents.md` to the behavior below, and link it to the contract.
+   Keep `## How DeepSeek Harness upholds this contract` and everything below it. SHA-256 of the 1.2 contract text, for the test in step 2: `8d93fd81520bef2779ce7b57eb8555c51a1c8cb8e46a9264c70e62cdbc84721e` (recompute from the raw URL you fetched rather than trusting this line).
+2. **Update the copy's guard test.** `tests/llm-router-contract.test.mjs` pins the old copy four ways: `CONTRACT_V1_SHA256` (line 9), the `HEADER` block (lines 10-16), the body assertion `/^\*\*Version 1 · 2026-10-07\.\*\*/` (line 25), and `assert.equal(items.length, 11)` for the §13 checklist (line 33). All four change: version 1.2, the 1.2 SHA, `**Version 1.2 · 2026-10-13.**`, and **12** checklist items.
+3. **Add the map row for the new §13 item.** 1.2's checklist has one more line than 1.1's: *"Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5)."* Your map's table is asserted row-by-row against the checklist, so add the row naming the code and the test that meet it — the code is the opt-in guards in `seed/plugins/dsh-router-model-discovery.js` (`OPT_IN_SERVICES`, `isOptInService`, the "opt-in model" advice at `:433` and the no-select guards around `:446`); name the tests that prove it.
+4. **Re-verify the six items below against §13 and record the evidence in the map.** Each is a claim the old text did not make; none should need new behavior, which is the point — write down where you already hold the line, and if you find you don't, say so in your report.
+   - **Every request names its model.** Confirm that no provider request path can send a body without `model`. `migrateResidentRoute` and `planResidentProvider` converge each Harness-owned provider onto its service ID (`seed/plugins/dsh-router-model-discovery.js:484-488`, `:505`) and `config/settings.yaml` names `daytime` for the default route (`:6-7`), so a session's route always names a service. Prove it with the existing wire check (`scripts/verify-router-client-wire.mjs:85` asserts the service ID is sent) and extend that check to assert **every** outbound request carries a non-empty `model` — the omitted-`model` route is the only way the trial answers a request nobody sent it to.
+   - **A configuration with no `daytime` at all.** 1.2 records that a configuration can omit `daytime` entirely, with no `offline_services` entry. Check the discovery state machine and the picker for the case where a configured service is simply absent and not declared offline: it should read as "not offered by the router" — the state `:446` already distinguishes for an opt-in route — and never as an instruction to send something else. Cover it with a synthetic fixture document, and confirm the startup and deployment verifiers (`scripts/verify-router-startup.mjs`, `scripts/verify-router-client-wire.mjs`, `scripts/verification-inference.mjs`) don't treat a missing Daytime as a fatal router fault.
+   - **Nothing is offered that has no service ID.** Discovery must keep provisioning routes only from the three configured residents, never from discovery rows, and must never turn a row whose `service === id` into a selectable model. `matchRow` compares a *configured* service against `row.service`/`row.id` (`:340`); confirm it is only ever a lookup and never a source of candidates, and add a fixture row with `service === id` and `aliases: []` plus `MODEL_HAS_NO_SERVICE_ID` to prove the picker still offers only the residents.
+   - **The new warnings are not the runtime's notes.** The picker's "incomplete metadata" state must be reached by `complete: false` however it was caused, and must not relabel `CATALOG_HAS_NO_SERVICE_ID` as a `qualification_notes` item. Confirm `metadata.qualification_notes` is still surfaced verbatim where you surface it today, and that the router's two new codes are treated as the router's finding — report to the operator, never a reason to switch model.
+   - **`local-active` is not Daytime.** 1.2 redefines it as the active-slot alias, accepted undeclared only in legacy single-marker mode. Grep the settings, migrations, `docs/optional-residents.md` and the map for any place that still calls it an alias of Daytime, and correct the prose (the copy guard test already asserts `docs/optional-residents.md` doesn't say ``model `local-active` ``).
+   - **Never a fallback onto or off `trial`.** §5 now states Harness's rule as a general one. Re-read the migration, default-selection, verification and fallback paths added since 2026-10-07 and confirm none can land a session on the trial — including the route the deployment gains in memory when its stored config still pins the two pre-trial providers.
+5. **Keep the `AGENTS.md` rule.** `AGENTS.md:34-37` already points router work at `docs/llm-router-contract.md` and forbids editing the copy; the test asserts its wording, so leave it unchanged. Nothing in 1.2 needs the rule widened.
+6. **Report back:** commit SHA, the test run, the new map row, the six re-verifications with what each found, and any place where the 1.2 wording is ambiguous or hard to meet.
 
-## Step 2 — required changes, in priority order
+## Why 1.2 is still a minor version
 
-1. **Startup and availability never depend on router state.**
-   - **Today:** a listed but unhealthy, incomplete or warning-bearing Nighttime makes the whole sync throw, freezing Daytime too (`discovery.js:60-62`, and `:419-477`). The startup migration exits 22 on router HTTP errors or an unhealthy model (`scripts/migrate-resident-models.mjs:39-45,88-91`; `entrypoint.sh:40-43` runs under `set -eu`).
-   - **Change:** evaluate each model on its own and record its state. Startup may exit non-zero only for invalid **local** settings. If the router is unreachable, start with stored or seeded settings, mark both models unavailable, and recover automatically.
-2. **Send service IDs and identify yourself.**
-   - **Today:** `local-ollama` sends `local-active` and `local-everyday` sends the canonical `qwen3.8-27b-abliterated-q6_k` (`config/settings.yaml:39,69`; plugin `:10-13`; compaction policies in `seed/profile/managed/cordis.patch.yml:64-70`). The plugin also rewrites a saved `daytime` back to `local-active` (`:463-465`).
-   - **IDs:** keep the provider IDs, but send `daytime` and `nighttime` as model names. Migrate stored settings, existing session routes and compaction policies, accepting the old IDs during migration. Remove the rewrite.
-   - **Acceptance:** a Nighttime with a new canonical ID (such as the MTP3 variant) must stay available.
-   - **Header:** send `X-Client-Name: deepseek-harness/<instance>` on every provider request and every discovery fetch, using the pi-ai provider `headers` support. Take the instance from a setting or environment variable, defaulting to the hostname, so router history can tell the Harnesses on 192.168.1.5, .4, .7 and .20 apart. The one on .20 runs from a self-contained operational bundle with no persistent source checkout.
-3. **Discover from the capabilities document and follow the event stream.**
-   - **Today:** a 30 s poll of `GET /v1/models` with no ETag (`discovery.js:194-203`, `:28`), and a separate 30 s client re-read for the picker (`patch-dsh-resident-availability.mjs:67`).
-   - **Read and subscribe:** read `/v1/router/capabilities` at startup and subscribe to `/v1/router/events`.
-   - **Disconnected:** poll every 30 s with `If-None-Match`, and reconnect with 3 → 30 s backoff. 60 s without bytes means the stream is dead.
-   - **On each new `revision`:** re-sync immediately and push the states to the picker.
-   - **Reference client:** adapt `watchRouter`, `resolveService` and `classifyError` from [router-watch.mjs](https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/clients/router-watch.mjs), which is tested against the router.
-   - **Metadata:** `models[].metadata` is the same `x_ollama_router` object you validate today, so keep the schema checks, but apply them per model.
-4. **Classify request errors by `error.code`, not by HTTP status.**
-   - **Today:** a 503 becomes a generic server error and is retried twice at 0.5–10 s (pi-ai `openai-responses`; `dsh-llm` retry). The code only appears in the message text (`patch-dsh-llm-pi-ai.mjs:157-162`).
-   - **Change:** follow contract §10:
-     - `SERVICE_OFFLINE` or `MODEL_NOT_FOUND`: end at once with no retry cost, mark the model offline, and trigger a re-sync.
-     - `BACKEND_UNAVAILABLE`: bounded backoff, then mark the model unavailable.
-     - `BACKEND_DRAINING` or `MAINTENANCE_MODE`: wait with 2 → 30 s backoff for at least 10 minutes, showing "router switching configuration", then resolve the model again.
-     - Other 5xx and network errors: retry. Other 4xx: fail.
-   - **Error shapes:** errors may arrive inside an open stream (§9); the code is in `error.code`, or in `x_router.stop_reason` for Ollama-style frames.
-5. **Take limits from the serving model, every time.**
-   - **Use:** `context_window` and `metadata.context_safety_reserve` (1024) for budgets and compaction thresholds, and `slots` for `maxConcurrency`.
-   - **Recompute** on every change. `131072` in `settings.yaml:41,71` may remain only as a placeholder before the first successful discovery.
-   - **While a model is unavailable,** mark its limits stale and don't act on them.
-6. **Make timeouts queue-safe.**
-   - **Risk:** `streamIdleTimeoutMs: 900000` (`settings.yaml:27,57`) can abort a Responses request that waits in the router's queue longer than that. While queued, the router sends only `response.created`, `response.in_progress`, then a `: waiting for inference slot` comment every 15 s.
-   - **Check** whether the installed SDK's idle timer resets on SSE comment frames. If not, exempt the queued phase or count comments as activity.
-7. **Log changes.** Log every availability transition and served-model change with its reason, for example `nighttime: available → offline (flash-next-solo-128k)`.
-8. **Optional:** show an NSFW badge from `models[].nsfw`; it is `true` for Nighttime.
+§11: *"A minor version (1.1, 1.2, …) only clarifies or adds permissions and never requires client changes, so copies of an earlier minor version stay valid until the next update handoff."* Nothing here asks Harness to change behavior:
 
-## Step 3 — verification and tests
+- `trial` is a name that exists only while the operator selects a trial configuration. Harness already names it deliberately and never selects it automatically, so 1.2 records what `54d0162` already does — and adds a permission Harness does not have to take up.
+- The corrected `daytime` guarantee removes a promise the router could not keep. A client that discovered services and handled 404 the way §10 always required is unaffected; the sentence that used to promise `daytime` everywhere was simply untrue of a published configuration.
+- "Two kinds of names", the no-alias rule and the omitted-`model` correction all describe what 1.0 §3 already demanded of a conformant client: send a service ID, never a canonical ID, never a name the router didn't offer. The only new prohibition — never surface or fall onto an opt-in service — bites a client that would send a name §3 never allowed it to send.
+- The two warnings are additive fields §11 already says clients MUST ignore.
 
-- **Verifiers:**
-  - `scripts/verify-router-contract.mjs:18-53`: accept a Nighttime that is listed in `offline_services`, or listed with `available: false`, as valid.
-  - `scripts/verify-resident-client.mjs` and `scripts/verify.sh:256-270,389`: skip offline or unavailable models with a clear notice; never fail an update because of the router's current configuration.
-  - `verify-local-model-profiles.mjs` and `verify-dsh-context-compaction.mjs`: use the service IDs.
-- **Tests:** update `tests/router-provider-remote.test.mjs` (`:144-164`, `:266-278` encode the old all-or-nothing rule) and add synthetic fixtures for:
-  - paired; solo with `offline_services`; Nighttime unhealthy; Nighttime incomplete; router draining; router unreachable at startup;
-  - Nighttime canonical ID changing between revisions; event stream disconnect and reconnect; a request that waits in the queue past the idle timeout;
-  - each error code in contract §10; the `X-Client-Name` header; limits recomputed after a context change.
-- **Acceptance:**
-  - `./scripts/check.sh --host` passes, and CI `./scripts/check.sh --build` is green.
-  - The conformance map covers every §13 item.
-  - Nothing persisted refers to a canonical model ID.
+If any item in this handoff turns out to require a code change in Harness, report it as a contract defect: that would make 1.2 a 2.0, and five projects would need to be told again before they replace anything.
 
-## Boundaries and release
+## Boundaries
 
-- **Workflow:** follow this repository's `AGENTS.md`. Develop locally, test, and push `main`. Do not deploy unless the owner asks.
-- **Hosts:** never edit, patch or develop on 192.168.1.5 or 192.168.1.4.
-- **Restarts:** 192.168.1.7 also runs a Harness, which hosts the router maintainer's own session. Coordinate with the owner before updating it, and never restart a Harness from a session running inside it.
-- **Out of scope:** don't modify the router or AI Runtime, and never switch AI Runtime configurations to test; use synthetic fixtures.
-- **Report back:** commit SHAs, test and CI results, the completed conformance map, and any place where the contract was ambiguous or hard to meet.
+- Follow this repository's `AGENTS.md`. Develop in the `dsh-container` clone, test, push `main`. Do not deploy unless the owner asks.
+- Never edit, patch or develop on 192.168.1.5 or 192.168.1.4, and never restart a Harness from a session running inside it; 192.168.1.7 hosts the router maintainer's own session, so coordinate before touching it.
+- Never switch AI Runtime configurations to test, and never select the trial to test — use synthetic fixtures. `trial` is reachable only when its configuration is selected, so a fixture document is the only correct test for it.
+- Out of scope: the router, AI Runtime, and the other subscribers.

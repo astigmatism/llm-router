@@ -1,121 +1,61 @@
-# Handoff: ComfyUI Image Frontend — uphold the LLM Router client contract
+# Handoff: ComfyUI Image Frontend — contract 1.2: what the prompt assistant may send, and what it must not offer
 
 **To:** the AI agent that maintains `comfyui-image-frontend`.
-**From:** the LLM Router maintainer. **Date:** 2026-10-07.
-**Contract:** [LLM Router client contract, version 1](https://github.com/astigmatism/llm-router/blob/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md), pinned at llm-router `d5edba8`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/CLIENT_CONTRACT.md>
+**From:** the LLM Router maintainer. **Date:** 2026-10-13.
+**Contract:** [LLM Router client contract, version 1.2](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md), pinned at llm-router `0b16686`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md>
 
-This is a plan to carry out in this repository. Read the contract in full first; it is authoritative wherever this handoff is less precise. File and line references are from `origin/main` at `03dcd4a`; check them before editing.
+This is contract §11's update handoff for this project: **replace the vendored copy and review the conformance map.** 1.2 asks no client for a code change — see "Why 1.2 is still a minor version" at the end. Where this handoff is less precise than the contract, the contract wins.
 
-## Why
+**Earlier work, done.** The version-1 plan was carried out: the copy and the agent rules in `270f210`, capability selection in `082b24c`. The map is `docs/llm-router-contract.md:255` (`## How ComfyUI Image Frontend upholds this contract`), and the router code is `backend/app/services/llm_router.py` and `backend/app/services/ollama.py`. Nothing below re-opens those decisions — including the owner's rule that the most capable NSFW model is chosen deliberately.
 
-The router's models change by hand and without notice.
+**Your copy is two versions behind.** It pins **version 1 @ `d5edba8`** (`docs/llm-router-contract.md:1-4`), and 1.2 is the release that writes down the two things your selector touches most: which names may be sent at all, and which published rows may never be offered. Line references below are from this checkout at `e25f951`; check them before editing.
 
-- **Paired configurations** run Daytime and Nighttime together.
-- **Solo configurations** stop Nighttime completely.
+## The 1.2 delta, in the order a client reads it
 
-Today the prompt assistant asks for `nighttime` by name and rejects its own requests whenever `nighttime` is missing from `/api/tags`, so a solo configuration disables it. The router now describes what is available and pushes changes:
+1. **§3: `daytime` is no longer promised in every configuration.** The old row said "Present in **every** configuration." It now says present in every **normal** configuration — every configuration that runs a Daytime resident — and adds: "The AI Runtime may publish a configuration in which no catalog entry declares `daytime`, and then there is none to send. That is not a licence for a client to invent one, or to send something else instead of it." A configuration that never declared it does not list it in `offline_services`, so the answer is 404 `MODEL_NOT_FOUND`, not the 503 `SERVICE_OFFLINE` your fallback logic is tuned to.
+2. **§3: a new service ID, `trial`.** Present **only** while a trial configuration is selected, and only under that name. Opt-in: never the configuration the operator falls into, never an alias of `daytime` or anything else, and **404 `MODEL_NOT_FOUND`** in every other configuration. §3 adds "An opt-in service is never a fallback, in either direction", §5 adds that an opt-in service is **never a candidate** — not for a capability-based choice, and never acquired by a name-based fallback list — and §10's `MODEL_NOT_FOUND` row now says "Never fall back from an opt-in service such as `trial`". This names the shape your selector has: the pool is the whole document, and the document is whatever the current configuration chose to publish.
+3. **§3: new subsection "Two kinds of names".** **Catalog service IDs** — `daytime`, `nighttime`, `trial`, and every other alias the published catalog declares — are contract-governed and exist only while some entry declares them: absent is 404, deliberately stopped is 503, and `ids` in the capabilities document lists every name accepted right now. The **compatibility alias** `local-active` is reserved and **not a service**: accepted with no entry declaring it only in the router's **legacy single-marker mode**, and in catalog mode — what this deployment runs — an ordinary declared alias that only the configuration's default entry may declare. Either way it means "the model this router has active right now", so it is an alias of the active slot, not of `daytime`, and it follows every switch. Its stability column now reads "Kept for compatibility. Do not adopt it."
+4. **§3: a request that omits `model` is answered by the active configuration's default, which is not promised to be `daytime`.** Where the old line read "An omitted model selects `daytime`", 1.2 reads: "An omitted model selects the default of the **active configuration**, which this contract does not promise is `daytime`: while a trial configuration is selected, an omitted model is answered by the trial. A client that must not be served by a particular model MUST send an ID." State this case as explicitly as the named-ID cases, because it is the **only** route by which an opt-in trial ever answers a request that never named it. No fallback and no substitution produces it — ComfyUI's NSFW-first ladder produces it just as happily as any other choice — so the guarantee has to live in the request body.
+5. **§3 + §4: a catalog entry with no service alias is not addressable and MUST NOT be surfaced.** Such an entry has no name a conformant client may send. The router lists it with `service` set to its canonical ID, because it will not invent one, and §3 says the model is "not selectable under this contract and MUST NOT be surfaced as a model a person can choose". §4 gives the reading rule: **`service === id` is how a model with no addressable ID reads.** [MODEL_DISCOVERY.md — a catalog entry with no service alias](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/MODEL_DISCOVERY.md#a-catalog-entry-with-no-service-alias) explains why `service` falls back to the canonical ID — the router publishes the entry unchanged rather than making up a name, and a row the router can resolve is not a row a contract client may send.
+6. **[STABLE_SERVICES.md](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/STABLE_SERVICES.md) now lists `trial`, and the `daytime` context figure is corrected to 163840** (it said 131072). Both rows describe today's catalog, not a promise: §8 still forbids hard-coding a context size, and your limits already come from `model_for`.
+7. **Two additive diagnostics a client MAY ignore.** `CATALOG_HAS_NO_SERVICE_ID` in the capabilities document's `warnings` (with `complete: false`) says no entry of the active catalog declares a service ID; `MODEL_HAS_NO_SERVICE_ID` in one model's discovery `x_ollama_router.warnings` (with that entry incomplete) says that entry declares none. Both are the router's own finding, both are optional reading — §11 lets fields be added without a version change and clients MUST ignore what they don't know — and neither changes inference or any status code. This project reads neither field, so for you they are simply new unknowns to keep ignoring. The runtime's `deployment_warnings` are a separate fact and **still pass through verbatim as `metadata.qualification_notes`**; the new codes never replace or merge into them.
 
-- `GET /v1/router/capabilities` lists every usable model with:
-  - `service`, the ID to send;
-  - `available`;
-  - `nsfw`, true for abliterated models;
-  - `capability_score`, an automatic 0–100 ranking where higher is more capable;
-  - `context_window`, `input_modalities`, `capabilities` and `metadata.reasoning.efforts`.
-- `GET /v1/router/events` pushes the complete document on every change, as Server-Sent Events.
+## What this project must do
 
-## Decision (fixed by the owner): the most capable NSFW model first, then the most capable model
-
-For every prompt-assistant call, choose the model by capability, not by name:
-
-1. Take the models that are `available` and have every feature the call needs. Vision checks need `image` in `input_modalities`. Thinking at a given effort needs that effort in `metadata.reasoning.efforts`.
-2. If any of them has `nsfw: true`, use the one with the highest `capability_score`.
-3. Otherwise use the highest-scoring model of any kind (`nsfw` false or null).
-4. While `router.accepting_requests` is false (the router is switching configuration), **wait**; don't choose.
-
-Send the chosen model's `service` ID (for example `nighttime`) as `model`. This is exactly `pick_service(doc, nsfw=True, require=[...], fallback_any=True)` in the reference client. Today it yields `nighttime` in a paired configuration and `daytime` in a solo one. When an NSFW model returns, the next call uses it again; never stay on the fallback.
-
-Settings, using the existing `CIF_` prefix:
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `CIF_OLLAMA_SELECTION` | `capability` | `capability` applies the rule above. `named` uses `CIF_OLLAMA_MODEL` followed by `CIF_OLLAMA_FALLBACK_MODELS`. |
-| `CIF_OLLAMA_NSFW` | `prefer` | `prefer`: the rule above. `require`: NSFW models only, otherwise unavailable. `avoid`: non-NSFW models only. `any`: ignore the flag. |
-| `CIF_OLLAMA_MODEL`, `CIF_OLLAMA_FALLBACK_MODELS` | `nighttime`, `daytime` | Used only when `CIF_OLLAMA_SELECTION=named`. |
-
-In reference-client terms, with `require` set to the call's features (`["vision"]` for image checks):
-
-| `CIF_OLLAMA_NSFW` | Reference-client call |
-|---|---|
-| `prefer` | `pick_service(doc, nsfw=True, require=..., fallback_any=True)` |
-| `require` | `pick_service(doc, nsfw=True, require=...)` |
-| `avoid` | `pick_service(doc, nsfw=False, require=...)` |
-| `any` | `pick_service(doc, require=...)` |
-
-Check the thinking effort separately, against the chosen model's `metadata.reasoning.efforts` (step 2.3).
-
-Document the precedence change: in `capability` mode, `CIF_OLLAMA_MODEL` no longer selects the model, and the default selection ignores an existing `CIF_OLLAMA_MODEL=nighttime` in production `.env` files. Make the startup log say which mode and preference are active.
-
-**Content risk.** Nighttime is chosen on purpose: see `docs/audits/creative-direction-2026-09-12.md` and the `krea2-uncensored-v1` workflow. When the call has to use a non-NSFW model:
-
-- Daytime may refuse, or return output that fails the JSON schema.
-- Report that plainly to the user, for example "No NSFW model is available; Daytime declined this request", and don't retry it in a loop.
-- Show on the status endpoint and in the UI that the assistant is running on a non-NSFW fallback.
-
-## Step 1 — put the contract in this repository
-
-1. **Copy:** create `docs/llm-router-contract.md` from the raw URL above, verbatim, under this header (contract §11):
+1. **Replace the copy.** Overwrite `docs/llm-router-contract.md` above the `## How ComfyUI Image Frontend upholds this contract` heading with the raw 1.2 text verbatim, under this §11 header:
 
    ```markdown
-   > **Vendored copy — do not edit.** LLM Router client contract, version 1, copied from
-   > llm-router commit `d5edba88089070e82bb72600e860fd204df88481`. Canonical source:
+   > **Vendored copy — do not edit.** LLM Router client contract, version 1.2, copied from
+   > llm-router commit `0b1668669214a7c67cbba8008ddc98ffc1e14b72`. Canonical source:
    > https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md
    > Replace this copy only when the router maintainer announces a new contract version.
    ```
 
-2. **Conformance map:** after the copy, add `## How ComfyUI Image Frontend upholds this contract`, mapping every §13 checklist item to code and tests. Complete it before you finish.
-3. **Agent rule:** this repository has no `AGENTS.md`, so create one with at least this rule: *"Router integration (prompt assistant and vision requests, model selection, discovery, retries) must uphold `docs/llm-router-contract.md`. Update its conformance map with any such change. Never edit the vendored contract text; replace it only when the LLM Router maintainer announces a new version."* Add pointers to `docs/testing.md`, `make validate` and `docs/production-deployment-agent.md`.
-4. **Traceability:** update the router prose in `scripts/generate_traceability.py:143-174`, then regenerate `docs/traceability.md` (run it without `--check`).
+   Keep the map and everything below it. Then re-run `make validate`, which regenerates the traceability document that embeds the contract prose (`python3 scripts/generate_traceability.py`).
+2. **Re-verify these five items against §13 and write the evidence into the map.** None should need new behavior; the job is to record where you already hold the line, and to report the ones where you don't.
+   - **The names you may send.** §13's new line covers both halves: *"Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5)."* Your pool is every entry of the document: `pick_service` (`backend/app/services/llm_router.py:156-190`) keeps rows that are `available` and carry a string `service` (`:181-188`), ranks them by `capability_score` then `context_window` (`_rank`, `:145`) and returns that row's `service` (`:190`); named mode goes through `resolve` (`:115`), and both are reached from `select_model` (`backend/app/services/ollama.py:400`, the two branches at `:415-429`), with `model_for` (`:193`) supplying the limits. There is no allowlist of names anywhere. Add two fixtures to `backend/tests/router_fixtures.py` and assert against them: **(a)** a trial-only document — one entry, `service: "trial"` — which your selector would otherwise rank first for a text compose call (`CIF_OLLAMA_NSFW=any` is the widest case, and named mode skips the feature filter too); **(b)** a row with `service` equal to its own canonical `id` and `aliases: []`, which the `isinstance(model.get("service"), str)` filter (`:183`) hands straight back as the ID to send — a canonical ID going out on the wire, which 1.0 §3 already forbade and 1.2 §3 and §4 now name. Record in the map which rule keeps you inside the set of names §3 allows, or add the restriction and record that you did. One claim there is already written down: `document_summary` logs `router_services` from every available row's `service` under a docstring that says it publishes no canonical IDs (`llm_router.py:319-335`, allow-listed at `backend/app/main.py:120`), and a name-less row breaks that sentence as well as §3 — whatever filter you add, make it fix both.
+   - **The request always names its model.** `ollama.py:1397-1401` builds the body with `"model": service`, and the guard just above (`:1394-1395`) refuses to send anything when the selection is not `selected`; the send is `:1411`, and compose and vision are the only inference paths, so nothing unnamed can reach the router. That is exactly the behavior 1.2's omitted-`model` paragraph rewards. Extend `test_every_router_request_identifies_the_client_and_sends_service_ids_only` (`backend/tests/unit/test_ollama_router.py:623`), which already asserts that every sent `model` is a name the document advertises, so the same check covers the trial-only and name-less fixtures. This is the one route by which an opt-in trial answers a ComfyUI call nobody aimed at it.
+   - **A configuration with no `daytime`.** Your fallback ladder already copes — the absence just narrows the pool, and named mode's `nighttime, daytime` defaults fail into the classified `MODEL_NOT_FOUND` path. What to record is the *wording*: a service the catalog never declared is a different fact from one the configuration stopped, and `offline_services` is only ever summarised into the log field `router_offline_services` (`llm_router.py:336-338`, allow-listed for output at `backend/app/main.py:121`), while the person-facing words come from `_unavailable_reason` (`ollama.py:478`) and the single-choice status payload (`ollama.py:694`, `:703`): that reason should say "not offered by this configuration" rather than "offline" when nothing in `offline_services` names it.
+   - **The new warnings stay unknowns.** `complete` and `warnings` are never read in `backend/app` (the only place both appear is the fixture, `backend/tests/router_fixtures.py:174-175`), and `validate_document` accepts a document while ignoring unknown fields (`llm_router.py:306-316`, asserted by `test_invalid_documents_are_rejected_and_unknown_fields_ignored` at `backend/tests/unit/test_llm_router.py:275`), so `CATALOG_HAS_NO_SERVICE_ID` and `MODEL_HAS_NO_SERVICE_ID` are ignored today by omission. Record that as a deliberate choice under §11, note that neither is ever a reason to fail a request or switch model, and confirm `metadata.qualification_notes` still passes through untouched wherever you carry model metadata onward.
+   - **`local-active` is not Daytime.** Your named mode resolves it as just another name: `resolve` (`llm_router.py:115`) matches through `_identities` — `id`, `service` and `aliases` together (`:98-100`, used at `:139`) — and `model_for` adds `doc["ids"]` (`:198`), and the tests assert `resolve(solo_document(), "local-active") == "local-active"` and `model_for(doc, "local-active")["id"] == DAYTIME_PAIRED_ID` (`backend/tests/unit/test_llm_router.py:133`, `:143`) against fixtures that declare the alias (`backend/tests/router_fixtures.py:103`, `:130`). 1.2 redefines it as the reserved active-slot alias, accepted undeclared only in legacy single-marker mode. The defaults `nighttime, daytime` are unaffected. Record in the map that `local-active` is kept only for compatibility and is not adopted for new configuration, and expect the copied table row itself to change with the replacement in step 1.
+3. **Keep the `AGENTS.md` rules.** `AGENTS.md:7-12` binds router work to `docs/llm-router-contract.md`, keeps the map current and forbids editing the copy, and `AGENTS.md:19` says to send service IDs (`daytime`, `nighttime`) only. Leave all of it — 1.2 needs nothing wider, and the copied §3 row itself changes with the replacement in step 1.
+4. **Commands:** `PYTHONPATH=backend python3 -m pytest -q` for the backend (`AGENTS.md:28`) and `make validate` for the full gate (`Makefile:53`; `make validate-available` runs what this environment supports). The live router suite may be run read-only: `CIF_RUN_LIVE_OLLAMA_TESTS=1 CIF_OLLAMA_BASE_URL=http://192.168.1.4:11434 PYTHONPATH=backend pytest -q backend/tests/live/test_ollama_integration.py` (`docs/testing.md:237-240`). Never switch AI Runtime configurations to test: a trial configuration and a configuration without `daytime` are both fixtures, never live switches.
+5. **Report back:** commit SHA, the test and validation run, the five re-verifications with what each found, and any place the 1.2 wording is ambiguous or hard to meet.
 
-## Step 2 — required changes
+## Why 1.2 is still a minor version
 
-1. **Discovery.**
-   - **Today:** each compose or evaluate call first fetches `/api/tags` and requires the configured name (`backend/app/services/ollama.py:165-172,245,534,1016-1021`). Capabilities are cached for 30 s (`queue_worker.py:64,3550-3577`).
-   - **Read and subscribe:** read `GET /v1/router/capabilities` at startup, without failing to start if the router is unreachable. Subscribe to `GET /v1/router/events` from a lifespan background task beside `_health_loop` (`queue_worker.py:3478-3522`).
-   - **Disconnected:** poll every 30 s with `If-None-Match`, and reconnect with 3 → 30 s backoff. 60 s without bytes means the stream is dead.
-   - **Per call:** choose the model from the current document, with no per-call `/api/tags` request.
-   - **Reference client:** start from [router_watch.py](https://raw.githubusercontent.com/astigmatism/llm-router/d5edba88089070e82bb72600e860fd204df88481/docs/clients/router_watch.py) (`pick_service`, `model_for`, `classify_error`, and the subscriber loop). Port the loop to `httpx.AsyncClient.stream`, or run the thread version.
-2. **Errors, classified by `error.code` (contract §10).**
-   - **Today:** the `error` field is ignored, only the status code is kept (`ollama.py:1080-1121`), and 503s are retried three times at 0.25 s × 2ⁿ (`:45-47,823-949`).
-   - `SERVICE_OFFLINE`, `BACKEND_UNAVAILABLE`, `MODEL_NOT_FOUND`: choose again at once, excluding the failed service (`exclude=[...]`). This consumes no retries.
-   - `BACKEND_DRAINING`, `MAINTENANCE_MODE`: wait with 2 → 30 s backoff for at least 10 minutes, then choose again.
-   - Other 5xx and network errors: retry. Other 4xx: fail.
-   - Error bodies are `{"error": {"code": ..., "message": ...}}`. Tolerate a string `error`, too.
-3. **Request settings.**
-   - **Thinking:** `think: "xhigh"` is hard-coded (`ollama.py:48-50`). Send it only when the chosen model lists `xhigh` in `metadata.reasoning.efforts`; otherwise use the closest supported effort, or `true`.
-   - **Already correct:** the output-budget ladder (2048 → 4096 → 8192, then no thinking), `format` JSON schema, the seed, and `stream: false` (`:54,680-684,1237-1248`).
-4. **Time.** The request may wait in the router's first-in, first-out queue behind long coding generations on Daytime, and the router has no queue deadline. Keep the read timeout (900 s, `ollama.py:123,147`) at least that long, or stream. Never abandon and resubmit a queued request.
-5. **Identification.** Send `X-Client-Name: comfyui-image-frontend` on every router request.
-6. **Status and logging.**
-   - Log every change of chosen model, with its reason.
-   - Expose on the status endpoint (`api/prompt_assistant.py:57-65`): the chosen service, `nsfw`, the router configuration ID, and whether the assistant is on a fallback.
-7. **Housekeeping.**
-   - `.env.example:123` and `README.md:323` still point at `192.168.1.21`. The router is `http://192.168.1.4:11434`, or `http://ai-router:11434` only on a host that joins Rosalina's `local-ai-ollama_default` network, which Samus does not.
-   - Don't commit the stale untracked `frontend/.dist-stale-root*`, `.playwright-report-stale-root*` and `.test-results-stale-root*` directories.
+§11: *"A minor version (1.1, 1.2, …) only clarifies or adds permissions and never requires client changes, so copies of an earlier minor version stay valid until the next update handoff."*
 
-## Step 3 — tests
+- 1.0 §3 said "A client MUST send service IDs (`daytime`, `nighttime`)" — a closed set. 1.2 *widens* it to "or another service ID the current document advertises", then withholds opt-in names from the pool. A selector that stayed inside the closed set satisfies both versions, and nothing in 1.2 is newly forbidden to it.
+- The `trial` row exists only while the operator selects a trial configuration, and ComfyUI is under no obligation to take up the new permission.
+- The corrected `daytime` guarantee removes a promise the router could not keep. Selection by capability, plus the §10 handling you already implement, is what 1.0 always asked for.
+- `service === id` and the omitted-`model` case restate rules 1.0 §3 already imposed on the ID you may send; 1.2 gives them a name and a machine-readable warning, and marks the reading rule in §4.
+- The two warnings are additive fields §11 already says clients MUST ignore, and this project already ignores them.
 
-- **Fake router:** extend `backend/tests/fake_services.py:79-111` with `/v1/router/capabilities`, `/v1/router/events`, the error codes, and switchable configurations.
-- **Unit and integration tests:**
-  - Selection:
-    - paired → `nighttime`; solo → `daytime`; NSFW model unhealthy → `daytime`;
-    - two NSFW models → the higher score; vision call where only a non-NSFW model has `image` → that model;
-    - `CIF_OLLAMA_NSFW=require` with none available → unavailable; `named` mode;
-    - draining → wait, no switch; NSFW model returns → used again.
-  - Errors and requests: each error code and its action; `SERVICE_OFFLINE` costing no retries; the effort check; `X-Client-Name` sent; the router unreachable at startup.
-- **Commands:** `PYTHONPATH=backend python3 -m pytest -q`, `make validate`, and `python3 scripts/generate_traceability.py --check`. The opt-in live suite (`backend/tests/live/test_ollama_integration.py`) may be run read-only against the router; never switch AI Runtime configurations to test.
+If re-verifying any item above turns up a change you must actually make, report it as a contract defect: that would make 1.2 a 2.0, and the other four subscribers would have to be told again before they replace anything.
 
-## Boundaries and release
+## Boundaries
 
-- **Workflow:** develop in this checkout, test, and push `main`. Production runs on Samus (192.168.1.5) and is updated by its documented process: `docs/production-deployment-agent.md`, `update_production`, or the Samus Service Portal "Update and restart". Deploy only when the owner asks.
-- **Out of scope:** don't modify the router or AI Runtime.
-- **Report back:** commit SHAs, test and validation results, the completed conformance map, and any contract ambiguity.
+- Develop in this checkout, test, push `main`. Production runs on Samus (192.168.1.5) through its documented process (`docs/production-deployment-agent.md`, `update_production`, or the Samus Service Portal "Update and restart"). Deploy only when the owner asks, and never on 192.168.1.4.
+- Out of scope: the router, AI Runtime, and the other subscribers. Never switch AI Runtime configurations to test.
+- Don't commit the stale untracked `frontend/.dist-stale-root*`, `.playwright-report-stale-root*` or `.test-results-stale-root*` directories.
