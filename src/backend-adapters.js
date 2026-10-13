@@ -6,6 +6,20 @@ import { managedCompletion, openGenerationJournal, rebaseContext } from './gener
 const encoder = new TextEncoder();
 const LLAMA_CPP_KIND = 'llama_cpp';
 const OLLAMA_KIND = 'ollama';
+// Strata is the llama.cpp-compatible inference engine the runtime provisions
+// for its own models; it speaks the same wire (health, slots, props,
+// apply-template, OpenAI chat) as plain llama.cpp.
+const STRATA_KIND = 'strata';
+
+// The backend kinds the router can serve today. The admin API reports this list so
+// a deployment owner can verify a catalog kind before the router is asked to serve it.
+export const SUPPORTED_BACKEND_KINDS = [OLLAMA_KIND, LLAMA_CPP_KIND, STRATA_KIND];
+
+// Kinds whose backend speaks the llama.cpp wire. Strata inherits the llama.cpp
+// adapter's behaviour and differs only in the kind it reports.
+export function isLlamaWireKind(kind) {
+  return kind === LLAMA_CPP_KIND || kind === STRATA_KIND;
+}
 const SAFE_POLICY_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_TOOL_ARGUMENT_DIAGNOSTIC_DELTAS = 64;
 
@@ -62,7 +76,7 @@ function llamaTemperature(body) {
 }
 
 export function enforcedContextSafetyReserve(activeModel) {
-  if ((activeModel?.backend_kind || OLLAMA_KIND) !== LLAMA_CPP_KIND) return null;
+  if (!isLlamaWireKind(activeModel?.backend_kind || OLLAMA_KIND)) return null;
   return nonNegativeInteger(activeModel?.context_safety_reserve, DEFAULT_CONTEXT_SAFETY_RESERVE);
 }
 
@@ -86,11 +100,11 @@ export function formatParameterSize(parameters) {
 }
 
 // Native details report only what the catalog or the running model states.
-export function llamaModelDetails(activeModel, parameters = null) {
+export function llamaModelDetails(activeModel, parameters = null, kind = LLAMA_CPP_KIND) {
   const raw = isPlainObject(activeModel?.raw) ? activeModel.raw : {};
   const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
   return {
-    backend: LLAMA_CPP_KIND,
+    backend: kind,
     format: 'gguf',
     family: text(raw.family),
     parameter_size: formatParameterSize(parameters) ?? text(raw.parameter_size),
@@ -1667,7 +1681,7 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
           ...(this.activeModel.capability_profile?.tools === true ? ['tools'] : []),
           ...(this.activeModel.capability_profile?.vision === true ? ['vision'] : [])
         ],
-        details: llamaModelDetails(this.activeModel, meta?.n_params),
+        details: llamaModelDetails(this.activeModel, meta?.n_params, this.kind),
         model_info: { context_length: this.activeModel.context_length },
         ...(this.activeModel.catalog_mode ? { x_ollama_router: {
           display_name: this.activeModel.raw?.display_name ?? this.activeModel.model,
@@ -1951,6 +1965,15 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
   }
 }
 
+// The Strata engine is a llama.cpp-compatible service: the same health, slot,
+// props, template and OpenAI chat surfaces, the same request limits. The adapter
+// therefore only reports its own kind; everything else inherits.
+export class StrataBackendAdapter extends LlamaCppBackendAdapter {
+  get kind() {
+    return STRATA_KIND;
+  }
+}
+
 function requestIsStatus(method, pathname) {
   return (method === 'GET' && ['/api/version', '/api/tags', '/api/ps'].includes(pathname))
     || (method === 'POST' && pathname === '/api/show');
@@ -1960,6 +1983,7 @@ export function resolveBackendAdapter(config, activeModel) {
   const kind = activeModel?.backend_kind || OLLAMA_KIND;
   if (kind === OLLAMA_KIND) return new OllamaBackendAdapter(config, activeModel);
   if (kind === LLAMA_CPP_KIND) return new LlamaCppBackendAdapter(config, activeModel);
+  if (kind === STRATA_KIND) return new StrataBackendAdapter(config, activeModel);
   throw new BackendAdapterError(503, 'INVALID_BACKEND_KIND', `Unsupported active backend kind: ${kind}.`);
 }
 
@@ -1985,6 +2009,6 @@ export async function fetchPrepared(adapter, prepared, headers = {}, signal = un
       : JSON.stringify(payload),
     signal,
     generation: isGenerationPath(prepared.upstreamPath || prepared.path),
-    progressPath: adapter.kind === 'llama_cpp' ? '/slots' : undefined
+    progressPath: isLlamaWireKind(adapter.kind) ? '/slots' : undefined
   });
 }

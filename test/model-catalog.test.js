@@ -99,6 +99,26 @@ test('qualified Daytime context extensions update aliases and actual admission b
   await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /1–262144 tokens/ });
 });
 
+test('a Strata resident entry satisfies the catalog contract and serves the llama.cpp wire', async (t) => {
+  const f = await fixture(t);
+  const day = f.marker.models[0];
+  Object.assign(day, { backend_kind: 'strata' });
+  Object.assign(f.marker, { backend_kind: 'strata' });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  const catalog = await readModelCatalog(f.config);
+  assert.equal(catalog.models.find((m) => m.model === CODING).backend_kind, 'strata');
+  const list = await (await fetch(f.base + '/v1/models')).json();
+  assert.equal(list.data.find((row) => row.id === CODING).x_ollama_router.backend_kind, 'strata');
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 200);
+});
+
+test('a resident entry of a backend kind the router cannot serve is refused', async (t) => {
+  const f = await fixture(t);
+  Object.assign(f.marker.models[0], { backend_kind: 'mistral' });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /llama\.cpp or Strata/ });
+});
+
 test('catalog lists canonical identities, resolves aliases deliberately, and protects metadata writers', async (t) => {
   const f = await fixture(t, { ADMIN_ENABLED: 'true' });
   const catalog = await readModelCatalog(f.config);

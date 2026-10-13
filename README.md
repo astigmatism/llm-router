@@ -128,6 +128,12 @@ Example marker:
 }
 ```
 
+### Backend kinds
+
+`backend_kind` selects the adapter. The router serves `ollama` (the default), `llama_cpp`, and `strata`. Strata is the llama.cpp-compatible engine the local AI runtime provisions for its own models, so the Strata adapter inherits the llama.cpp wire end to end: `/health`, `/slots`, `/props`, template and tokenization, request limits, and OpenAI chat.
+
+`GET /admin/api/runtime-state` reports `router.supported_backend_kinds` in both its 200 and 503 responses, so a deployment owner can verify a catalog kind against the deployed router before committing to it. A catalog naming a kind the router cannot serve does not take the router down: `/health` and `runtime-state` answer 503 with `error.code INVALID_BACKEND_KIND` plus the runtime snapshot and the catalog the router holds, and a rewrite of the marker file followed by `POST /admin/api/reload-config` restores the router without a restart.
+
 ## Stable public model alias
 
 `ROUTER_MODEL_ALIAS` defaults to `local-active`. It names the router's active slot, not an installed Ollama model. The exact alias resolves to the current marker model on Responses, native chat/generate/embed/embeddings/show, and OpenAI chat-completions requests even when `REWRITE_REQUESTED_MODEL_TO_ACTIVE=false`. That strict setting still rejects other mismatched names; setting it to `true` preserves the broader compatibility behavior where every non-empty requested name is advisory.

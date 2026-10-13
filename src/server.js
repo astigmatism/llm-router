@@ -34,7 +34,9 @@ import {
   openAiCompletionToOllama,
   openAiNonstreamForPublic,
   openAiSseToOllamaStream,
-  resolveBackendAdapter
+  resolveBackendAdapter,
+  SUPPORTED_BACKEND_KINDS,
+  isLlamaWireKind
 } from './backend-adapters.js';
 import { RequestGate, RequestGateError } from './request-gate.js';
 import { CapabilityPublisher } from './capabilities.js';
@@ -130,10 +132,58 @@ function errorPayload(code, message, details = undefined) {
   };
 }
 
+// The catalog facts an owner needs to repair the router when it cannot serve the
+// catalog it was given. Served from every runtime-state response, 200 or 503.
+function activeModelMetadata(activeModel) {
+  return {
+    profile: activeModel.profile,
+    model: activeModel.model,
+    backend_kind: activeModel.backend_kind,
+    context_length: activeModel.context_length,
+    total_context_length: activeModel.total_context_length,
+    max_active_requests: activeModel.max_active_requests,
+    gpu_uuids: activeModel.gpu_uuids,
+    fit_target: activeModel.fit_target,
+    prompt_cache_mode: activeModel.prompt_cache_mode,
+    prompt_cache_volatile: activeModel.capability_profile?.prompt_cache_volatile === true,
+    prompt_cache_persistence: activeModel.capability_profile?.prompt_cache_persistence === true,
+    reasoning_default: activeModel.reasoning_policy?.default_level ?? null,
+    reasoning_levels: Object.keys(activeModel.reasoning_policy?.levels || {}),
+    reasoning_aliases: activeModel.reasoning_policy?.aliases ?? {}
+  };
+}
+
 async function handleHealth(response, context) {
   const activeModel = await readActiveModel(context.config);
-  const upstream = await resolveBackendAdapter(context.config, activeModel).health();
   const runtime = context.requestGate.snapshot(activeModel);
+  const router = {
+    appName: context.config.appName,
+    version: context.config.version,
+    maintenanceMode: context.state.maintenanceMode,
+    runtime,
+    startedAt: context.state.startedAt,
+    supported_backend_kinds: SUPPORTED_BACKEND_KINDS
+  };
+  let upstream;
+  try {
+    upstream = await resolveBackendAdapter(context.config, activeModel).health();
+  } catch (error) {
+    // A catalog of a kind the router cannot serve would otherwise take this endpoint
+    // down with a bare 503. The router keeps answering health while its active model
+    // is unusable, naming the kind list and the catalog it holds, so its owner can see
+    // the wedge and repair the catalog the same way it repairs any other failure.
+    const code = error instanceof BackendAdapterError ? error.code : 'INTERNAL_ERROR';
+    const message = error instanceof BackendAdapterError ? error.message : (error?.message || String(error));
+    sendJson(response, 503, {
+      ok: false,
+      backend_ready: false,
+      router,
+      upstream: { ok: false, status: null, latencyMs: 0, backendKind: activeModel.backend_kind || null, version: null, error: message },
+      activeModel,
+      ...errorPayload(code, message)
+    });
+    return;
+  }
   // During a controlled transition the router is intentionally available while
   // its previous backend is offline. Keep the service health check green so the
   // transaction can commit the replacement backend; generation routes still
@@ -142,13 +192,7 @@ async function handleHealth(response, context) {
   sendJson(response, serviceAvailable ? 200 : 503, {
     ok: serviceAvailable,
     backend_ready: upstream.ok,
-    router: {
-      appName: context.config.appName,
-      version: context.config.version,
-      maintenanceMode: context.state.maintenanceMode,
-      runtime,
-      startedAt: context.state.startedAt
-    },
+    router,
     upstream,
     activeModel
   });
@@ -349,31 +393,34 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
 
   if (request.method === 'GET' && pathname === '/admin/api/runtime-state') {
     const activeModel = await readActiveModel(context.config);
-    const backend = resolveBackendAdapter(context.config, activeModel);
-    const health = await backend.health();
-    const ps = await backend.ps();
-    sendJson(response, 200, {
-      ok: true,
-      runtime: context.requestGate.snapshot(activeModel),
-      backend: { kind: backend.kind, health, status: ps },
-      models: (await context.modelDiscovery.document(null, { includeAliases: false })).entries,
-      active_model: {
-        profile: activeModel.profile,
-        model: activeModel.model,
-        backend_kind: activeModel.backend_kind,
-        context_length: activeModel.context_length,
-        total_context_length: activeModel.total_context_length,
-        max_active_requests: activeModel.max_active_requests,
-        gpu_uuids: activeModel.gpu_uuids,
-        fit_target: activeModel.fit_target,
-        prompt_cache_mode: activeModel.prompt_cache_mode,
-        prompt_cache_volatile: activeModel.capability_profile?.prompt_cache_volatile === true,
-        prompt_cache_persistence: activeModel.capability_profile?.prompt_cache_persistence === true,
-        reasoning_default: activeModel.reasoning_policy?.default_level ?? null,
-        reasoning_levels: Object.keys(activeModel.reasoning_policy?.levels || {}),
-        reasoning_aliases: activeModel.reasoning_policy?.aliases ?? {}
-      }
-    });
+    const runtime = context.requestGate.snapshot(activeModel);
+    try {
+      const backend = resolveBackendAdapter(context.config, activeModel);
+      const health = await backend.health();
+      const ps = await backend.ps();
+      sendJson(response, 200, {
+        ok: true,
+        runtime,
+        router: { supported_backend_kinds: SUPPORTED_BACKEND_KINDS },
+        backend: { kind: backend.kind, health, status: ps },
+        models: (await context.modelDiscovery.document(null, { includeAliases: false })).entries,
+        active_model: activeModelMetadata(activeModel)
+      });
+    } catch (error) {
+      // A catalog of a kind the router cannot serve wedges adapter resolution. This
+      // endpoint keeps answering: the runtime reads the error code, the kinds the router
+      // can serve, the drain state, and the catalog on file from here, and repairs the
+      // catalog file itself (it is the only writer) before retrying - no restart needed.
+      const code = error instanceof BackendAdapterError ? error.code : 'INTERNAL_ERROR';
+      const message = error instanceof BackendAdapterError ? error.message : (error?.message || String(error));
+      sendJson(response, error.statusCode || 503, {
+        ok: false,
+        runtime,
+        router: { supported_backend_kinds: SUPPORTED_BACKEND_KINDS },
+        active_model: activeModelMetadata(activeModel),
+        ...errorPayload(code, message)
+      });
+    }
     return;
   }
 
@@ -465,7 +512,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       return;
     }
     const backend = resolveBackendAdapter(context.config, activeModel);
-    if (backend.kind === 'llama_cpp') {
+    if (isLlamaWireKind(backend.kind)) {
       if (context.state.maintenanceMode) throw new RequestGateError(503, 'MAINTENANCE_MODE', 'Router maintenance mode is enabled.');
       const adminAbort = connectionAbort(request, response);
       let adminLease;
@@ -637,7 +684,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     const adminAbort = connectionAbort(request, response);
     try {
       let result;
-      if (backend.kind === 'llama_cpp') {
+      if (isLlamaWireKind(backend.kind)) {
         lease = await context.requestGate.acquire({ endpoint: '/admin/api/test-chat', clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, signal: adminAbort.signal });
         await backend.ensureAvailable(adminAbort.signal);
         const prepared = await backend.prepareProxy({
@@ -1112,7 +1159,7 @@ async function handleProxy(request, response, url, context) {
           method: request.method, pathname, body: sanitizedBody,
           query: url.search || '', signal: clientController.signal
         });
-      if (backend.kind === 'llama_cpp' && prepared.reasoning) {
+      if (isLlamaWireKind(backend.kind) && prepared.reasoning) {
         Object.assign(commonRecord, {
           reasoningEffort: prepared.reasoning.level,
           thinkingSupported: true,
@@ -1209,7 +1256,7 @@ async function handleProxy(request, response, url, context) {
     );
     finalStatus = upstreamResponse.status;
 
-    if (backend.kind === 'llama_cpp' && !upstreamResponse.ok) {
+    if (isLlamaWireKind(backend.kind) && !upstreamResponse.ok) {
       const text = await upstreamResponse.text();
       let details = null;
       try { details = JSON.parse(text); } catch { details = null; }
@@ -1224,7 +1271,7 @@ async function handleProxy(request, response, url, context) {
     let streamingBody = upstreamResponse.body;
     if (prepared.journal && !response.headersSent) response.setHeader('x-router-generation-id', prepared.journal.id);
     let contentType = upstreamResponse.headers.get('content-type') || '';
-    if (prepared.streaming && backend.kind === 'llama_cpp') {
+    if (prepared.streaming && isLlamaWireKind(backend.kind)) {
       if (prepared.responseKind === 'openai-chat') {
         streamingBody = normalizeOpenAiSseModel(upstreamResponse.body, activeModel.model, (payload) => {
           if (payload.usage) usage = payload.usage;
@@ -1271,7 +1318,7 @@ async function handleProxy(request, response, url, context) {
       response.end();
     } else {
       let payloadBuffer;
-      if (backend.kind === 'llama_cpp') {
+      if (isLlamaWireKind(backend.kind)) {
         const payload = JSON.parse(await upstreamResponse.text());
         const normalized = prepared.responseKind === 'openai-chat'
           ? openAiNonstreamForPublic(payload, activeModel.model)

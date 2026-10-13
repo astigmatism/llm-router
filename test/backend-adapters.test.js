@@ -7,7 +7,13 @@ import {
   normalizeOpenAiSseModel,
   normalizeOutputLimit,
   openAiCompletionToOllama,
-  openAiSseToOllamaStream
+  openAiSseToOllamaStream,
+  enforcedContextSafetyReserve,
+  isLlamaWireKind,
+  llamaModelDetails,
+  resolveBackendAdapter,
+  StrataBackendAdapter,
+  SUPPORTED_BACKEND_KINDS
 } from '../src/backend-adapters.js';
 
 const nonReasoningLlamaModel = {
@@ -309,6 +315,40 @@ test('waits for a streaming usage trailer before emitting the final Ollama objec
   assert.equal(lines.at(-1).done_reason, 'stop');
   assert.equal(lines.at(-1).prompt_eval_count, 37);
   assert.equal(lines.at(-1).eval_count, 5);
+});
+
+test('reports the backend kinds the router can serve', () => {
+  assert.deepEqual(SUPPORTED_BACKEND_KINDS, ['ollama', 'llama_cpp', 'strata']);
+  assert.equal(isLlamaWireKind('llama_cpp'), true);
+  assert.equal(isLlamaWireKind('strata'), true);
+  assert.equal(isLlamaWireKind('ollama'), false);
+  assert.equal(isLlamaWireKind(undefined), false);
+  assert.equal(isLlamaWireKind('mistral'), false);
+});
+
+test('resolves Strata catalogs to the inherited llama.cpp wire adapter', () => {
+  const strata = resolveBackendAdapter({}, { backend_kind: 'strata', model: 'strata-model' });
+  assert.ok(strata instanceof StrataBackendAdapter);
+  assert.ok(strata instanceof LlamaCppBackendAdapter);
+  assert.equal(strata.kind, 'strata');
+  assert.equal(resolveBackendAdapter({}, { backend_kind: 'llama_cpp', model: 'model' }).kind, 'llama_cpp');
+  assert.equal(resolveBackendAdapter({}, { model: 'model' }).kind, 'ollama');
+  assert.throws(
+    () => resolveBackendAdapter({}, { backend_kind: 'mistral', model: 'model' }),
+    (error) => error instanceof BackendAdapterError
+      && error.statusCode === 503
+      && error.code === 'INVALID_BACKEND_KIND'
+      && /Unsupported active backend kind: mistral/.test(error.message)
+  );
+});
+
+test('applies the llama.cpp wire contract to Strata models', () => {
+  assert.equal(enforcedContextSafetyReserve({ backend_kind: 'strata', model: 'strata-model' }), 1024);
+  assert.equal(enforcedContextSafetyReserve({ backend_kind: 'strata', model: 'strata-model', context_safety_reserve: 2048 }), 2048);
+  assert.equal(enforcedContextSafetyReserve({ backend_kind: 'llama_cpp', model: 'model' }), 1024);
+  assert.equal(enforcedContextSafetyReserve({ backend_kind: 'ollama', model: 'model' }), null);
+  assert.equal(llamaModelDetails({ backend_kind: 'strata', raw: {} }, null, 'strata').backend, 'strata');
+  assert.equal(llamaModelDetails({ backend_kind: 'llama_cpp', raw: {} }, null, 'llama_cpp').backend, 'llama_cpp');
 });
 
 test('normalizes model identity in OpenAI streaming frames', async () => {

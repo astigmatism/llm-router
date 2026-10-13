@@ -11,6 +11,7 @@ import { capabilityScore } from './capability-score.js';
 import {
   enforcedContextSafetyReserve,
   formatParameterSize,
+  isLlamaWireKind,
   resolveBackendAdapter,
   validatedReasoningPolicy
 } from './backend-adapters.js';
@@ -459,7 +460,7 @@ export class ActiveModelDiscovery {
           active_model_marker: activeModel.loadedFrom === 'file',
           ollama_ps: ps.available,
           ollama_show: show.available,
-          ...((activeModel.backend_kind || 'ollama') === 'llama_cpp'
+          ...(isLlamaWireKind(activeModel.backend_kind || 'ollama')
             ? { backend_status: ps.available, backend_metadata: show.available }
             : {}),
           ...(activeModel.catalog_mode ? { backend_props: props?.ok === true } : {})
@@ -509,7 +510,7 @@ export class ActiveModelDiscovery {
       }
       return { available: true, body, warning: null };
     } catch {
-      return { available: false, body: null, warning: activeModel.backend_kind === 'llama_cpp' ? 'BACKEND_STATUS_UNAVAILABLE' : 'OLLAMA_PS_UNAVAILABLE' };
+      return { available: false, body: null, warning: isLlamaWireKind(activeModel.backend_kind) ? 'BACKEND_STATUS_UNAVAILABLE' : 'OLLAMA_PS_UNAVAILABLE' };
     }
   }
 
@@ -522,13 +523,13 @@ export class ActiveModelDiscovery {
           timeoutMs: Math.min(this.config.upstreamTimeoutMs, 10000)
         })
         : await resolveBackendAdapter(this.config, activeModel).show(activeModel.model);
-      if (!result.ok) return { available: false, body: null, warning: activeModel.backend_kind === 'llama_cpp' ? 'BACKEND_METADATA_UNAVAILABLE' : 'OLLAMA_SHOW_UNAVAILABLE' };
+      if (!result.ok) return { available: false, body: null, warning: isLlamaWireKind(activeModel.backend_kind) ? 'BACKEND_METADATA_UNAVAILABLE' : 'OLLAMA_SHOW_UNAVAILABLE' };
       if (!isPlainObject(result.body)) {
-        return { available: false, body: null, warning: activeModel.backend_kind === 'llama_cpp' ? 'BACKEND_METADATA_INVALID_RESPONSE' : 'OLLAMA_SHOW_INVALID_RESPONSE' };
+        return { available: false, body: null, warning: isLlamaWireKind(activeModel.backend_kind) ? 'BACKEND_METADATA_INVALID_RESPONSE' : 'OLLAMA_SHOW_INVALID_RESPONSE' };
       }
       return { available: true, body: result.body, warning: null };
     } catch {
-      return { available: false, body: null, warning: activeModel.backend_kind === 'llama_cpp' ? 'BACKEND_METADATA_UNAVAILABLE' : 'OLLAMA_SHOW_UNAVAILABLE' };
+      return { available: false, body: null, warning: isLlamaWireKind(activeModel.backend_kind) ? 'BACKEND_METADATA_UNAVAILABLE' : 'OLLAMA_SHOW_UNAVAILABLE' };
     }
   }
 }

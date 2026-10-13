@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isLlamaWireKind } from './backend-adapters.js';
 
 export class RequestGateError extends Error {
   constructor(statusCode, code, message) {
@@ -63,7 +64,7 @@ export class RequestGate {
       profile: activeModel?.profile || null,
       model: activeModel?.model || null,
       max_active_requests: activeModel?.max_active_requests ?? null,
-      queue_policy: activeModel?.backend_kind === 'llama_cpp' ? 'fifo-per-backend' : 'backend-managed',
+      queue_policy: isLlamaWireKind(activeModel?.backend_kind) ? 'fifo-per-backend' : 'backend-managed',
       queued_count: queued.length,
       queued_by_model: queued.reduce((counts, entry) => {
         counts[entry.model || 'default'] = (counts[entry.model || 'default'] || 0) + 1;

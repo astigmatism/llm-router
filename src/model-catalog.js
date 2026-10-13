@@ -1,5 +1,5 @@
 import { readActiveModel, parseMarker } from './active-model.js';
-import { BackendAdapterError, validatedReasoningPolicy } from './backend-adapters.js';
+import { BackendAdapterError, SUPPORTED_BACKEND_KINDS, validatedReasoningPolicy } from './backend-adapters.js';
 
 // Largest one-slot working context a resident entry may publish: the native
 // 256K window of the Qwen3.8 models. The runtime controller owns per-profile
@@ -96,7 +96,7 @@ export async function readModelCatalog(config) {
   const upstreams = new Set();
   const models = raw.models.map((entry) => {
     const model = parseMarker(JSON.stringify(entry), active.file);
-    if (!model?.model || model.backend_kind !== 'llama_cpp') invalid('Every resident entry must identify a llama.cpp model.');
+    if (!model?.model || !SUPPORTED_BACKEND_KINDS.includes(model.backend_kind)) invalid('Every resident entry must identify a llama.cpp or Strata model.');
     if (entry.display_name !== undefined && (typeof entry.display_name !== 'string' || !entry.display_name.trim())) invalid('Invalid model display name.');
     let url;
     try { url = new URL(model.backend_url); } catch { invalid(`Invalid upstream URL for ${model.model}.`); }

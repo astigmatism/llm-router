@@ -972,3 +972,72 @@ test('Responses compatibility preserves native routes while public discovery exp
     await fixture.cleanup();
   }
 });
+
+test('an unservable backend kind keeps health and runtime-state structured, and a catalog rewrite plus reload repairs the router without a restart', async () => {
+  const fixture = await makeFixture();
+  const markerFile = fixture.config.activeModelFile;
+  const adminHeaders = { 'x-admin-token': 'secret-token' };
+  const llama = http.createServer((request, response) => {
+    const url = new URL(request.url, 'http://fake-llama.local');
+    if (url.pathname === '/health') return sendJson(response, 200, { status: 'ok' });
+    if (url.pathname === '/v1/models') return sendJson(response, 200, { data: [{ id: 'active:model' }] });
+    if (url.pathname === '/slots') return sendJson(response, 200, [{ n_ctx: 8192 }]);
+    if (url.pathname === '/props') return sendJson(response, 200, { default_generation_settings: { params: { n_predict: -1 } } });
+    sendJson(response, 404, { error: 'not found' });
+  });
+  const llamaPort = await listen(llama);
+  try {
+    // A catalog of a kind the router cannot serve: the 2026-10-12 incident was the old
+    // router's treatment of Strata, and the wedged file survived a host reboot.
+    const wedged = JSON.parse(await fs.readFile(markerFile, 'utf8'));
+    wedged.backend_kind = 'mistral';
+    await fs.writeFile(markerFile, JSON.stringify(wedged), 'utf8');
+
+    const stateResponse = await fetch(`http://127.0.0.1:${fixture.apiPort}/admin/api/runtime-state`, { headers: adminHeaders });
+    assert.equal(stateResponse.status, 503);
+    const state = await stateResponse.json();
+    assert.equal(state.ok, false);
+    assert.equal(state.error.code, 'INVALID_BACKEND_KIND');
+    assert.match(state.error.message, /Unsupported active backend kind: mistral/);
+    assert.deepEqual(state.router.supported_backend_kinds, ['ollama', 'llama_cpp', 'strata']);
+    assert.equal(state.active_model.model, 'active:model');
+    assert.equal(state.active_model.backend_kind, 'mistral');
+    assert.equal(state.runtime.backend_kind, 'mistral');
+    assert.equal(typeof state.runtime.draining, 'boolean');
+
+    const healthResponse = await fetch(`http://127.0.0.1:${fixture.apiPort}/health`);
+    assert.equal(healthResponse.status, 503);
+    const health = await healthResponse.json();
+    assert.equal(health.ok, false);
+    assert.equal(health.backend_ready, false);
+    assert.equal(health.error.code, 'INVALID_BACKEND_KIND');
+    assert.deepEqual(health.router.supported_backend_kinds, ['ollama', 'llama_cpp', 'strata']);
+    assert.equal(health.activeModel.model, 'active:model');
+
+    // The repair the runtime performs: write back a catalog of a kind the router can
+    // serve and reload. The router re-reads its file on every call, so no restart is
+    // involved, and this is exactly what must converge a rebooted wedged host.
+    const repaired = JSON.parse(await fs.readFile(markerFile, 'utf8'));
+    repaired.backend_kind = 'strata';
+    repaired.backend_url = `http://127.0.0.1:${llamaPort}`;
+    await fs.writeFile(markerFile, JSON.stringify(repaired), 'utf8');
+    const reload = await fetch(`http://127.0.0.1:${fixture.apiPort}/admin/api/reload-config`, { method: 'POST', headers: adminHeaders, body: '{}' });
+    assert.equal(reload.status, 200);
+
+    const recoveredResponse = await fetch(`http://127.0.0.1:${fixture.apiPort}/admin/api/runtime-state`, { headers: adminHeaders });
+    assert.equal(recoveredResponse.status, 200);
+    const recovered = await recoveredResponse.json();
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.backend.kind, 'strata');
+    assert.equal(recovered.backend.health.ok, true);
+    assert.deepEqual(recovered.router.supported_backend_kinds, ['ollama', 'llama_cpp', 'strata']);
+    assert.equal(recovered.active_model.backend_kind, 'strata');
+
+    const recoveredHealth = await fetch(`http://127.0.0.1:${fixture.apiPort}/health`);
+    assert.equal(recoveredHealth.status, 200);
+    assert.equal((await recoveredHealth.json()).backend_ready, true);
+  } finally {
+    await close(llama);
+    await fixture.cleanup();
+  }
+});
