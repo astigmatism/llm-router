@@ -130,8 +130,9 @@ export async function readModelCatalog(config) {
     return { ...model, aliases, catalog_mode: true, loadedFrom: active.loadedFrom,
       file: active.file, file_mtime: active.file_mtime, file_mtime_ms: active.file_mtime_ms };
   });
-  if (raw.default_model !== active.model || !models.some((m) => m.model === raw.default_model && m.aliases.includes(config.routerModelAlias))) {
-    invalid('The default model and compatibility alias must identify the legacy coding projection.');
+  if (raw.default_model !== active.model || !models.some((m) => m.model === raw.default_model)
+    || models.some((m) => m.model !== raw.default_model && m.aliases.includes(config.routerModelAlias))) {
+    invalid('The default model must identify the root projection; a declared compatibility alias must belong to it.');
   }
   const projection = raw.models.find((model) => model.model === raw.default_model);
   for (const key of ['display_name', 'backend_url', 'context_length', 'default_output_tokens', 'max_output_tokens', 'reasoning_policy', 'output_policy', 'server_default_output_tokens']) {

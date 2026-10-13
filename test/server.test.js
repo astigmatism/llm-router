@@ -979,7 +979,7 @@ test('an unservable backend kind keeps health and runtime-state structured, and 
   const adminHeaders = { 'x-admin-token': 'secret-token' };
   const llama = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://fake-llama.local');
-    if (url.pathname === '/health') return sendJson(response, 200, { status: 'ok' });
+    if (url.pathname === '/health') return sendJson(response, 200, { status: 'ok', loaded: true });
     if (url.pathname === '/v1/models') return sendJson(response, 200, { data: [{ id: 'active:model' }] });
     if (url.pathname === '/slots') return sendJson(response, 200, [{ n_ctx: 8192 }]);
     if (url.pathname === '/props') return sendJson(response, 200, { default_generation_settings: { params: { n_predict: -1 } } });

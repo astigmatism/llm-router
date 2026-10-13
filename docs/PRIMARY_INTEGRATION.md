@@ -97,3 +97,18 @@ After the `local-ai-runtime` migration, `/home/astigmatism/apps/local-ai-primary
 The router-only publisher detects the marker, reserves runtime configuration through the controller, drains accepted and direct work, replaces only the router, and asks the controller to republish its current catalog. It never copies the router repository's legacy publisher or catalog over runtime-owned configuration. Context and vision migration helpers refuse to run on a migrated host.
 
 An interrupted router release retains its reservation and drain. Restore or complete the router release, then run `docker exec local-ai-runtime python3 -m runtime router-maintenance-end`. This command verifies the backends and republishes the catalog before reopening admission.
+
+### Strata trial integration
+
+Strata shares OpenAI generation, `/health`, `/slots`, and `/props`, but does not
+provide llama.cpp's `/apply-template` or `/tokenize`. Its adapter counts the actual
+formatted prompt through `/v1/messages/count_tokens`, translating text, tool history,
+and reasoning controls to the engine's Anthropic frontend. The same context reserve
+and output-space checks still apply. Missing or invalid counts fail closed.
+
+The runtime's `docker-inspect-env` receipt attests that the engine sets no output
+ceiling; the router also checks the live `/props` default. `loaded: false` is not
+ready even when the health endpoint answers `status: ok`. llama.cpp retains its
+argument-vector verification. An explicitly alias-free trial catalog is valid:
+the default must still match its root projection, and any declared compatibility
+alias must belong to that default. No alias is added implicitly.

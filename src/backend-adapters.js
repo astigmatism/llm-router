@@ -1,3 +1,4 @@
+import { strataCountRequest } from './strata-request.js';
 import { createHash } from 'node:crypto';
 import { TextDecoder, TextEncoder } from 'node:util';
 import { upstreamFetch, upstreamJson } from './upstream.js';
@@ -597,6 +598,11 @@ export function normalizeLlamaToolRequest(body, activeModel, protocol) {
     throw new BackendAdapterError(400, 'INVALID_TOOLS', 'tools must be an array.', 'tools');
   }
   const tools = (rawTools || []).map((tool, index) => normalizedToolDefinition(tool, `tools[${index}]`));
+  // Strata's Anthropic count frontend supplies an empty description. Keep the
+  // OpenAI generation template identical when callers omit this optional field.
+  if (activeModel?.backend_kind === STRATA_KIND) {
+    for (const tool of tools) tool.function.description ??= '';
+  }
 
   const rawChoice = body.tool_choice ?? body.function_call;
   const choiceParam = Object.hasOwn(body, 'tool_choice') ? 'tool_choice' : 'function_call';
@@ -1516,14 +1522,21 @@ class BackendAdapter {
     } catch {
       signal?.throwIfAborted();
     }
-    if (!health?.ok || health.body?.status !== 'ok') {
+    if (!health?.ok || health.body?.status !== 'ok'
+      || (this.kind === STRATA_KIND && health.body?.loaded !== true)) {
       throw new BackendAdapterError(503, 'BACKEND_UNAVAILABLE', `The backend for ${this.activeModel.model} is unavailable. Retry when this service is healthy.`, 'model');
     }
     if (this.activeModel.output_policy === 'unrestricted') {
       const launch = this.activeModel.raw?.runtime_output_policy;
-      if (launch?.verification !== 'docker-inspect-argv' || launch.n_predict !== -1
-        || launch.reasoning_budget !== -1 || launch.reasoning_effort !== 'default' || !launch.container_id) {
-        throw new BackendAdapterError(503, 'BACKEND_LAUNCH_NOT_VERIFIED', 'Publish the catalog after verifying actual running --n-predict -1 --reasoning-budget -1 --reasoning-effort default arguments. This pinned engine reports -1 in /props even under a capped launch.', 'model');
+      const verified = this.kind === STRATA_KIND
+        ? launch?.verification === 'docker-inspect-env' && launch.engine_sets_no_output_ceiling === true
+          && Boolean(launch.env_sha256) && Boolean(launch.container_id)
+        : launch?.verification === 'docker-inspect-argv' && launch.n_predict === -1
+          && launch.reasoning_budget === -1 && launch.reasoning_effort === 'default' && Boolean(launch.container_id);
+      if (!verified) {
+        throw new BackendAdapterError(503, 'BACKEND_LAUNCH_NOT_VERIFIED', this.kind === STRATA_KIND
+          ? 'Publish the catalog after verifying the Strata environment launch has no output ceiling.'
+          : 'Publish the catalog after verifying actual running --n-predict -1 --reasoning-budget -1 --reasoning-effort default arguments. This pinned engine reports -1 in /props even under a capped launch.', 'model');
       }
       const props = await upstreamJson(this.upstreamConfig, '/props', { timeoutMs: 5000, signal });
       if (props.body?.default_generation_settings?.params?.n_predict !== -1) {
@@ -1608,7 +1621,8 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
     try {
       const health = await upstreamJson(this.upstreamConfig, '/health', { timeoutMs: 5000 });
       return {
-        ok: health.ok && health.body?.status === 'ok',
+        ok: health.ok && health.body?.status === 'ok'
+          && (this.kind !== STRATA_KIND || health.body?.loaded === true),
         status: health.status,
         latencyMs: Date.now() - started,
         backendKind: this.kind,
@@ -1697,8 +1711,6 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
   }
 
   async validateContext(messages, outputTokens, templateControls = {}, signal) {
-    const slotContext = positiveInteger(this.activeModel.context_length, 131072);
-    const reserve = enforcedContextSafetyReserve(this.activeModel);
     let applied;
     try {
       applied = await upstreamJson(this.upstreamConfig, '/apply-template', {
@@ -1752,6 +1764,12 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
       }
       inputTokens = payload.usage.prompt_tokens;
     }
+    return this.contextFromCount(inputTokens, outputTokens);
+  }
+
+  contextFromCount(inputTokens, outputTokens) {
+    const slotContext = positiveInteger(this.activeModel.context_length, 131072);
+    const reserve = enforcedContextSafetyReserve(this.activeModel);
     if (inputTokens + (outputTokens ?? 1) + reserve > slotContext) {
       throw new BackendAdapterError(
         400,
@@ -1965,12 +1983,29 @@ export class LlamaCppBackendAdapter extends BackendAdapter {
   }
 }
 
-// The Strata engine is a llama.cpp-compatible service: the same health, slot,
-// props, template and OpenAI chat surfaces, the same request limits. The adapter
-// therefore only reports its own kind; everything else inherits.
+// Strata shares OpenAI generation and discovery, but uses an environment launch
+// receipt and an Anthropic token-count endpoint, not llama.cpp's tokenizer APIs.
 export class StrataBackendAdapter extends LlamaCppBackendAdapter {
-  get kind() {
-    return STRATA_KIND;
+  get kind() { return STRATA_KIND; }
+
+  async validateContext(messages, outputTokens, templateControls = {}, signal) {
+    let counted;
+    try {
+      counted = await upstreamJson(this.upstreamConfig, '/v1/messages/count_tokens', {
+        signal, method: 'POST',
+        body: strataCountRequest(messages, templateControls, this.activeModel.model),
+        timeoutMs: Math.min(this.config.upstreamTimeoutMs, 120000)
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof BackendAdapterError) throw error;
+      throw new BackendAdapterError(503, 'TOKENIZER_UNAVAILABLE', `Strata could not count the formatted prompt: ${error.message}`);
+    }
+    const inputTokens = counted.body?.input_tokens;
+    if (!counted.ok || !Number.isSafeInteger(inputTokens) || inputTokens < 0) {
+      throw new BackendAdapterError(503, 'TOKENIZER_UNAVAILABLE', 'Strata did not return a valid input token count.');
+    }
+    return this.contextFromCount(inputTokens, outputTokens);
   }
 }
 

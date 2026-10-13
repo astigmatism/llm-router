@@ -28,8 +28,10 @@ async function fixture(t, env = {}) {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
       state.requests.push({ path: req.url, body });
+      if (entry.backend_kind === 'strata' && ['/apply-template', '/tokenize'].includes(req.url)) return json(res, 404, {});
+      if (req.url === '/v1/messages/count_tokens') return json(res, state.countStatus || 200, { input_tokens: state.inputTokens ?? 20 });
       if (req.url === '/props') return json(res, 200, { default_generation_settings: { params: { n_predict: state.launchLimit } } });
-      if (req.url === '/health') return json(res, state.healthy ? 200 : 503, { status: state.healthy ? 'ok' : 'unavailable' });
+      if (req.url === '/health') return json(res, state.healthy ? 200 : 503, { status: state.healthy ? 'ok' : 'unavailable', loaded: state.loaded !== false });
       if (req.url === '/v1/models') return json(res, 200, { data: [{ id: entry.model }] });
       if (req.url === '/slots') return json(res, 200, Array.from({ length: entry.max_active_requests }, () => ({ n_ctx: entry.context_length })));
       if (req.url === '/apply-template') return json(res, 200, { prompt: JSON.stringify(body) });
@@ -99,17 +101,43 @@ test('qualified Daytime context extensions update aliases and actual admission b
   await assert.rejects(readModelCatalog(f.config), { code: 'INVALID_MODEL_CATALOG', message: /1–262144 tokens/ });
 });
 
-test('a Strata resident entry satisfies the catalog contract and serves the llama.cpp wire', async (t) => {
+test('an alias-free Strata catalog serves its real launch and tokenizer contracts', async (t) => {
   const f = await fixture(t);
   const day = f.marker.models[0];
-  Object.assign(day, { backend_kind: 'strata' });
-  Object.assign(f.marker, { backend_kind: 'strata' });
+  Object.assign(day, { backend_kind: 'strata', aliases: [], runtime_output_policy: {
+    verification: 'docker-inspect-env', engine_sets_no_output_ceiling: true, container_id: 'strata-test', env_sha256: 'test-env-hash'
+  } });
+  f.marker.models = [day];
+  Object.assign(f.marker, day);
   await fs.writeFile(f.file, JSON.stringify(f.marker));
   const catalog = await readModelCatalog(f.config);
   assert.equal(catalog.models.find((m) => m.model === CODING).backend_kind, 'strata');
   const list = await (await fetch(f.base + '/v1/models')).json();
   assert.equal(list.data.find((row) => row.id === CODING).x_ollama_router.backend_kind, 'strata');
+  assert.deepEqual(list.data.map((m) => m.id), [CODING]);
+  assert.equal((await f.post('/v1/chat/completions', chat('local-active'))).status, 404);
   assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 200);
+  assert.equal((await f.post('/v1/responses', { model: CODING, input: 'Hello', max_output_tokens: 16, stream: false })).status, 200);
+  assert.equal((await f.post('/api/chat', { model: CODING, messages: chat(CODING).messages, think: false, stream: false })).status, 200);
+  const state = f.backends[0].state;
+  assert.ok(state.requests.some((r) => r.path === '/v1/messages/count_tokens'));
+  assert.ok(!state.requests.some((r) => ['/tokenize', '/apply-template'].includes(r.path)));
+  state.inputTokens = day.context_length;
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 400);
+  state.inputTokens = 20;
+  state.countStatus = 503;
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 503);
+  state.countStatus = 200;
+  state.loaded = false;
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 503);
+  state.loaded = true;
+  state.launchLimit = 128;
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 503);
+  state.launchLimit = -1;
+  day.runtime_output_policy.engine_sets_no_output_ceiling = false;
+  Object.assign(f.marker, day);
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 503);
 });
 
 test('a resident entry of a backend kind the router cannot serve is refused', async (t) => {
