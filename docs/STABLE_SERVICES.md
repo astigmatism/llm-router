@@ -1,13 +1,20 @@
 # Stable service identifiers
 
-Use `daytime` and `nighttime` in client configuration and Open WebUI preset `base_model_id` fields. These service IDs belong to the router catalog and do not encode a model family or context size. `local-active` remains a compatible Daytime ID. Existing canonical model IDs remain accepted while that model is in the catalog.
+Use `daytime` and `nighttime` in client configuration and Open WebUI preset `base_model_id` fields. These service IDs belong to the router catalog and do not encode a model family or context size. `local-active` remains a compatible Daytime ID: in this deployment the catalog's default entry declares it, so it names the Daytime resident, and the [client contract](CLIENT_CONTRACT.md) §3 treats it as the reserved compatibility alias rather than as a service. Existing canonical model IDs remain accepted while that model is in the catalog.
 
 | Service | Current canonical target | Context | Capabilities |
 |---|---|---|---|
-| `daytime` | `qwen3.8-27b-q8_0` | 131072 | Text, images, tools, reasoning |
+| `daytime` | `qwen3.8-27b-q8_0` | 163840 | Text, images, tools, reasoning |
 | `nighttime` | `qwen3.8-27b-abliterated-q6_k` | 131072 | Text, images, tools, reasoning |
+| `trial` (opt-in) | `qwen3.8-flash-next-ud-iq4_xs` on Strata | 163840 | Text, tools, reasoning. No images. |
 
 The mapping lives in each resident's `aliases` in `runtime/primary-model-catalog.json`. A future qualified model replacement must carry the service alias onto its replacement catalog entry and update the primary projection/manifest through the normal release process. Client configuration keeps the same service ID. This release does not replace any inference model.
+
+Those `aliases` are the AI Runtime profile's `catalog.aliases`, published unchanged as the catalog entry's alias list. They are not configured in the router: the router has no service table of its own, adds no alias to an entry, and never maps an unnamed entry onto an existing service. `daytime` and `nighttime` are therefore names of *this deployment's* residents, while a service ID is whatever the published catalog declares — `trial` today is one, and another configuration may publish others.
+
+`trial` is the Strata trial service and is unlike the two residents above: the AI Runtime publishes it only from a trial profile, so it exists only while that configuration is selected. It is never a default, never an alias of `daytime` or of any other service, and never answers when some other configuration is active — there it is 404 `MODEL_NOT_FOUND`. A client sends it only when its operator selected a trial configuration, and it is never a fallback in either direction; see [the client contract](CLIENT_CONTRACT.md) §3 and §5. The context and capability columns above are what that profile declares, not a qualification this deployment has granted.
+
+A published entry that declares no service alias receives no ID from the router. The router publishes the entry with `service` set to its canonical ID, warns `CATALOG_HAS_NO_SERVICE_ID` when no entry of the active catalog has one, and leaves the fix to the profile that published it; see [model discovery](MODEL_DISCOVERY.md#a-catalog-entry-with-no-service-alias).
 
 `GET /v1/models` and native `GET /api/tags` list both canonical IDs and every alias. The current catalog has five selectable IDs and two resident engines. Alias metadata is identical to its canonical target except `x_ollama_router.alias: true`; `upstream_model` identifies the actual model. `GET /v1/models/{id}` and native `POST /api/show` resolve service IDs. `/api/ps` and admin runtime/summary count canonical residents only. Consumers that render unique engines should group alias rows by `upstream_model`; clients must retain selectable alias IDs when resolving presets. Harness resolves configured IDs without provisioning a provider per discovery row.
 

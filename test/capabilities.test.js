@@ -470,3 +470,74 @@ test('the reference client follows changes and classifies every unavailable stat
   assert.equal(client.classifyError(503, '{"error":"legacy string"}'), client.RETRY);
   assert.ok(seen.length >= 3);
 });
+
+test('a published opt-in service is the only name of its configuration and needs no router warning', async (t) => {
+  const f = await fixture(t, { edit: (marker) => {
+    const night = marker.models.pop();
+    Object.assign(marker.models[0], {
+      aliases: ['trial'],
+      exclusive: true,
+      deployment_warnings: ['The Strata trial is addressable only through the service ID "trial" while this configuration is active.']
+    });
+    marker.configuration = { id: 'flash-next-strata-160k', exclusive: true, runtime_revision: '4f2835f', published_at: '2026-10-13T09:00:00.000Z' };
+    marker.offline_services = [{ model: night.model, aliases: night.aliases, display_name: night.display_name, role: 'everyday', reason: 'exclusive_configuration' }];
+  } });
+  const doc = await f.capabilities();
+  assert.equal(doc.configuration.id, 'flash-next-strata-160k');
+  assert.equal(doc.default_model, CODING);
+  assert.deepEqual(doc.models.map((model) => [model.id, model.service, model.aliases]), [[CODING, 'trial', ['trial']]]);
+  assert.deepEqual(doc.offline_services, [{ model: EVERYDAY, aliases: ['nighttime'], display_name: 'Nighttime (128K)', role: 'everyday', reason: 'exclusive_configuration' }]);
+  // The trial is a published fact about the deployment, not a fault: an
+  // addressable catalog reports no warning even though it has no `daytime`.
+  assert.equal(doc.complete, true, JSON.stringify(doc.warnings));
+  assert.deepEqual(doc.warnings, []);
+  assert.deepEqual(doc.ids, { [CODING]: CODING, trial: CODING });
+  // The publisher's own note passes through unchanged and is a separate fact
+  // from the router's warnings.
+  assert.deepEqual(doc.models[0].metadata.qualification_notes, ['The Strata trial is addressable only through the service ID "trial" while this configuration is active.']);
+  assert.equal((await f.post('/v1/chat/completions', chat('trial'))).status, 200);
+  const missing = await f.post('/v1/chat/completions', chat('daytime'));
+  assert.equal(missing.status, 404);
+  assert.match(await missing.text(), /MODEL_NOT_FOUND/);
+});
+
+test('a catalog with no service alias reports the canonical ID and warns that nothing is addressable', async (t) => {
+  const f = await fixture(t, { edit: (marker) => { marker.models = [Object.assign(marker.models[0], { aliases: [] })]; } });
+  const doc = await f.capabilities();
+  assert.equal(doc.default_model, CODING);
+  assert.deepEqual(doc.models.map((model) => [model.id, model.service, model.aliases]), [[CODING, CODING, []]]);
+  assert.equal(doc.complete, false);
+  assert.deepEqual(doc.warnings, ['CATALOG_HAS_NO_SERVICE_ID']);
+  assert.deepEqual(doc.models[0].metadata.warnings, ['MODEL_HAS_NO_SERVICE_ID']);
+  assert.deepEqual(doc.ids, { [CODING]: CODING });
+  // Nothing is refused: the catalog is still served, but the contract gives a
+  // client no name it may send, and the router says so.
+  assert.equal((await f.post('/v1/chat/completions', chat(CODING))).status, 200);
+  assert.equal((await f.post('/v1/chat/completions', chat('daytime'))).status, 404);
+  const list = await (await fetch(f.base + '/v1/models')).json();
+  assert.deepEqual(list.data.map((row) => row.id), [CODING]);
+  assert.deepEqual(list.data[0].x_ollama_router.warnings, ['MODEL_HAS_NO_SERVICE_ID']);
+});
+
+test('the event stream marks the moment a service alias stops existing', async (t) => {
+  const f = await fixture(t, { env: { ROUTER_CAPABILITY_POLL_MS: '60000' } });
+  const stream = await openEvents(f.base, t);
+  await until(() => stream.latest('capabilities'));
+  const published = stream.latest('capabilities');
+  assert.equal(published.data.models[0].service, 'daytime');
+
+  await f.rewrite((marker) => { marker.models[0].aliases = ['local-active']; });
+  assert.equal((await f.admin('reload-config')).status, 200);
+  await until(() => stream.latest('capabilities').data.models[0].service === CODING, 3000);
+  const stripped = stream.latest('capabilities');
+  assert.notEqual(stripped.id, published.id);
+  assert.deepEqual(stripped.data.models[0].metadata.warnings, ['MODEL_HAS_NO_SERVICE_ID']);
+  // Nighttime still publishes its alias, so the catalog as a whole remains addressable.
+  assert.deepEqual(stripped.data.warnings, []);
+  assert.equal(stripped.data.models[1].service, 'nighttime');
+
+  await f.rewrite((marker) => { marker.models[0].aliases = ['local-active', 'daytime']; });
+  assert.equal((await f.admin('reload-config')).status, 200);
+  await until(() => stream.latest('capabilities').data.models[0].service === 'daytime', 3000);
+  assert.notEqual(stream.latest('capabilities').id, stripped.id);
+});

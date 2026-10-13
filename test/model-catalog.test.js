@@ -903,3 +903,51 @@ test('context recovery with no progress stops honestly and retains the original 
   assert.equal(records.find(row => row.type === 'terminal').status, 'incomplete');
   assert.equal(f.context.requestGate.active.size, 0);
 });
+
+test('an opt-in service alias is published as a selectable row and resolves to its canonical entry', async (t) => {
+  const f = await fixture(t);
+  const day = f.marker.models[0];
+  const night = f.marker.models[1];
+  Object.assign(day, { aliases: ['trial'], exclusive: true });
+  f.marker.models = [day];
+  f.marker.default_model = day.model;
+  f.marker.configuration = { id: 'flash-next-strata-160k', exclusive: true, runtime_revision: '4f2835f', published_at: '2026-10-13T09:00:00.000Z' };
+  f.marker.offline_services = [{ model: night.model, aliases: night.aliases, display_name: night.display_name, role: 'everyday', reason: 'exclusive_configuration' }];
+  Object.assign(f.marker, { ...day, models: f.marker.models });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+
+  const list = await (await fetch(f.base + '/v1/models')).json();
+  assert.deepEqual(list.data.map((row) => row.id), [CODING, 'trial']);
+  const canonical = list.data.find((row) => row.id === CODING);
+  const alias = list.data.find((row) => row.id === 'trial');
+  assert.equal(alias.x_ollama_router.alias, true);
+  assert.equal(alias.x_ollama_router.upstream_model, CODING);
+  assert.deepEqual(alias, { ...canonical, id: 'trial', x_ollama_router: { ...canonical.x_ollama_router, alias: true } });
+  const tags = await (await fetch(f.base + '/api/tags')).json();
+  assert.deepEqual(tags.models.map((entry) => entry.model), [CODING, 'trial']);
+  assert.deepEqual(tags.models.find((entry) => entry.model === 'trial').x_ollama_router, alias.x_ollama_router);
+
+  const detail = await (await fetch(f.base + '/v1/models/trial')).json();
+  assert.equal(detail.id, 'trial');
+  assert.equal(detail.x_ollama_router.alias, true);
+  assert.equal(detail.x_ollama_router.upstream_model, CODING);
+  const show = await (await f.post('/api/show', { model: 'trial' })).json();
+  assert.equal(show.model_info.context_length, canonical.x_ollama_router.context_window);
+
+  assert.equal((await f.post('/v1/chat/completions', chat('trial'))).status, 200);
+  assert.equal((await f.post('/v1/responses', { model: 'trial', input: 'Hello', max_output_tokens: 16, stream: false })).status, 200);
+  // A name no entry of this configuration declares is absent, not temporarily
+  // offline, and the reserved compatibility alias does not answer for it.
+  for (const name of ['daytime', 'local-active']) {
+    const response = await f.post('/v1/chat/completions', chat(name));
+    assert.equal(response.status, 404, name);
+    assert.match(await response.text(), /MODEL_NOT_FOUND/, name);
+    assert.equal((await fetch(f.base + '/v1/models/' + name)).status, 404, name);
+  }
+  // Nighttime is declared offline by the active profile, so it stays a distinct
+  // 503 rather than becoming a missing model.
+  const offline = await f.post('/v1/chat/completions', chat('nighttime'));
+  assert.equal(offline.status, 503);
+  assert.match(await offline.text(), /SERVICE_OFFLINE/);
+  assert.equal((await fetch(f.base + '/v1/models/nighttime')).status, 503);
+});

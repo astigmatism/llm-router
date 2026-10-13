@@ -140,6 +140,15 @@ export async function readModelCatalog(config) {
   }
   const warnings = [];
   const configuration = runtimeConfiguration(raw, warnings);
+  // A client conforming to the client contract sends a service alias. The
+  // reserved compatibility alias does not count: it names whatever the router
+  // has marked active, not a service. When no entry declares any other alias,
+  // a conformant client has nothing it is allowed to send, even though every
+  // entry is reachable by its canonical ID. The alias list belongs to the
+  // publisher; the router reports the state instead of assuming it was meant.
+  if (!models.some((entry) => entry.aliases.some((alias) => alias !== config.routerModelAlias))) {
+    warnings.push('CATALOG_HAS_NO_SERVICE_ID');
+  }
   return { resident: true, defaultModel: raw.default_model, models, configuration,
     offlineServices: offlineServices(raw, ids, warnings), warnings };
 }

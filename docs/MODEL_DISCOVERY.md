@@ -1,6 +1,6 @@
 # Stable Active-Model Discovery
 
-Primary entries expose `x_ollama_router.display_name`: **Daytime (160K)** for `qwen3.8-27b-q8_0`, **Nighttime (128K)** for `qwen3.8-27b-abliterated-q6_k`. Clients use these labels for presentation while retaining canonical IDs in requests. The router dashboard and DSH discovery consume them; Open WebUI's alignment script persists them as model names.
+Primary entries expose `x_ollama_router.display_name`: **Daytime (160K)** for `qwen3.8-27b-q8_0`, **Nighttime (128K)** for `qwen3.8-27b-abliterated-q6_k`. Clients use these labels for presentation and send the service IDs published in `aliases`, as [the client contract](CLIENT_CONTRACT.md) §3 requires; a canonical ID in a response is information to record, not a name to configure. The router dashboard and DSH discovery consume the labels; Open WebUI's alignment script persists them as model names.
 
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 
@@ -18,8 +18,22 @@ Public metadata remains schema v2, adding `health.available`, `health.status`, `
 
 Resident entries also publish `nsfw` (declared per model by the runtime; true for abliterated models), `capability_score` (an automatic 0–100 ranking from parameter count, quantization, context and features; see [capabilities](CAPABILITIES.md#capability-score)), `capability_profile` (qualified flags), `placement` (GPU count and card names, vision encoder placement, exclusivity; never UUIDs), `qualification_notes`, `parameter_size`/`family` (null when unknown), and `live`: the slots, per-slot context, vision support, native training context, parameter count, size and build that the running llama.cpp process reports. `model_context_window` is that native training context when reported. A running process that contradicts the catalog adds `BACKEND_SLOT_COUNT_MISMATCH`, `BACKEND_SLOT_CONTEXT_MISMATCH` or `BACKEND_VISION_MISMATCH` and makes the entry incomplete; an unavailable `/props` only sets `sources.backend_props: false`. Native `/api/tags` and `/api/show` derive `details.parameter_size` and `size` from the same live facts instead of fixed values. A declared-offline service ID returns 503 `SERVICE_OFFLINE` from `GET /v1/models/{id}`. The deployment-wide view, including offline services, the runtime configuration and push notifications, is [Deployment capabilities](CAPABILITIES.md).
 
-The atomic marker is schema v3 with a `models` array, `default_model`, and a legacy coding projection at the root. See [Primary integration](PRIMARY_INTEGRATION.md). The rest of this document describes the retained **legacy single-marker mode**.
+## A catalog entry with no service alias
 
+Catalog mode reports each entry's client-facing `service` from the aliases the runtime published with it, ignoring the reserved compatibility alias. When an entry declares no other alias, the router has no service name to report for it, and it does not invent one: the capabilities summary for that model falls back to the canonical ID, so `service` equals `id`, and the entry lists `aliases: []` (or only the compatibility alias).
+
+The rule that substitution exists to make visible is this: **a model with no service alias is not addressable under the client contract and MUST NOT be surfaced as a selectable model.** It is reachable only by its canonical ID, and a contract client may not configure, persist or compare canonical IDs. Listing a model in `/v1/models` says the router can resolve that row; it does not say a conformant client may send it. A consumer that renders a model picker for a person must skip such an entry, and a client that finds it has no service ID for the configuration in front of it should say so rather than guess.
+
+The router reports the state instead of papering over it:
+
+- the entry carries `warnings: ["MODEL_HAS_NO_SERVICE_ID"]` and `complete: false`, and repeats it through the discovery-failure event so the dashboard and `/v1/models` both show it;
+- when no entry of the active catalog has a service alias, `GET /v1/router/capabilities` reports `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`, while inference with the canonical ID keeps working exactly as before.
+
+Both are publisher-facing facts, not request failures: the alias list belongs to the runtime profile's published catalog, and only that catalog can fix it. The router adds no alias, maps nothing onto the compatibility alias, and never falls back from one model to another on account of an absent alias (see [stable services](STABLE_SERVICES.md)).
+
+`local-active` in catalog mode is an ordinary declared alias, unlike in single-marker mode below: it must be declared by the configuration's default entry to resolve at all, and only that entry may declare it, so a catalog cannot accidentally make a second resident answer to it.
+
+The atomic marker is schema v3 with a `models` array, `default_model`, and a legacy coding projection at the root. See [Primary integration](PRIMARY_INTEGRATION.md). The rest of this document describes the retained **legacy single-marker mode**.
 
 ## Public alias
 

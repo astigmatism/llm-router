@@ -210,3 +210,34 @@ test('safe status routes are allowed', () => {
   });
   assert.equal(result.allowed, true);
 });
+
+test('the reserved compatibility alias names the active slot even when that entry declares no alias', () => {
+  // The alias is a property of the router's active slot, not a service ID the
+  // catalog has to declare. Admission here is not addressability: in resident
+  // catalog mode the published catalog resolves the name first, and a name no
+  // entry declares is answered with 404 before this point is reached.
+  for (const pathname of ['/v1/chat/completions', '/api/chat', '/api/show']) {
+    const result = evaluateProxyPolicy({
+      method: 'POST',
+      pathname,
+      body: { model: 'local-active', messages: [{ role: 'user', content: 'hi' }] },
+      activeModelInfo: { model: 'qwen3.8-flash-next-ud-iq4_xs', aliases: [], catalog_mode: true },
+      config: config({ REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'false' })
+    });
+    assert.equal(result.allowed, true, pathname);
+    assert.equal(result.forwardedModel, 'qwen3.8-flash-next-ud-iq4_xs', pathname);
+    assert.equal(result.modelRewritten, true, pathname);
+  }
+});
+
+test('a declared service alias is forwarded to the entry that declares it', () => {
+  const result = evaluateProxyPolicy({
+    method: 'POST',
+    pathname: '/api/chat',
+    body: { model: 'trial', messages: [{ role: 'user', content: 'hi' }] },
+    activeModelInfo: { model: 'qwen3.8-flash-next-ud-iq4_xs', aliases: ['trial'], catalog_mode: true },
+    config: config({ REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'false' })
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.forwardedModel, 'qwen3.8-flash-next-ud-iq4_xs');
+});

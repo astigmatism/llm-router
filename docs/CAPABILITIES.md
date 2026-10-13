@@ -43,7 +43,7 @@ The response is always HTTP 200 with a truthful document, including when no mode
   "default_model": "qwen3.8-27b-ud-q6_k_xl-tensor-next",   // used when a request omits model
   "models": [{
     "id": "qwen3.8-27b-ud-q6_k_xl-tensor-next",
-    "service": "daytime",                // the stable ID to send for this model
+    "service": "daytime",                // the stable ID to send for this model: its service alias, or its canonical ID when the catalog declares no alias for it
     "display_name": "Qwen3.8 27B Q6_K (160K)",
     "aliases": ["local-active", "daytime"],
     "available": true,                   // backend healthy and router accepting requests
@@ -137,11 +137,13 @@ Inference requests for an offline ID return **HTTP 503 `SERVICE_OFFLINE`**, and 
   - `INVALID_RUNTIME_CONFIGURATION`
   - `INVALID_OFFLINE_SERVICES`
   - `OFFLINE_SERVICE_CONFLICT`: an offline declaration names a running ID; the running model wins.
+  - `CATALOG_HAS_NO_SERVICE_ID`: no entry of the active catalog declares a service ID, so a client that obeys [the client contract](CLIENT_CONTRACT.md) §3 has nothing it may send. Inference is unaffected — the models are reachable by canonical ID — and only the published catalog can fix it, because the router will not invent a service ID. This is the router's own finding, distinct from the runtime's `deployment_warnings`, which pass through unchanged as `metadata.qualification_notes`.
 - **Discovery failures** appear as their code, such as `INVALID_MODEL_CATALOG` or `NO_ACTIVE_MODEL`. In that case `models` is empty.
 - **Per-model warnings** (in `metadata.warnings`) report a running process that contradicts the catalog. Each makes that model incomplete:
   - `BACKEND_SLOT_COUNT_MISMATCH`
   - `BACKEND_SLOT_CONTEXT_MISMATCH`
   - `BACKEND_VISION_MISMATCH`: vision is advertised but `/props` reports none.
+  - `MODEL_HAS_NO_SERVICE_ID`: this entry declares no service ID, so `service` repeats its canonical ID and no contract client can name it. See [a catalog entry with no service alias](MODEL_DISCOVERY.md#a-catalog-entry-with-no-service-alias).
 
   AI Runtime verifies these before publishing, so they indicate a real fault. An unavailable `/props` is not a contradiction: it sets `sources.backend_props: false` and leaves `live.vision` and `live.build` null.
 

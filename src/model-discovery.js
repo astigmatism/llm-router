@@ -403,7 +403,17 @@ export class ActiveModelDiscovery {
     const loadedContext = loadedContextWindow(loadedModel);
     const architecturalContext = show.available ? modelContextWindow(show.body) : null;
     const live = activeModel.catalog_mode ? liveBackendFacts(loadedModel, props) : null;
-    if (activeModel.catalog_mode) warnings.push(...liveMismatchWarnings(activeModel, loadedModel, live));
+    if (activeModel.catalog_mode) {
+      warnings.push(...liveMismatchWarnings(activeModel, loadedModel, live));
+      // An entry that declares no service alias is not addressable under the
+      // client contract: a conformant client sends service aliases and must not
+      // send canonical IDs, so this model is one it cannot name. The router
+      // publishes the entry unchanged and reports the fact rather than
+      // inventing an alias the publisher did not declare.
+      const serviceAliases = (Array.isArray(activeModel.aliases) ? activeModel.aliases : [])
+        .filter((alias) => alias !== this.config.routerModelAlias);
+      if (serviceAliases.length === 0) warnings.push('MODEL_HAS_NO_SERVICE_ID');
+    }
     const uniqueWarnings = [...new Set(warnings)];
     const raw = isPlainObject(activeModel.raw) ? activeModel.raw : {};
     const contextWindow = loadedContext ?? activeModel.context_length ?? architecturalContext;

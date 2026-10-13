@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1.1 · 2026-10-07.** Applies to LLM Router `57e4096` and later, with AI Runtime `e0530db` and later. Version 1.1 adds the benchmark exception in §3; see [changes](#15-changes).
+**Version 1.2 · 2026-10-13.** Applies to LLM Router `57e4096` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees. No client change is required; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -46,21 +46,32 @@ The router never does any of these:
 
 | ID | Meaning | Stability |
 |---|---|---|
-| `daytime` | The Daytime service. Present in **every** configuration. | Stable; use it. |
+| `daytime` | The Daytime service. Present in every **normal** configuration: every configuration that runs a Daytime resident. The AI Runtime may publish a configuration in which no catalog entry declares `daytime`, and then there is none to send. That is not a licence for a client to invent one, or to send something else instead of it. | Stable; make it your default. |
 | `nighttime` | The Nighttime service. Present only in **paired** configurations; a solo configuration stops it. | Stable; use it. |
-| `local-active` | Legacy alias of `daytime`. | Kept for compatibility. |
+| `trial` | The Strata trial service. Present **only** while a trial configuration is selected, and only under that name: it is opt-in, it is never the configuration the operator falls into, it is never an alias of `daytime` or of any other service, and in every other configuration it is **404 `MODEL_NOT_FOUND`**. | Opt-in. A client sends it only when its operator selected a trial configuration. |
+| `local-active` | The reserved compatibility alias: not a service, but "the model this router currently has active" (see **Two kinds of names** below). | Kept for compatibility. Do not adopt it. |
 | Canonical IDs, such as `qwen3.8-27b-abliterated-q6_k` | The specific model currently behind a service. | **Can change** with any configuration change. |
 
-- A client MUST send service IDs (`daytime`, `nighttime`). It MUST NOT configure, persist or compare canonical IDs. Responses report the canonical ID in `model`; record it as information only.
-- A client SHOULD always send a model. An omitted model selects `daytime`.
-- An unknown ID returns **404 `MODEL_NOT_FOUND`**.
+- A client MUST send service IDs (`daytime`, `nighttime`, or another service ID the current document advertises). It MUST NOT configure, persist or compare canonical IDs. Responses report the canonical ID in `model`; record it as information only.
+- A client SHOULD always send a model. An omitted model selects the default of the **active configuration**, which this contract does not promise is `daytime`: while a trial configuration is selected, an omitted model is answered by the trial. A client that must not be served by a particular model MUST send an ID.
+- An unknown ID returns **404 `MODEL_NOT_FOUND`**. This includes a name no entry of the published catalog declares any more, so a service ID is not a promise that outlives the configuration that declared it.
 - A known service that the current configuration stops returns **503 `SERVICE_OFFLINE`**. It is then listed in `offline_services` (§4).
+- **An opt-in service is never a fallback, in either direction.** A client reaches `trial` only by naming it, when its operator chose a trial configuration, and it steps away from `trial` to a service the operator chose — never the other way round. When `trial` does not answer, the client reports that; continuing on a model nobody selected is not recovery.
 - **Exception for benchmarking and evaluation clients.** A client whose results must belong to one exact model MAY pin it for a run. At the start of the run it resolves the service ID to its canonical ID (`ids[service]`), records the canonical ID with the model's `revision`, and sends the canonical ID for the rest of the run. The router then never lets that run reach a different model. While pinned, the client treats each response like this:
   - 404 `MODEL_NOT_FOUND`: the model changed;
   - 503 `SERVICE_OFFLINE`: the model is offline;
   - neither is ever a reason to switch models.
 
   Such a client still discovers models from the capabilities document (§4). It MUST NOT keep canonical IDs as configuration across runs: new runs start from a service ID.
+
+### Two kinds of names
+
+The router distinguishes sharply between a name that means a service and a name that means "whatever is running", and a client must too. This is exactly how a model the operator did not choose can end up serving a session.
+
+- **Catalog service IDs** — `daytime`, `nighttime`, `trial`, and every other alias the published catalog declares — are governed by this contract. A service ID exists only while some entry of the published catalog declares it: absent means 404 `MODEL_NOT_FOUND`, and a service the configuration deliberately stops means 503 `SERVICE_OFFLINE`. `ids` in the capabilities document (§4) lists every name the router currently accepts and the canonical model behind it, so a client never has to guess which kind it is holding.
+- **The compatibility alias** — `local-active`, configured by `ROUTER_MODEL_ALIAS` — is **reserved**, and it is not a service. In the router's single-marker mode it is accepted on `POST /v1/chat/completions`, `/api/chat`, `/api/generate`, `/api/embed`, `/api/show` and `/v1/responses` whenever a model is active, whether or not that model declared the name, and the router always publishes a synthetic `/v1/models` row for it with `alias: true` and `upstream_model` naming whatever answers. In catalog mode it is an ordinary declared alias, and only the configuration's default entry may declare it. In both modes it resolves to one thing: **the model this router has active right now**. It is therefore an alias of the active slot, not an alias of `daytime`, and it follows every switch the operator makes.
+- That is the entire reason a client keeps `local-active` — it works without knowing the configuration — and the entire reason not to adopt it: a session that keeps sending it is served by whatever the operator selects next, including a model the operator would not have chosen for it. Send a service ID, and re-read the document when the router says the state changed.
+- A catalog entry that declares **no** service alias has no name a conformant client may send: the router lists it with `service` set to its canonical ID (§4) because it will not invent one. Such a model is **not selectable under this contract and MUST NOT be surfaced as a model a person can choose**. When no entry of the active catalog has a service ID at all, the capabilities document warns `CATALOG_HAS_NO_SERVICE_ID` and is not `complete` (§4).
 
 ## 4. Knowing what is available
 
@@ -76,9 +87,12 @@ The router never does any of these:
 | `models[]` | Each usable model: `service` (the ID to send), `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. |
 | `offline_services[]` | Services this configuration deliberately stops: `model`, `aliases`, `display_name`, `reason`. |
 | `ids` | Every accepted ID → its current canonical model. |
+| `complete`, `warnings` | Whether this router trusts the picture it is publishing. See below. |
 | `load` (only with `?include=load`) | Per model: `active`, `queued`, `free_slots`. |
 
 Clients MUST ignore unknown fields. `metadata` is identical to the model's `x_ollama_router` object in `/v1/models`. The OpenAI and Ollama listings (`/v1/models`, `/api/tags`) show only models that can be selected right now, so an offline service is absent from them; only the capabilities document says why.
+
+The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
 
 ### Change events
 
@@ -121,6 +135,7 @@ Apply these rules whichever way you choose:
 | The preferred model returns | Use it again from the next request. Fallback MUST NOT be sticky. |
 
 - **Feature checks:** before sending, check the target model. Images need `image` in `input_modalities`; tools need `tools` in `capabilities`; reasoning needs `thinking` in `capabilities` and the requested effort in `metadata.reasoning.efforts`. A missing capability makes that model unsuitable for the request; don't send and hope.
+- **Opt-in services are never candidates.** A service the operator opts into by configuration — `trial` today — is not in the pool a capability-based choice draws from, and a name-based fallback list never acquires it. It is used by a client whose operator selected the matching configuration, under that name, and never as a way of getting an answer: falling back to a trial the current user never asked for, or away from one to a model that would have been refused, are both wrong. Report it instead.
 - **Behavioral differences:** Daytime is not abliterated and may refuse what Nighttime answers. A client that falls back MUST surface a refusal clearly and MUST NOT retry it in a loop.
 - **Logging:** a client SHOULD log every change of served model and its reason, and show it where it already shows model status.
 
@@ -195,7 +210,7 @@ A client MUST read `error.code` from the object form, and SHOULD tolerate a stri
 |---|---|---|
 | `SERVICE_OFFLINE` (503) | The current configuration deliberately stops this service | Fall back now (§5). Not a failure: don't count it toward retry caps, budgets or circuit breakers. |
 | `BACKEND_UNAVAILABLE` (503) | The service's backend isn't healthy | Fall back if possible; otherwise retry with backoff. |
-| `MODEL_NOT_FOUND` (404) | The ID isn't offered | Fall back if configured, and log a warning: usually a stale or misspelled ID. |
+| `MODEL_NOT_FOUND` (404) | The ID isn't offered: no entry of the active configuration declares it (§3) | Fall back if configured, and log a warning: usually a stale or misspelled ID, or a configuration that stopped offering the service. Never fall back from an opt-in service such as `trial` (§5). |
 | `BACKEND_DRAINING`, `MAINTENANCE_MODE` (503) | Switch or maintenance in progress | Wait (§7), then choose again. |
 | `context_length_exceeded` (400) | The request doesn't fit | Shrink the request, or choose a model with a larger window. Don't retry unchanged. |
 | `TOO_MANY_SUBSCRIBERS` (503, events only) | Event-stream limit reached | Poll the capabilities endpoint instead. |
@@ -233,6 +248,7 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 A client conforms when it meets every item below and has a test for each MUST:
 
 - [ ] Sends service IDs only, or, for a benchmark, a canonical ID pinned per run (§3). Persists no canonical IDs as configuration. Sends `X-Client-Name`.
+- [ ] Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5).
 - [ ] Reads the capabilities document at startup without failing when the router or a model is unavailable.
 - [ ] Long-running: subscribes to `/v1/router/events` and polls while disconnected. Request-scoped: reads the document before each request.
 - [ ] Chooses the model per request by capability or by name, with configurable fallback (or, for benchmarks, deliberately none). Returns to the preferred model when it is available again.
@@ -257,5 +273,6 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
+| 1.2 | §3: the `daytime` row states the guarantee a real published configuration actually provides; `trial` is added as an opt-in service ID; **Two kinds of names** distinguishes catalog service IDs from the reserved compatibility alias `local-active`; an omitted model is the active configuration's default, which is not necessarily `daytime`. §4 documents what `service` reports for a model the catalog gives no alias, and the `CATALOG_HAS_NO_SERVICE_ID` warning. §5, §10 and §13 follow. A client that sends service IDs and does not adopt `trial` needs no change: the added §13 lines record what §3 and §5 already required. |
 | 1.1 | §3: benchmarking and evaluation clients may pin a canonical ID for the duration of a run. §11: minor versions defined. |
 | 1 | Initial contract. |

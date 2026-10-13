@@ -403,3 +403,21 @@ test('the stable alias forwards to each current physical model in strict mode wh
     await fixture.cleanup();
   }
 });
+
+test('a marker that declares no service alias keeps the single compatibility row truthful', async () => {
+  const fixture = await makeFixture();
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${fixture.apiPort}/v1/models`)).json();
+    assert.deepEqual(list.data.map((entry) => entry.id), ['local-active']);
+    // The no-service-ID warning belongs to a published catalog, where a name
+    // that no entry declares is a real gap. In single-marker mode the reserved
+    // alias always names the active slot, so it is not reported.
+    assert.deepEqual(list.data[0].x_ollama_router.warnings, []);
+    assert.equal(list.data[0].x_ollama_router.complete, true);
+    assert.equal(list.data[0].x_ollama_router.alias, true);
+    assert.equal(list.data[0].x_ollama_router.upstream_model, 'model-a:test');
+    assert.equal((await fetch(`http://127.0.0.1:${fixture.apiPort}/v1/models/local-active`)).status, 200);
+  } finally {
+    await fixture.cleanup();
+  }
+});
