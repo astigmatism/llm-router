@@ -105,6 +105,39 @@ class CommittedPublicationTests(unittest.TestCase):
             self.assertEqual(receipt['backend_container_ids_unchanged'],
                 {'day': 'day-unchanged', 'night': 'night-unchanged'})
 
+    def test_failed_publication_still_releases_the_reservation(self):
+        # drain(True) issues router-maintenance-begin. While that reservation is held, both
+        # blockers() and restore_blockers() refuse, so a release that dies part-way must not leave
+        # the machine unable to switch to a known-good configuration or restore one.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stack, primary = root / 'stack', root / 'primary'
+            stack.mkdir(); primary.mkdir()
+            (stack / '.env').write_text('ROUTER_CONTAINER_NAME=local-ai-ollama-router\nKEEP=original\n')
+            (stack / 'compose.yaml').write_text('services: {}\n')
+            (stack / 'compose.runtime.yaml').write_text('services: {}\n')
+            for name in ['runtime-owner.json', 'primary.py', 'model-catalog.json', 'active-model.json']:
+                (primary / name).write_text('{}\n')
+            controller = Mock(NAMES=['day', 'night'], MARKER=primary / 'active-model.json')
+            controller.inspect.side_effect = lambda name: {'Id': name + '-unchanged'}
+            container = {'Image': 'sha256:reviewed', 'State': {'Running': True}, 'Config': {'Labels': {
+                'com.docker.compose.project': 'existing-stack', 'com.docker.compose.service': 'ai-router'}}}
+            outputs = [json.dumps(self.identity_fixture()), '', 'id', json.dumps([container])]
+            with patch.object(publisher, 'STACK', stack), patch.object(publisher, 'PRIMARY', primary), \
+                    patch.object(publisher, 'reviewed_image', return_value=('revision', 'sha256:reviewed')), \
+                    patch.object(publisher, 'controller', return_value=controller), \
+                    patch.object(publisher.subprocess, 'check_output', side_effect=outputs), \
+                    patch.object(publisher.subprocess, 'run'), \
+                    patch.object(publisher.urllib.request, 'urlopen') as urlopen, \
+                    patch.object(publisher, 'check_router_identity',
+                        side_effect=[None, RuntimeError('Router identity drifted')]), \
+                    patch('builtins.print'):
+                urlopen.return_value.__enter__.return_value.status = 200
+                with self.assertRaisesRegex(RuntimeError, 'identity drifted'):
+                    publisher.main()
+            self.assertEqual([call.args[0] for call in controller.drain.call_args_list], [True, False])
+            self.assertEqual(list((primary / 'corrections').glob('*/deployment.json')), [])
+
     def test_managed_runtime_source_is_never_reinstalled(self):
         with patch.object(publisher.shutil, 'copy2') as copy, patch.object(publisher.os, 'replace') as replace:
             publisher.install_runtime_source(Path('/old/controller'), Path('/new/controller'), managed=True)

@@ -97,7 +97,7 @@ def check_router_identity(project, image_id=None):
         '--filter', 'name=^/' + ROUTER_NAME + '$'], text=True).split()
     if not ids:
         if image_id is not None:
-            raise RuntimeError('Renamed router container is missing; drain remains enabled')
+            raise RuntimeError('Renamed router container is missing')
         return
     container = json.loads(subprocess.check_output(['docker', 'inspect', ROUTER_NAME], text=True))[0]
     labels = container.get('Config', {}).get('Labels') or {}
@@ -105,7 +105,7 @@ def check_router_identity(project, image_id=None):
             or labels.get('com.docker.compose.service') != 'ai-router'):
         raise RuntimeError('Container name llm-router is already owned by another deployment')
     if image_id is not None and (container['Image'] != image_id or not container['State']['Running']):
-        raise RuntimeError('Renamed router is not running the reviewed image; drain remains enabled')
+        raise RuntimeError('Renamed router is not running the reviewed image')
 
 def main():
     revision, image_id = reviewed_image()
@@ -133,50 +133,58 @@ def main():
     if identity_path.exists():
         shutil.copy2(identity_path, backup / IDENTITY_FILE)
     before.drain(True)
-    before.wait_idle()
-    install_runtime_source(publisher, proposed, managed)
-    env = STACK / '.env'
-    replacements = {'ROUTER_IMAGE': IMAGE, 'ROUTER_CONTAINER_NAME': ROUTER_NAME,
-        'OLLAMA_UPSTREAM_TIMEOUT_MS': '30000', 'GENERATION_STALL_TIMEOUT_MS': '120000'}
-    lines = []
-    for line in env.read_text().splitlines():
-        key = line.split('=', 1)[0]
-        lines.append(key + '=' + replacements.pop(key) if key in replacements else line)
-    lines += [key + '=' + value for key, value in replacements.items()]
-    env.write_text('\n'.join(lines) + '\n')
-    compose = STACK / 'compose.yaml'
-    text = compose.read_text().replace('${OLLAMA_UPSTREAM_TIMEOUT_MS:-900000}', '${OLLAMA_UPSTREAM_TIMEOUT_MS:-30000}')
-    if 'GENERATION_STALL_TIMEOUT_MS:' not in text:
-        text = text.replace('      OLLAMA_UPSTREAM_TIMEOUT_MS:', '      GENERATION_STALL_TIMEOUT_MS: "${GENERATION_STALL_TIMEOUT_MS:-120000}"\n      OLLAMA_UPSTREAM_TIMEOUT_MS:')
-    compose.write_text(text)
-    identity_path.write_text(json.dumps(identity, indent=2) + '\n')
-    subprocess.run(compose_command('up', '-d', '--no-deps', '--pull', 'never', 'ai-router', identity=True),
-        check=True, cwd=STACK)
-    deadline = time.monotonic() + 120
-    while True:
-        try:
-            with urllib.request.urlopen('http://192.168.1.4:11434/health', timeout=3) as response:
-                if response.status == 200: break
-        except Exception:
-            pass
-        if time.monotonic() >= deadline: raise RuntimeError('Router readiness failed; drain remains enabled')
-        time.sleep(1)
-    check_router_identity(identity['name'], image_id)
-    after = controller()
-    after.publish_marker()
-    if residents != {name: after.inspect(name)['Id'] for name in after.NAMES}:
-        raise RuntimeError('Unexpected inference service recreation')
-    after.drain(False)
-    receipt = {'image': IMAGE, 'image_id': image_id, 'source_revision': revision,
-        'container_name': ROUTER_NAME, 'compose_project': identity['name'],
-        'identity_override': str(identity_path), 'identity_override_sha256': digest(identity_path),
-        'runtime_controller': 'local-ai-runtime' if managed else 'legacy-host',
-        'source_directory': str(SOURCE), 'backend_container_ids_unchanged': residents,
-        'publisher_sha256': digest(publisher), 'source_catalog_sha256': digest(PRIMARY / 'model-catalog.json'),
-        'generated_catalog_sha256': digest(after.MARKER), 'backup': str(backup),
-        'deployed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    (backup / 'deployment.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    print(json.dumps(receipt, indent=2))
+    try:
+        before.wait_idle()
+        install_runtime_source(publisher, proposed, managed)
+        env = STACK / '.env'
+        replacements = {'ROUTER_IMAGE': IMAGE, 'ROUTER_CONTAINER_NAME': ROUTER_NAME,
+            'OLLAMA_UPSTREAM_TIMEOUT_MS': '30000', 'GENERATION_STALL_TIMEOUT_MS': '120000'}
+        lines = []
+        for line in env.read_text().splitlines():
+            key = line.split('=', 1)[0]
+            lines.append(key + '=' + replacements.pop(key) if key in replacements else line)
+        lines += [key + '=' + value for key, value in replacements.items()]
+        env.write_text('\n'.join(lines) + '\n')
+        compose = STACK / 'compose.yaml'
+        text = compose.read_text().replace('${OLLAMA_UPSTREAM_TIMEOUT_MS:-900000}', '${OLLAMA_UPSTREAM_TIMEOUT_MS:-30000}')
+        if 'GENERATION_STALL_TIMEOUT_MS:' not in text:
+            text = text.replace('      OLLAMA_UPSTREAM_TIMEOUT_MS:', '      GENERATION_STALL_TIMEOUT_MS: "${GENERATION_STALL_TIMEOUT_MS:-120000}"\n      OLLAMA_UPSTREAM_TIMEOUT_MS:')
+        compose.write_text(text)
+        identity_path.write_text(json.dumps(identity, indent=2) + '\n')
+        subprocess.run(compose_command('up', '-d', '--no-deps', '--pull', 'never', 'ai-router', identity=True),
+            check=True, cwd=STACK)
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                with urllib.request.urlopen('http://192.168.1.4:11434/health', timeout=3) as response:
+                    if response.status == 200: break
+            except Exception:
+                pass
+            if time.monotonic() >= deadline: raise RuntimeError('Router readiness failed; the reservation is released')
+            time.sleep(1)
+        check_router_identity(identity['name'], image_id)
+        after = controller()
+        after.publish_marker()
+        if residents != {name: after.inspect(name)['Id'] for name in after.NAMES}:
+            raise RuntimeError('Unexpected inference service recreation')
+        receipt = {'image': IMAGE, 'image_id': image_id, 'source_revision': revision,
+            'container_name': ROUTER_NAME, 'compose_project': identity['name'],
+            'identity_override': str(identity_path), 'identity_override_sha256': digest(identity_path),
+            'runtime_controller': 'local-ai-runtime' if managed else 'legacy-host',
+            'source_directory': str(SOURCE), 'backend_container_ids_unchanged': residents,
+            'publisher_sha256': digest(publisher), 'source_catalog_sha256': digest(PRIMARY / 'model-catalog.json'),
+            'generated_catalog_sha256': digest(after.MARKER), 'backup': str(backup),
+            'deployed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        (backup / 'deployment.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        print(json.dumps(receipt, indent=2))
+    finally:
+        # router-maintenance-begin reserves the configuration, and that reservation is what makes
+        # blockers() and restore_blockers() both refuse to run. Releasing it here is what keeps a
+        # failed release recoverable: held open, the operator can neither switch to a known-good
+        # configuration nor restore one, which is exactly the state a failed release creates. A
+        # router that never became ready then answers with its own errors, which is recoverable;
+        # a machine that answers nothing and refuses to switch is not.
+        controller().drain(False)
 
 if __name__ == '__main__':
     main()
