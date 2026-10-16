@@ -428,6 +428,25 @@ function imageSource(value, param, { allowRawBase64 = false } = {}) {
   );
 }
 
+// Native `messages[].images` carries bare base64 with the media type stripped, which is what
+// Ollama's native endpoint wants. The OpenAI chat wire this adapter builds is stricter: an image
+// must be a data: URL, an http(s) URL, or a local file path, so bare base64 is rejected outright.
+// Re-attach a data URL here, taking the media type from the image's own magic bytes because the
+// declared subtype was discarded upstream and a wrong one is worse than a sniffed one.
+const IMAGE_SIGNATURES = [
+  ['iVBORw0KGgo', 'image/png'],
+  ['/9j/', 'image/jpeg'],
+  ['R0lGOD', 'image/gif'],
+  ['UklGR', 'image/webp'],
+  ['Qk0', 'image/bmp']
+];
+
+function imageDataUrl(url) {
+  if (url.startsWith('data:')) return url;
+  const signature = IMAGE_SIGNATURES.find(([prefix]) => url.startsWith(prefix));
+  return `data:${signature ? signature[1] : 'image/png'};base64,${url}`;
+}
+
 function mappedMessageContent(message, index, allowVision) {
   const param = `messages[${index}]`;
   const role = message?.role;
@@ -511,7 +530,7 @@ function mappedMessageContent(message, index, allowVision) {
     message.images.forEach((value, imageIndex) => {
       parts.push({
         type: 'image_url',
-        image_url: { url: imageSource(value, `${param}.images[${imageIndex}]`, { allowRawBase64: true }) }
+        image_url: { url: imageDataUrl(imageSource(value, `${param}.images[${imageIndex}]`, { allowRawBase64: true })) }
       });
     });
   }
@@ -628,7 +647,7 @@ export function normalizeLlamaToolRequest(body, activeModel, protocol) {
   };
 }
 
-function messagesForLlama(messages, protocol, allowVision = false) {
+export function messagesForLlama(messages, protocol, allowVision = false) {
   const knownCalls = new Map();
   const pendingCalls = [];
   const usedResults = new Set();

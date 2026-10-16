@@ -12,6 +12,7 @@ import {
   enforcedContextSafetyReserve,
   isLlamaWireKind,
   llamaModelDetails,
+  messagesForLlama,
   resolveBackendAdapter,
   StrataBackendAdapter,
   SUPPORTED_BACKEND_KINDS
@@ -503,4 +504,37 @@ test('Strata keeps a failed or invalid count a 503 tokenizer outage', async () =
       );
     });
   }
+});
+
+// Native `messages[].images` carries bare base64 because Ollama's native endpoint wants it that
+// way. The OpenAI chat wire rejects bare base64 outright, so the adapter must re-attach a data URL.
+test('Native images[] become data URLs on the OpenAI chat wire', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUg';
+  const [message] = messagesForLlama(
+    [{ role: 'user', content: 'what is this?', images: [png] }], 'openai-chat', true);
+  assert.equal(message.content[0].type, 'text');
+  assert.equal(message.content[0].text, 'what is this?');
+  assert.equal(message.content[1].type, 'image_url');
+  assert.equal(message.content[1].image_url.url, `data:image/png;base64,${png}`);
+});
+
+test('The re-attached media type comes from the image bytes, since the declared subtype was lost', () => {
+  const cases = [
+    ['/9j/4AAQSkZJRg', 'image/jpeg'],
+    ['R0lGODlhAQABAIAA', 'image/gif'],
+    ['UklGRhoAAABXRUtMQVJBTVgA', 'image/webp'],
+    ['Qk02AAAAAAAAADYA', 'image/bmp'],
+    ['iVBORw0KGgoAAAANSUhEUg', 'image/png'],
+    ['unknownbase64data', 'image/png']
+  ];
+  for (const [base64, mediaType] of cases) {
+    const [message] = messagesForLlama([{ role: 'user', images: [base64] }], 'openai-chat', true);
+    assert.equal(message.content[0].image_url.url, `data:${mediaType};base64,${base64}`);
+  }
+});
+
+test('An images[] entry that is already a data URL is passed through unchanged', () => {
+  const url = 'data:image/jpeg;base64,/9j/4AAQSkZJRg';
+  const [message] = messagesForLlama([{ role: 'user', images: [url] }], 'openai-chat', true);
+  assert.equal(message.content[0].image_url.url, url);
 });

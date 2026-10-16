@@ -1416,13 +1416,16 @@ test('llama.cpp vision is marker-driven across native chat, Chat Completions, Re
       { type: 'text', text: 'Describe this image.' },
       { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } }
     ]);
+    // Native `images[]` and Responses `input_image` both arrive as bare base64. llama.cpp's OpenAI
+    // endpoint accepts only a data URL, an http(s) URL, or a local file path, so the forwarded
+    // wire must carry the data URL rather than the bare base64 these wires carry.
     assert.deepEqual(generation[1].body.messages[0].content, [
       { type: 'text', text: 'Describe this screenshot.' },
-      { type: 'image_url', image_url: { url: png } }
+      { type: 'image_url', image_url: { url: dataUrl } }
     ]);
     assert.deepEqual(generation[2].body.messages[0].content, [
       { type: 'text', text: 'Describe this attachment.' },
-      { type: 'image_url', image_url: { url: png } }
+      { type: 'image_url', image_url: { url: dataUrl } }
     ]);
     assert.equal(generation[3].body.messages[2].role, 'tool');
     assert.equal(generation[3].body.messages[2].content, 'Screenshot captured.');
@@ -1430,7 +1433,7 @@ test('llama.cpp vision is marker-driven across native chat, Chat Completions, Re
       role: 'user',
       content: [
         { type: 'text', text: 'Image output from tool browser_screenshot (call call_screenshot_1).' },
-        { type: 'image_url', image_url: { url: png } }
+        { type: 'image_url', image_url: { url: dataUrl } }
       ]
     });
 
