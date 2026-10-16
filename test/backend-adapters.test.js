@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import {
   BackendAdapterError,
   LlamaCppBackendAdapter,
@@ -364,4 +365,142 @@ test('normalizes model identity in OpenAI streaming frames', async () => {
   assert.match(text, /"cached_tokens":96/);
   assert.match(text, /data: \[DONE\]/);
   assert.doesNotMatch(text, /"model":"wrong"/);
+});
+
+// --- Strata multimodal token counting -------------------------------------
+// Strata counts the formatted prompt at its Anthropic route, which answers a
+// placeholder for image blocks. The adapter must add the projector cost itself
+// without ever paying for a generation (Strata ignores zero-generation prefill).
+
+function createFakeStrataCount(handler) {
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const raw = Buffer.concat(chunks).toString('utf8');
+    requests.push({
+      pathname: new URL(request.url || '/', 'http://fake-strata.local').pathname,
+      body: raw.trim() ? JSON.parse(raw) : null
+    });
+    const { status, payload } = handler(requests.at(-1).body);
+    const out = Buffer.from(JSON.stringify(payload));
+    response.writeHead(status, { 'content-type': 'application/json', 'content-length': out.length });
+    response.end(out);
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({
+      url: `http://127.0.0.1:${server.address().port}`,
+      requests,
+      close: () => new Promise((done) => server.close(done))
+    }));
+  });
+}
+
+const strataVisionModel = {
+  backend_kind: 'strata',
+  model: 'strata-vision-model',
+  context_length: 4096,
+  capability_profile: { text: true, vision: true }
+};
+
+function strataAdapter(fake, activeModel = strataVisionModel) {
+  return new StrataBackendAdapter({ upstreamUrl: fake.url, upstreamTimeoutMs: 5000 }, activeModel);
+}
+
+const imagePart = { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(4096)}` } };
+
+async function withStrataCount(handler, run) {
+  const fake = await createFakeStrataCount(handler);
+  try {
+    return await run(fake);
+  } finally {
+    await fake.close();
+  }
+}
+
+test('Strata multimodal count adds the vision allowance and keeps image data out of the count request', async () => {
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    const context = await strataAdapter(fake).validateContext(
+      [{ role: 'user', content: [{ type: 'text', text: 'Describe' }, imagePart] }], 128, {});
+    assert.equal(fake.requests.length, 1);
+    assert.equal(fake.requests[0].pathname, '/v1/messages/count_tokens');
+    assert.equal(fake.requests[0].body.messages[0].content, 'Describe');
+    assert.equal(JSON.stringify(fake.requests[0].body).includes('data:image'), false);
+    assert.equal(context.inputTokens, 60 + 1050);
+    assert.equal(context.availableTokens, 4096 - (60 + 1050) - 1024);
+  });
+});
+
+test('Strata text-only count is unchanged by the vision allowance', async () => {
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    const context = await strataAdapter(fake).validateContext(
+      [{ role: 'user', content: [{ type: 'text', text: 'Plain' }] }], 128, {});
+    assert.equal(context.inputTokens, 60);
+    assert.equal(context.availableTokens, 4096 - 60 - 1024);
+  });
+});
+
+test('Strata counts every image in the history, including earlier turns', async () => {
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    const context = await strataAdapter(fake).validateContext([
+      { role: 'user', content: [{ type: 'text', text: 'first' }, imagePart] },
+      { role: 'assistant', content: 'seen' },
+      { role: 'user', content: [{ type: 'text', text: 'second' }, imagePart] },
+      { role: 'user', content: 'now answer in text' }
+    ], 128, {});
+    assert.equal(context.inputTokens, 60 + 2 * 1050);
+  });
+});
+
+test('Strata image overflow is a context error, not a tokenizer outage', async () => {
+  const tight = { ...strataVisionModel, context_length: 2048 };
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    await assert.rejects(
+      () => strataAdapter(fake, tight).validateContext(
+        [{ role: 'user', content: [{ type: 'text', text: 'big' }, imagePart] }], null, {}),
+      (error) => error instanceof BackendAdapterError
+        && error.statusCode === 400
+        && error.code === 'context_length_exceeded'
+        && /Formatted input \(1110\)/.test(error.message)
+    );
+  });
+});
+
+test('Strata honours a published vision allowance on the active model', async () => {
+  const model = { ...strataVisionModel, raw: { vision_token_allowance: 2000 } };
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    const context = await strataAdapter(fake, model).validateContext(
+      [{ role: 'user', content: [{ type: 'text', text: 'Describe' }, imagePart] }], 128, {});
+    assert.equal(context.inputTokens, 60 + 2000);
+  });
+});
+
+test('Strata reports an unrepresentable part as a capability error without calling the count route', async () => {
+  await withStrataCount(() => ({ status: 200, payload: { input_tokens: 60 } }), async (fake) => {
+    await assert.rejects(
+      () => strataAdapter(fake).validateContext(
+        [{ role: 'user', content: [{ type: 'text', text: 'hear this' }, { type: 'audio' }] }], 128, {}),
+      (error) => error instanceof BackendAdapterError
+        && error.statusCode === 400
+        && error.code === 'UNSUPPORTED_PROFILE_CAPABILITY'
+        && error.param === 'messages[0].content[1]'
+    );
+    assert.equal(fake.requests.length, 0);
+  });
+});
+
+test('Strata keeps a failed or invalid count a 503 tokenizer outage', async () => {
+  for (const failure of [
+    { status: 500, payload: { error: { message: 'tokenizer is reloading' } } },
+    { status: 200, payload: { input_tokens: 'not-a-count' } }
+  ]) {
+    await withStrataCount(() => failure, async (fake) => {
+      await assert.rejects(
+        () => strataAdapter(fake).validateContext([{ role: 'user', content: 'hi' }], 128, {}),
+        (error) => error instanceof BackendAdapterError
+          && error.statusCode === 503
+          && error.code === 'TOKENIZER_UNAVAILABLE'
+      );
+    });
+  }
 });

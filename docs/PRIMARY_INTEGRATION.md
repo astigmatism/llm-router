@@ -32,7 +32,7 @@ The pinned engine resolves request `-1` through the server launch default. Both 
 
 ## Context, storage and lifetime
 
-Preflight calls the selected embedded chat template and tokenizer with history, tools and reasoning controls. Images on either service additionally undergo zero-generation prefill to count actual projector overhead. Finite requests require **formatted input + explicit output + 1024 ≤ context** and receive accurate overflow arithmetic without clipping. Unrestricted requests require space for input, the safety reserve and at least one generation token; available context is not sent as a reply quota.
+Preflight calls the selected embedded chat template and tokenizer with history, tools and reasoning controls. Images additionally pay for projector overhead: llama.cpp counts it with a zero-generation prefill, Strata adds a measured per-image allowance because that engine ignores zero-generation requests. Finite requests require **formatted input + explicit output + 1024 ≤ context** and receive accurate overflow arithmetic without clipping. Unrestricted requests require space for input, the safety reserve and at least one generation token; available context is not sent as a reply quota.
 
 Catalog requests and every received backend event are written to private `DATA_DIR/generations/<UUID>.jsonl` files and synchronized before delivery. This archive retains full original roles, history, reasoning, images, tools, output, transitions and terminal state independently of metadata logging and volatile model caches. Files use mode 0600 in a 0700 directory. Authenticated administrators can retrieve an archive through `/admin/api/generation-record?id=<UUID>` while it is retained. Closed archives expire after seven days or earlier when their total size exceeds 1 GiB, oldest first; both limits are configurable in [Persistence](CONFIGURATION.md#persistence). Active journals are protected and require additional disk space. Cleanup runs at startup, after closure and every five minutes; failures are reported through admin status and retried. Journal write failures end the response honestly and stop upstream work. Already committed output remains recoverable within the retention policy. A record without a terminal entry after a process crash is interrupted, never evidence of completion, and becomes eligible for normal retention cleanup after restart.
 
@@ -105,6 +105,27 @@ provide llama.cpp's `/apply-template` or `/tokenize`. Its adapter counts the act
 formatted prompt through `/v1/messages/count_tokens`, translating text, tool history,
 and reasoning controls to the engine's Anthropic frontend. The same context reserve
 and output-space checks still apply. Missing or invalid counts fail closed.
+
+Images are counted, not counted out. The count route accepts image blocks but answers
+a placeholder for them: a 1400x900 image costs 1037 prompt tokens at the backend and
+63 there. The adapter therefore drops image parts from the counted text — the count
+request never carries megabytes of base64 — and adds a measured per-image allowance
+of **1050 tokens** to the text count. That ceiling covers the largest cost measured
+on the resident vision model (+1026 at 1024x1024, +977 at 1400x900, +986 at
+2048x1200; the encoder caps the patch grid, so image cost saturates near 1030 total
+tokens). Every image in the prompt is allowed for, including images in earlier
+turns, so a text-only follow-up in a vision conversation is admitted against the
+history it actually sends. A zero-generation prefill cannot replace the allowance:
+Strata ignores `n_predict: 0` and `max_tokens: 0` and would generate a full answer
+under the single-request lease. A model that publishes `vision_token_allowance` in
+its active-model marker overrides the default; publishing `0` removes the allowance
+once the engine counts patch tokens in its own token count.
+
+Content with no count representation at all — a part that is neither text nor an
+image — is a capability mismatch and returns `400 UNSUPPORTED_PROFILE_CAPABILITY`,
+not `503 TOKENIZER_UNAVAILABLE`, which reads as a transient backend outage and
+invites client retries. A count request that fails or returns no usable count still
+fails closed as `503`.
 
 The runtime's `docker-inspect-env` receipt attests that the engine sets no output
 ceiling; the router also checks the live `/props` default. `loaded: false` is not

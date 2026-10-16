@@ -1,4 +1,9 @@
-import { strataCountRequest } from './strata-request.js';
+import {
+  StrataUncountableContentError,
+  strataCountRequest,
+  strataVisionImages,
+  strataVisionTokenAllowance
+} from './strata-request.js';
 import { createHash } from 'node:crypto';
 import { TextDecoder, TextEncoder } from 'node:util';
 import { upstreamFetch, upstreamJson } from './upstream.js';
@@ -1990,7 +1995,9 @@ export class StrataBackendAdapter extends LlamaCppBackendAdapter {
 
   async validateContext(messages, outputTokens, templateControls = {}, signal) {
     let counted;
+    let visionImages;
     try {
+      visionImages = strataVisionImages(messages);
       counted = await upstreamJson(this.upstreamConfig, '/v1/messages/count_tokens', {
         signal, method: 'POST',
         body: strataCountRequest(messages, templateControls, this.activeModel.model),
@@ -1999,12 +2006,28 @@ export class StrataBackendAdapter extends LlamaCppBackendAdapter {
     } catch (error) {
       signal?.throwIfAborted();
       if (error instanceof BackendAdapterError) throw error;
+      // A modality the count contract cannot represent is a capability
+      // mismatch, not a transient tokenizer outage: answering 503 here invites
+      // client retries and poisons every later turn that keeps the part.
+      if (error instanceof StrataUncountableContentError) {
+        throw new BackendAdapterError(
+          400,
+          'UNSUPPORTED_PROFILE_CAPABILITY',
+          `${error.message} The active model profile cannot count this prompt.`,
+          error.param
+        );
+      }
       throw new BackendAdapterError(503, 'TOKENIZER_UNAVAILABLE', `Strata could not count the formatted prompt: ${error.message}`);
     }
-    const inputTokens = counted.body?.input_tokens;
-    if (!counted.ok || !Number.isSafeInteger(inputTokens) || inputTokens < 0) {
+    const textTokens = counted.body?.input_tokens;
+    if (!counted.ok || !Number.isSafeInteger(textTokens) || textTokens < 0) {
       throw new BackendAdapterError(503, 'TOKENIZER_UNAVAILABLE', 'Strata did not return a valid input token count.');
     }
+    // The count route answers a placeholder for image blocks, so the projector's
+    // patch tokens are added as a measured per-image allowance. A zero-generation
+    // prefill cannot replace it: Strata ignores n_predict/max_tokens 0 and would
+    // generate a full answer under the single-request lease.
+    const inputTokens = textTokens + visionImages * strataVisionTokenAllowance(this.activeModel);
     return this.contextFromCount(inputTokens, outputTokens);
   }
 }
