@@ -1,10 +1,12 @@
 import { readActiveModel, parseMarker } from './active-model.js';
 import { BackendAdapterError, SUPPORTED_BACKEND_KINDS, validatedReasoningPolicy } from './backend-adapters.js';
 
-// Largest one-slot working context a resident entry may publish: the native
-// 256K window of the Qwen3.8 models. The runtime controller owns per-profile
-// qualification; this contract only bounds what the router will admit.
-export const RESIDENT_CONTEXT_LIMIT = 262144;
+// Largest one-slot working context a resident entry may publish. The native
+// window of the Qwen3.8 models is 262,144; anything above it is a rope-scaled
+// extension, and the runtime controller owns per-profile qualification for
+// those (measured on the deployment host, stated in the profile). This
+// contract only bounds what the router will admit.
+export const RESIDENT_CONTEXT_LIMIT = 524288;
 
 function invalid(message) {
   throw new BackendAdapterError(503, 'INVALID_MODEL_CATALOG', message, 'model');
@@ -104,9 +106,10 @@ export async function readModelCatalog(config) {
     if (upstreams.has(model.backend_url)) invalid('Independent resident entries must use different upstream URLs; use aliases for one service.');
     upstreams.add(model.backend_url);
     // The deployment owner qualifies the actual per-slot allocation before
-    // publishing it. Any per-request context up to the native 256K window is
-    // admissible. A resident runs one or two backend slots; each slot has the
-    // full per-request window, so the total is the window times the slots.
+    // publishing it, including any rope-scaled window above the model's
+    // trained context. Any per-request context up to RESIDENT_CONTEXT_LIMIT
+    // is admissible. A resident runs one or two backend slots; each slot has
+    // the full per-request window, so the total is the window times the slots.
     const slots = model.max_active_requests;
     if (!model.context_length || model.context_length > RESIDENT_CONTEXT_LIMIT || (slots !== 1 && slots !== 2)
       || model.total_context_length !== model.context_length * slots || model.context_safety_reserve !== 1024
