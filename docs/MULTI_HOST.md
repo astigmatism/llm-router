@@ -234,6 +234,15 @@ convention and therefore must stay on a trusted network, and it is worth using
 separately from `ADMIN_TOKEN` precisely so a runtime that is compromised cannot
 drive the router.
 
+That separation has a consequence for the producer, because a configuration
+switch is not only a publication: the machine has to stop traffic in front of
+itself before it reloads, and only the control credential can do that. A runtime
+that switches behind this router therefore holds two secrets — the publisher
+token for its catalog, and the control token for drain and state. A deployment
+that means one trust says so by naming the same variable twice; a deployment
+that cares what a compromised machine could do names two, and knows which one
+its runtime lost.
+
 Stored catalogs are `0640` in a `0750` directory, owned by the router user. They
 are not secrets, but they are one machine's statement about its hardware.
 
