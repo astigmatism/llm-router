@@ -10,7 +10,7 @@
 set -euo pipefail
 
 BIND_IP="${BIND_IP:-192.168.1.23}"
-ROUTER_HOSTS="${ROUTER_HOSTS:-local,rosalina}"
+ROUTER_HOSTS="${ROUTER_HOSTS:-rosalina,daisy}"
 DEFAULT_HOST="${ROUTER_DEFAULT_HOST:-rosalina}"
 BASE="${BASE:-$HOME/deployments/llm-router}"
 SOURCE="$BASE/source"
@@ -18,8 +18,13 @@ ENV_FILE="${ENV_FILE:-$HOME/credentials/llm-router/router.env}"
 REPO_URL="${REPO_URL:-https://github.com/astigmatism/llm-router.git}"
 REV="${REV:-main}"
 # The machines that publish catalogs are not on this machine's Docker network, so
-# the router needs no external network; `local` keeps the file handoff in case a
-# runtime is ever installed here too.
+# the router needs no external network. The host list is the fleet's truth and so
+# it lives here rather than in whoever's shell ran this script last: a machine
+# declared here and never heard from is an unpublished host forever, and one
+# missing is a catalog refused with HOST_NOT_DECLARED. `local` is deliberately
+# not listed — this machine routes and runs no models, so it has no active-model
+# marker to hand over, and a router that declares a host it can never publish is a
+# router that reports itself degraded forever. Add it back the day a model runs here.
 COMPOSE_FILE="${COMPOSE_FILE:-$SOURCE/compose.vm-example.yml}"
 
 umask 077
