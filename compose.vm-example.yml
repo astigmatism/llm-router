@@ -60,7 +60,9 @@ services:
       ROUTER_DEFAULT_HOST: "${ROUTER_DEFAULT_HOST:-rosalina}"
       CATALOG_STORE_DIR: "/app/data/catalogs"
       # CATALOG_PUSH_TOKEN is delivered from the env file, never from here.
-      CATALOG_MAX_AGE_MS: "${CATALOG_MAX_AGE_MS:-3600000}"
+      # Off unless the publishers commit to a heartbeat: a machine that publishes when its
+      # deployment changes and verifies at startup is not late for a whole quiet afternoon.
+      CATALOG_MAX_AGE_MS: "${CATALOG_MAX_AGE_MS:-0}"
       # The backends are on other machines, so a loopback backend URL is a
       # mistake worth hearing about rather than debugging as an unexplained 503.
       ROUTER_EXPECT_ROUTABLE_BACKEND_URLS: "${ROUTER_EXPECT_ROUTABLE_BACKEND_URLS:-true}"
