@@ -87,9 +87,12 @@ test('qualified Daytime context extensions update aliases and actual admission b
     for (const id of [CODING, 'daytime', 'local-active']) {
       const metadata = data.find(row => row.id === id).x_ollama_router;
       assert.equal(metadata.context_window, context);
-      assert.equal(metadata.display_name, `Daytime (${context / 1024}K)`);
       assert.equal(metadata.max_output_tokens, null);
     }
+    // The title states the window, and it belongs to the model. An alias row is
+    // titled by its own name, which is what a client sends and what a person
+    // choosing between names is actually choosing.
+    assert.equal(data.find((row) => row.id === CODING).x_ollama_router.display_name, `Daytime (${context / 1024}K)`);
     const boundary = context - 1024 - 16;
     assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary}`))).status, 200);
     assert.equal((await f.post('/v1/chat/completions', chat('daytime', `INPUT=${boundary + 1}`))).status, 400);
@@ -168,14 +171,17 @@ test('catalog lists canonical identities, resolves aliases deliberately, and pro
   assert.deepEqual(list.data.find((entry) => entry.id === 'local-active'), alias);
   assert.deepEqual(alias, {
     ...list.data[0], id: 'local-active',
-    x_ollama_router: { ...list.data[0].x_ollama_router, alias: true }
+    x_ollama_router: { ...list.data[0].x_ollama_router, alias: true, display_name: 'local-active' }
   });
   const tags = await (await fetch(f.base + '/api/tags')).json();
   assert.deepEqual(tags.models.map((x) => x.name), [CODING, EVERYDAY, 'local-active', 'daytime', 'nighttime']);
   for (const [id, target] of [['local-active', CODING], ['daytime', CODING], ['nighttime', EVERYDAY]]) {
     const canonical = list.data.find((entry) => entry.id === target);
     const alias = list.data.find((entry) => entry.id === id);
-    assert.deepEqual(alias, { ...canonical, id, x_ollama_router: { ...canonical.x_ollama_router, alias: true } });
+    assert.deepEqual(alias, {
+      ...canonical, id,
+      x_ollama_router: { ...canonical.x_ollama_router, alias: true, display_name: id }
+    });
     assert.deepEqual(tags.models.find((entry) => entry.model === id).x_ollama_router, alias.x_ollama_router);
     const show = await f.post('/api/show', { model: id });
     assert.equal(show.status, 200);
@@ -922,7 +928,10 @@ test('an opt-in service alias is published as a selectable row and resolves to i
   const alias = list.data.find((row) => row.id === 'trial');
   assert.equal(alias.x_ollama_router.alias, true);
   assert.equal(alias.x_ollama_router.upstream_model, CODING);
-  assert.deepEqual(alias, { ...canonical, id: 'trial', x_ollama_router: { ...canonical.x_ollama_router, alias: true } });
+  assert.deepEqual(alias, {
+    ...canonical, id: 'trial',
+    x_ollama_router: { ...canonical.x_ollama_router, alias: true, display_name: 'trial' }
+  });
   const tags = await (await fetch(f.base + '/api/tags')).json();
   assert.deepEqual(tags.models.map((entry) => entry.model), [CODING, 'trial']);
   assert.deepEqual(tags.models.find((entry) => entry.model === 'trial').x_ollama_router, alias.x_ollama_router);
@@ -950,4 +959,59 @@ test('an opt-in service alias is published as a selectable row and resolves to i
   assert.equal(offline.status, 503);
   assert.match(await offline.text(), /SERVICE_OFFLINE/);
   assert.equal((await fetch(f.base + '/v1/models/nighttime')).status, 503);
+});
+
+test('an alias row is titled by its own name, and a stated title wins', async (t) => {
+  const f = await fixture(t);
+  // One model answering several service names is the case that made a picker
+  // unusable: every row it offered read alike, so a person could not tell the
+  // rows apart even though the names they send are different.
+  Object.assign(f.marker.models[0], { aliases: ['local-active', 'daytime', 'trial'] });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+
+  const rows = await (await fetch(f.base + '/v1/models')).json();
+  const titles = rows.data.map((row) => [row.id, row.x_ollama_router.display_name]);
+  assert.deepEqual(titles, [
+    [CODING, 'Daytime (160K)'], [EVERYDAY, 'Nighttime (128K)'],
+    ['local-active', 'local-active'], ['daytime', 'daytime'], ['trial', 'trial'], ['nighttime', 'nighttime']
+  ]);
+  assert.equal(new Set(titles.map(([, title]) => title)).size, titles.length,
+    'no two published rows may share a title');
+
+  // Only the name, the alias flag and the title differ; every fact of the target
+  // is carried unchanged, because an alias is a second name and not a second model.
+  for (const row of rows.data.filter((entry) => entry.x_ollama_router.alias)) {
+    const target = rows.data.find((entry) => entry.id === row.x_ollama_router.upstream_model);
+    assert.deepEqual(row, {
+      ...target, id: row.id,
+      x_ollama_router: { ...target.x_ollama_router, alias: true, display_name: row.id }
+    });
+  }
+
+  // A publisher that states a title for a name keeps it, and only that row moves.
+  Object.assign(f.marker.models[0], { alias_display_names: { daytime: 'Daytime (160K, vision)' } });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  const titled = await (await fetch(f.base + '/v1/models')).json();
+  assert.deepEqual(titled.data.map((row) => row.x_ollama_router.display_name),
+    ['Daytime (160K)', 'Nighttime (128K)', 'local-active', 'Daytime (160K, vision)', 'trial', 'nighttime']);
+
+  // The listing, the per-name fetch, and the native tag list all read the same row.
+  for (const id of ['local-active', 'daytime', 'trial']) {
+    const row = titled.data.find((entry) => entry.id === id);
+    assert.deepEqual(await (await fetch(`${f.base}/v1/models/${id}`)).json(), row);
+    const tags = await (await fetch(f.base + '/api/tags')).json();
+    assert.deepEqual(tags.models.find((entry) => entry.model === id).x_ollama_router, row.x_ollama_router);
+  }
+
+  // A title for a name the entry no longer declares is stale, not wrong: it is
+  // dropped, and the model still publishes.
+  Object.assign(f.marker.models[0], {
+    aliases: ['local-active', 'daytime'],
+    alias_display_names: { daytime: 'Daytime (160K, vision)', trial: 'Retired trial' }
+  });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+  const final = await (await fetch(f.base + '/v1/models')).json();
+  assert.deepEqual(final.data.map((row) => row.x_ollama_router.display_name),
+    ['Daytime (160K)', 'Nighttime (128K)', 'local-active', 'Daytime (160K, vision)', 'nighttime']);
+  assert.equal((await readModelCatalog(f.config)).models[0].alias_display_names.trial, undefined);
 });

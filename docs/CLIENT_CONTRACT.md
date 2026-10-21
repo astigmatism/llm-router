@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1.3 · 2026-10-21.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing. No client change is required; see [changes](#15-changes).
+**Version 1.4 · 2026-10-21.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing; version 1.4 states how an alias is titled in the model listings, so that several names for one model read as the several names they are. No client change is required; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -92,6 +92,14 @@ The router distinguishes sharply between a name that means a service and a name 
 | `load` (only with `?include=load`) | Per model: `active`, `queued`, `free_slots`. |
 
 Clients MUST ignore unknown fields. `metadata` is identical to the model's `x_ollama_router` object in `/v1/models`. The OpenAI and Ollama listings (`/v1/models`, `/api/tags`) show only models that can be selected right now, so an offline service is absent from them; only the capabilities document says why.
+
+**An alias row is titled by its own name.** The listings publish an alias as a row whose `id` is the alias and whose
+`x_ollama_router` is identical to its model's except for `alias: true` and `display_name`: the title is the alias
+itself, unless the published catalog stated a title for that name. This is what makes one model answering several
+service names listable at all — before it, `daytime` and `nighttime` on a single model produced rows reading alike, and
+a client that labels a choice with `display_name` was offering the same choice twice. Two rules follow, and both are
+cheap: identify a row by `id`, never by its title, and never de-duplicate rows by title — rows that name the same
+model are deliberately distinct, because the name a client sends is what differs.
 
 The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
 
@@ -293,6 +301,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
+| 1.4 | §4: an alias row in `/v1/models` and `/api/tags` is titled by the alias rather than by its model's title, unless the catalog states one; clients identify rows by `id` and MUST NOT de-duplicate them by title. A client that sends service IDs needs no change: nothing it sends or reads by `id` moved, and the capabilities document still lists each model once, under its own title. |
 | 1.3 | §4: the capabilities document is `schema_version: 2`, adding `hosts[]` and a per-model `host` when a deployment serves models from more than one machine; a missing machine means those models are not `available`, and unnamed requests still answer. §7: a drain may scope to one machine. §11: schema note. Clients that send service IDs need no change; a client written against 1.2 keeps working untouched. |
 | 1.2 | §3: the `daytime` row states the guarantee a real published configuration actually provides; `trial` is added as an opt-in service ID; **Two kinds of names** distinguishes catalog service IDs from the reserved compatibility alias `local-active`; an omitted model is the active configuration's default, which is not necessarily `daytime`. §4 documents what `service` reports for a model the catalog gives no alias, and the `CATALOG_HAS_NO_SERVICE_ID` warning. §5, §10 and §13 follow. A client that sends service IDs and does not adopt `trial` needs no change: the added §13 lines record what §3 and §5 already required. |
 | 1.1 | §3: benchmarking and evaluation clients may pin a canonical ID for the duration of a run. §11: minor versions defined. |

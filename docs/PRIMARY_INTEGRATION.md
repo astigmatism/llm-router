@@ -44,7 +44,7 @@ Generation has no total-duration timer. A 10-second connection timeout and a def
 
 | Endpoint | Primary behavior |
 |---|---|
-| `/v1/models`, `/api/tags` | Canonical models and all declared aliases, with target-equivalent context/capabilities/health and unrestricted metadata |
+| `/v1/models`, `/api/tags` | Canonical models and all declared aliases, with target-equivalent context/capabilities/health and unrestricted metadata. An alias row is titled with the alias, not the model's title, unless the catalog states one in `alias_display_names` |
 | `/api/ps`, admin model lists | Canonical residents only, with each resident's slot count |
 | `/v1/router/capabilities`, `/v1/router/events` | Deployment-wide document and push stream: residents, live backend facts, configuration, offline services, admission and load; see [capabilities](CAPABILITIES.md) |
 | `/api/show` | Canonical or stable service lookup with the resolved target’s capabilities and context |

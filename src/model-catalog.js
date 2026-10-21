@@ -139,12 +139,23 @@ function parseResidentHost(config, source, single) {
     if (entry.server_default_output_tokens !== -1) invalid(`The backend default must be unrestricted for ${model.model}.`, host);
     const aliases = entry.aliases ?? [];
     if (!Array.isArray(aliases) || aliases.some((id) => typeof id !== 'string' || !id.trim() || id !== id.trim())) invalid('Invalid model aliases.', host);
+    // An alias is a second *name* for one model, so the router titles an alias row
+    // with that name rather than with the model's. A publisher that wants a richer
+    // title for a name states it here; a title for a name this entry no longer
+    // declares is stale rather than wrong, so it is dropped instead of refused —
+    // the field is presentation, and a cosmetic leftover must not stop a model.
+    const aliasDisplayNames = entry.alias_display_names ?? {};
+    if (aliasDisplayNames === null || typeof aliasDisplayNames !== 'object' || Array.isArray(aliasDisplayNames)
+      || Object.values(aliasDisplayNames).some((title) => !nonEmptyString(title))) {
+      invalid(`Invalid alias display names for ${model.model}.`, host);
+    }
     for (const id of [model.model, ...aliases]) {
       if (ids.has(id)) invalid(`Duplicate model identifier ${id}.`, host);
       ids.add(id);
     }
     return {
       ...model, aliases, catalog_mode: true, ...(single ? {} : { host }),
+      alias_display_names: Object.fromEntries(Object.entries(aliasDisplayNames).filter(([id]) => aliases.includes(id))),
       loadedFrom: source.loadedFrom,
       file: source.file, file_mtime: source.acceptedAt, file_mtime_ms: source.acceptedAtMs
     };

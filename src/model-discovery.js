@@ -587,6 +587,19 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
       if (offline) throw new ModelDiscoveryError(503, 'SERVICE_OFFLINE', serviceOfflineMessage(offline, catalog.configuration), 'model', 'server_error');
       throw new ModelDiscoveryError(404, 'MODEL_NOT_FOUND', `Model ${JSON.stringify(requestedId)} was not found.`, 'model', 'invalid_request_error');
     }
+    // An alias row is a second name for one model, not a second model, so it keeps
+    // every fact of its target and differs in its id, its alias flag, and its title.
+    // Reusing the model's title made the names a person chooses between read alike —
+    // one model published as `daytime` and `nighttime` listed the same string three
+    // times, and a picker keyed on the label cannot offer the choice at all. The
+    // name itself is the honest label, because it is what the client sends; a
+    // publisher that wants a longer title for a name states it in the catalog.
+    const declaredAliasTitles = new Map(catalog.models.flatMap((entry) => Object.entries(entry.alias_display_names ?? {})));
+    const aliasRow = (row, id) => ({
+      ...row,
+      id,
+      x_ollama_router: { ...row.x_ollama_router, alias: true, display_name: declaredAliasTitles.get(id) ?? id }
+    });
     const entries = await Promise.all(selected.map(async (model) => {
       if (!this.residents.has(model.model)) {
         this.residents.set(model.model, new ActiveModelDiscovery(this.config, {
@@ -596,14 +609,16 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
       }
       const { entry } = await this.residents.get(model.model).get(model);
       const id = requestedId ?? model.model;
-      return { ...entry, id, x_ollama_router: { ...entry.x_ollama_router, alias: id !== model.model } };
+      return id === model.model
+        ? { ...entry, id, x_ollama_router: { ...entry.x_ollama_router, alias: false } }
+        : aliasRow({ ...entry, x_ollama_router: { ...entry.x_ollama_router, alias: true } }, id);
     }));
     if (requestedId === null && includeAliases) {
       // The catalog validates uniqueness across canonical IDs and all aliases.
       // Preserve canonical rows first so consumers can deduplicate by target.
       for (const target of [...entries]) {
         for (const id of target.x_ollama_router.aliases) {
-          entries.push({ ...target, id, x_ollama_router: { ...target.x_ollama_router, alias: true } });
+          entries.push(aliasRow(target, id));
         }
       }
     }

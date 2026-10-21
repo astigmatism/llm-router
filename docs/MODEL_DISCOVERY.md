@@ -2,6 +2,8 @@
 
 Primary entries expose `x_ollama_router.display_name`: **Daytime (160K)** for `qwen3.8-27b-q8_0`, **Nighttime (128K)** for `qwen3.8-27b-abliterated-q6_k`. Clients use these labels for presentation and send the service IDs published in `aliases`, as [the client contract](CLIENT_CONTRACT.md) §3 requires; a canonical ID in a response is information to record, not a name to configure. The router dashboard and DSH discovery consume the labels; Open WebUI's alignment script persists them as model names.
 
+An alias is a second *name* for one model, so an alias row is titled by that name and carries every other fact of its target unchanged: `local-active`, `daytime` and `nighttime` on one model read as three different rows, which is what a person choosing between them needs. A publisher that wants a longer title for a name states it in the catalog with `alias_display_names: { "daytime": "Daytime (160K, vision)" }`; a title for a name the entry no longer declares is dropped rather than refused, because the field is presentation and a stale leftover must not stop a model.
+
 The deployed primary catalog uses unrestricted output, unrestricted thinking and template-default effort. Its current policy, context recovery, durable archives and client behavior are defined in [Primary integration](PRIMARY_INTEGRATION.md). Legacy singleton-marker examples below are not primary production defaults.
 
 Primary `output_policy` is `unrestricted`; `default_output_tokens` and `max_output_tokens` are null, `server_default_output_tokens` is -1, and enabled effort budgets are -1. Null must never be replaced with a client fallback or context-capacity default.
