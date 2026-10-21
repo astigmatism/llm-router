@@ -292,7 +292,7 @@ function parseHostCatalog(config, source, single) {
 // resident entry. A request retains this snapshot for its lifetime.
 export async function readModelCatalog(config) {
   const sources = await readHostSources(config);
-  const single = config.routerHosts.length === 1;
+  const single = config.routerHosts.length === 1 && config.defaultHost === LOCAL_HOST_ID;
   const hosts = sources.map((source) => parseHostCatalog(config, source, single));
   const serving = hosts.filter((host) => host.models.length);
   if (!serving.length) {
@@ -386,7 +386,7 @@ export async function selectModel(config, requested) {
 // asked about rather than the machine it happens to run on.
 export async function readDeploymentActiveModel(config) {
   const source = await readHostSource(config, config.defaultHost);
-  const single = config.routerHosts.length === 1;
+  const single = config.routerHosts.length === 1 && config.defaultHost === LOCAL_HOST_ID;
   const host = parseHostCatalog(config, source, single);
   if (host.models.length) return host.models.find((model) => model.model === host.defaultModel) ?? host.models[0];
   return source.marker ?? {

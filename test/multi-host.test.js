@@ -153,6 +153,31 @@ test('a deployment with one host reports no hosts and no host stamps', async (t)
   assert.equal((await f.chat(CODING)).status, 200);
 });
 
+test('runtime control describes the pushed default host without a local marker', async (t) => {
+  const f = await fixture(t, { secondHost: 'rosalina', env: {
+    ROUTER_HOSTS: 'rosalina', ROUTER_DEFAULT_HOST: 'rosalina'
+  } });
+  await fs.rm(f.file);
+  const backend = await fakeBackend(CODING, t, f.hits, catalogEntry(CODING, []).max_active_requests);
+  const catalog = hostCatalog([{ ...catalogEntry(CODING, ['local-active', 'daytime']), backend_url: backend.url }]);
+  catalog.configuration = { id: 'remote-runtime-configuration', exclusive: true };
+  assert.equal((await f.publish('rosalina', catalog)).status, 200);
+  const response = await fetch(f.base + '/admin/api/runtime-state', { headers: { 'x-admin-token': 'test' } });
+  assert.equal(response.status, 200);
+  const state = await response.json();
+  assert.equal(state.active_model.model, CODING);
+  assert.equal(state.active_model.profile, catalog.profile);
+  assert.equal(state.runtime.model, CODING);
+  assert.equal(state.backend.health.ok, true);
+  assert.equal((await f.get('/admin/api/hosts')).hosts[0].configuration.id, catalog.configuration.id);
+  const drained = await (await f.admin('runtime-drain', { enabled: true, host: 'rosalina', reason: 'test migration' })).json();
+  assert.equal(drained.runtime.model, CODING);
+  assert.deepEqual(drained.runtime.draining_hosts, ['rosalina']);
+  assert.equal((await f.chat('daytime')).status, 503);
+  await f.admin('runtime-drain', { enabled: false, host: 'rosalina' });
+  assert.equal((await f.chat('daytime')).status, 200);
+});
+
 test('a published host joins the deployment and serves its own models', async (t) => {
   const f = await fixture(t, { secondHost: 'rosalina' });
   const backend = await fakeBackend(NIGHT, t, f.hits, catalogEntry(NIGHT, []).max_active_requests);

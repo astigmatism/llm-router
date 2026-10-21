@@ -104,9 +104,9 @@ export class CapabilityPublisher {
       drainingHosts,
       hostOf.get(entry.id)
     ));
-    // One machine publishing here is the deployment: naming hosts would only
-    // invite clients to depend on a distinction that does not exist yet.
-    const multiHost = config.routerHosts.length > 1;
+    // Only the legacy local-only deployment omits host identity. One remote
+    // publisher still needs it for scoped drain and availability reporting.
+    const multiHost = config.routerHosts.length > 1 || config.defaultHost !== 'local';
     const hosts = multiHost ? (catalog?.hosts ?? []).map((host) => {
       const drain = gate.hosts?.[host.id];
       const hosted = models.filter((model) => model.host === host.id);

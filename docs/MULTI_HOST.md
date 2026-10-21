@@ -76,6 +76,11 @@ is published as *the* configuration. It must be one of `ROUTER_HOSTS`.
 
 ## 3. Publishing a catalog
 
+A deployment with only one **remote** publisher still reports that host's identity
+and honours its scoped drain. Only the historical `local`-only deployment omits
+host fields. Runtime control reads the default host's published catalog, just as
+health and client routing do; it does not require a local marker file.
+
 From here the endpoint is the interesting part; the *when*, the exact contents, and what each refusal obliges the publishing machine to do are the producer's contract, in [runtime integration](RUNTIME_INTEGRATION.md).
 
 ```

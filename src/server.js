@@ -222,7 +222,7 @@ function publicActiveModel(activeModel) {
 // its own schedule: a health check must not start probing the deployment itself
 // and answer late because one machine far away is slow to reply.
 async function hostStatus(context, runtime) {
-  if (context.config.routerHosts.length === 1) return {};
+  if (context.config.routerHosts.length === 1 && context.config.defaultHost === LOCAL_HOST_ID) return {};
   let catalog = null;
   try {
     catalog = await readModelCatalog(context.config);
@@ -368,7 +368,7 @@ function notifyCapabilities(context) {
 // running it as soon as the deployment spans more than one.
 async function summaryModels(context) {
   const entries = (await context.modelDiscovery.document(null, { includeAliases: false })).entries;
-  if (context.config.routerHosts.length === 1) return entries;
+  if (context.config.routerHosts.length === 1 && context.config.defaultHost === LOCAL_HOST_ID) return entries;
   const catalog = await readModelCatalog(context.config);
   const hostOf = new Map((catalog.models ?? []).filter((model) => model.host).map((model) => [model.model, model.host]));
   return entries.map((entry) => (hostOf.has(entry.id)
@@ -414,7 +414,7 @@ async function buildSummary(context) {
     },
     config: publicConfig(context.config),
     activeModel,
-    ...(context.config.routerHosts.length === 1 ? {} : { hosts: (await deploymentHosts(context)).hosts }),
+    ...((context.config.routerHosts.length === 1 && context.config.defaultHost === LOCAL_HOST_ID) ? {} : { hosts: (await deploymentHosts(context)).hosts }),
     models: await summaryModels(context),
     upstream,
     ollamaPs: ps,
@@ -607,7 +607,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
   }
 
   if (request.method === 'GET' && pathname === '/admin/api/runtime-state') {
-    const activeModel = await readActiveModel(context.config);
+    const activeModel = await readDeploymentActiveModel(context.config);
     const runtime = context.requestGate.snapshot(activeModel);
     try {
       const backend = resolveBackendAdapter(context.config, activeModel);
@@ -660,7 +660,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       sendJson(response, 400, errorPayload('HOST_NOT_DECLARED', `Host ${JSON.stringify(host)} is not declared in ROUTER_HOSTS (${context.config.routerHosts.join(', ')}).`));
       return;
     }
-    const activeModel = await readActiveModel(context.config);
+    const activeModel = await readDeploymentActiveModel(context.config);
     const runtime = await context.requestGate.setDraining(body.enabled, body.reason, host);
     notifyCapabilities(context);
     await persistEvent(context.store, {
