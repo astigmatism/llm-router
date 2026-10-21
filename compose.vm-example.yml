@@ -10,8 +10,13 @@
 # Secrets stay out of this file. Compose reads them from the credentials
 # directory at the path the machine's own layout defines.
 #
-# Before the first start:
-#   install -d -m 0755 -o 1000 -g 1000 data data/runtime data/history
+# Before the first start (both directories are written by the router, and a
+# read-only rootfs means what is not mounted cannot be written at all):
+#   install -d -m 0755 -o 1000 -g 1000 data data/history
+#   install -d -m 0755 -o 1000 -g 1000 runtime
+# `runtime/` holds the drain control file the runtime maintains during a release,
+# and `local`'s marker if this machine ever publishes one; without a writable
+# directory there, a drain is refused with EROFS.
 services:
   ai-router:
     build:
@@ -58,7 +63,7 @@ services:
       # `local` is still file-backed: the runtime on this machine, if it has one,
       # keeps writing here. With nothing published to it, it simply contributes no
       # models and reports HOST_CATALOG_UNPUBLISHED.
-      ACTIVE_MODEL_FILE: "/app/data/runtime/active-model.json"
+      ACTIVE_MODEL_FILE: "/app/runtime/active-model.json"
       ROUTER_MODEL_ALIAS: "${ROUTER_MODEL_ALIAS:-local-active}"
       ROUTER_MODEL_METADATA_TTL_MS: "${ROUTER_MODEL_METADATA_TTL_MS:-5000}"
       ROUTER_CAPABILITY_POLL_MS: "${ROUTER_CAPABILITY_POLL_MS:-5000}"
@@ -85,9 +90,12 @@ services:
       # the host the router runs on, not the machines that publish models here.
       GPU_TELEMETRY_ENABLED: "${GPU_TELEMETRY_ENABLED:-false}"
     volumes:
-      # One mount: the catalog store, the drain control file, the request logs,
-      # and `local`'s marker if this machine ever publishes one.
+      # Request history, generation archives, and the catalog store the other
+      # machines publish into.
       - ./data:/app/data
+      # The drain control file and `local`'s marker. This mount is not optional:
+      # it is where the router keeps the state a release depends on.
+      - ./runtime:/app/runtime
     networks:
       router:
         aliases:
