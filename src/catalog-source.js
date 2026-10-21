@@ -109,12 +109,13 @@ export async function readHostSources(config) {
 // need before.
 export async function writeHostCatalog(config, host, text) {
   const file = hostCatalogFile(config, host);
+  const storedText = text.endsWith('\n') ? text : `${text}\n`;
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o750 });
   const temporary = `${file}.tmp-${process.pid}-${digestText(`${host}${Date.now()}${Math.random()}`).slice(0, 8)}`;
-  await fs.writeFile(temporary, text.endsWith('\n') ? text : `${text}\n`, { encoding: 'utf8', mode: 0o640 });
+  await fs.writeFile(temporary, storedText, { encoding: 'utf8', mode: 0o640 });
   await fs.rename(temporary, file);
   const stat = await fs.stat(file);
-  return { file, revision: digestText(text), acceptedAt: new Date(stat.mtimeMs).toISOString(), acceptedAtMs: stat.mtimeMs };
+  return { file, revision: digestText(storedText), acceptedAt: new Date(stat.mtimeMs).toISOString(), acceptedAtMs: stat.mtimeMs };
 }
 
 export async function removeHostCatalog(config, host) {

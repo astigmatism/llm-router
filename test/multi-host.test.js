@@ -188,6 +188,9 @@ test('a published host joins the deployment and serves its own models', async (t
   assert.equal(receipt.host, 'rosalina');
   assert.deepEqual(receipt.models.map((model) => model.model), [NIGHT]);
   assert.equal(receipt.warnings.length, 0);
+  const roster = await f.get('/admin/api/hosts');
+  assert.equal(roster.hosts.find((host) => host.id === 'rosalina').revision, receipt.revision,
+    'the publication receipt hashes the same saved bytes that later readers observe');
 
   const models = await f.get('/v1/models');
   const ids = models.data.map((model) => model.id);
