@@ -46,6 +46,11 @@ The response is always HTTP 200 with a truthful document, including when no mode
     "service": "daytime",                // the stable ID to send for this model: its service alias, or its canonical ID when the catalog declares no alias for it
     "display_name": "Qwen3.8 27B Q6_K (160K)",
     "aliases": ["local-active", "daytime"],
+    // metadata.alias_display_names titles every declared name: { "local-active": "local-active",
+    // "daytime": "Daytime (160K, vision)" }. A client that offers one option per
+    // service labels the option that sends a name with this, so two names for one
+    // model are not offered under one label. Derivation matches the alias rows in
+    // `/v1/models`; the name itself is the title unless the publisher stated one.
     "available": true,                   // backend healthy and router accepting requests
     "slots": 1,                          // concurrent generations the router admits
     "context_window": 163840,            // per request; every slot has the full window
@@ -79,7 +84,7 @@ The response is always HTTP 200 with a truthful document, including when no mode
 }
 ```
 
-`models` lists canonical residents once each; aliases appear in `aliases` and `ids`. When the deployment spans more than one machine each model also carries `host`, and `hosts[]` describes the machines:
+`models` lists canonical residents once each; aliases appear in `aliases`, in `ids`, and titled in `metadata.alias_display_names`. When the deployment spans more than one machine each model also carries `host`, and `hosts[]` describes the machines:
 
 - A host that has not published, or whose catalog is invalid, contributes no models and reports `error`. Its absence is not a router failure: the other machines keep serving, `router.accepting_requests` stays true, and an unnamed request answers from the default host.
 - `available` is what a client acts on. It is false when the machine is drained or none of its models answer their health check.

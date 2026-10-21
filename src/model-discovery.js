@@ -455,7 +455,16 @@ export class ActiveModelDiscovery {
         default_output_tokens: activeModel.default_output_tokens ?? null,
         server_default_output_tokens: activeModel.raw?.server_default_output_tokens ?? null,
         ...(health ? { health: { available: health.ok, status: health.status },
-          aliases: activeModel.aliases, artifact: activeModel.raw.artifact ?? null,
+          aliases: activeModel.aliases,
+          // The title every one of this model's names is offered under. A client
+          // that lists *services* — one option per name a person may send, which is
+          // what a picker offers — cannot label two of them from the model's title,
+          // because two names answering to one model would read alike. This is the
+          // same fact the alias rows in `/v1/models` are titled from.
+          alias_display_names: Object.fromEntries((activeModel.aliases ?? []).map((alias) => [
+            alias, activeModel.alias_display_names?.[alias] ?? alias
+          ])),
+          artifact: activeModel.raw.artifact ?? null,
           revision: activeModel.revision, quantization: activeModel.raw.quantization ?? null } : {}),
         ...(activeModel.catalog_mode ? {
           family: nonEmptyText(raw.family),
@@ -591,14 +600,18 @@ export class ModelCatalogDiscovery extends ActiveModelDiscovery {
     // every fact of its target and differs in its id, its alias flag, and its title.
     // Reusing the model's title made the names a person chooses between read alike —
     // one model published as `daytime` and `nighttime` listed the same string three
-    // times, and a picker keyed on the label cannot offer the choice at all. The
+    // times, and a picker keyed on the label could not offer the choice at all. The
     // name itself is the honest label, because it is what the client sends; a
-    // publisher that wants a longer title for a name states it in the catalog.
-    const declaredAliasTitles = new Map(catalog.models.flatMap((entry) => Object.entries(entry.alias_display_names ?? {})));
+    // publisher that wants a longer title states it in the catalog, and the entry
+    // carries the resolved map so every view of it agrees.
     const aliasRow = (row, id) => ({
       ...row,
       id,
-      x_ollama_router: { ...row.x_ollama_router, alias: true, display_name: declaredAliasTitles.get(id) ?? id }
+      x_ollama_router: {
+        ...row.x_ollama_router,
+        alias: true,
+        display_name: row.x_ollama_router.alias_display_names?.[id] ?? id
+      }
     });
     const entries = await Promise.all(selected.map(async (model) => {
       if (!this.residents.has(model.model)) {

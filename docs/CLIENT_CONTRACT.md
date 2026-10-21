@@ -101,6 +101,13 @@ a client that labels a choice with `display_name` was offering the same choice t
 cheap: identify a row by `id`, never by its title, and never de-duplicate rows by title — rows that name the same
 model are deliberately distinct, because the name a client sends is what differs.
 
+A client that lists **services** rather than rows — one option per name a person may send — does not read those rows;
+it reads the capabilities document, which lists each model once. That document publishes the same fact per model in
+`metadata.alias_display_names`, a title for every name the model answers to, derived exactly as the alias rows are.
+Use it as the label of the option that sends that name: two service IDs whose canonical model is the same are then
+offered under two different labels, which is what the picker is for. `metadata.alias_display_names[name]` always exists
+for a name the model declares.
+
 The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
 
 ### Several machines, one router
@@ -301,7 +308,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
-| 1.4 | §4: an alias row in `/v1/models` and `/api/tags` is titled by the alias rather than by its model's title, unless the catalog states one; clients identify rows by `id` and MUST NOT de-duplicate them by title. A client that sends service IDs needs no change: nothing it sends or reads by `id` moved, and the capabilities document still lists each model once, under its own title. |
+| 1.4 | §4: an alias row in `/v1/models` and `/api/tags` is titled by the alias rather than by its model's title, unless the catalog states one, and the capabilities document publishes `metadata.alias_display_names` so a client that offers one option per service can label each name distinctly; clients identify rows by `id` and MUST NOT de-duplicate them by title. A client that sends service IDs needs no change: nothing it sends or reads by `id` moved, and the capabilities document still lists each model once, under its own title. |
 | 1.3 | §4: the capabilities document is `schema_version: 2`, adding `hosts[]` and a per-model `host` when a deployment serves models from more than one machine; a missing machine means those models are not `available`, and unnamed requests still answer. §7: a drain may scope to one machine. §11: schema note. Clients that send service IDs need no change; a client written against 1.2 keeps working untouched. |
 | 1.2 | §3: the `daytime` row states the guarantee a real published configuration actually provides; `trial` is added as an opt-in service ID; **Two kinds of names** distinguishes catalog service IDs from the reserved compatibility alias `local-active`; an omitted model is the active configuration's default, which is not necessarily `daytime`. §4 documents what `service` reports for a model the catalog gives no alias, and the `CATALOG_HAS_NO_SERVICE_ID` warning. §5, §10 and §13 follow. A client that sends service IDs and does not adopt `trial` needs no change: the added §13 lines record what §3 and §5 already required. |
 | 1.1 | §3: benchmarking and evaluation clients may pin a canonical ID for the duration of a run. §11: minor versions defined. |

@@ -1015,3 +1015,30 @@ test('an alias row is titled by its own name, and a stated title wins', async (t
     ['Daytime (160K)', 'Nighttime (128K)', 'local-active', 'Daytime (160K, vision)', 'nighttime']);
   assert.equal((await readModelCatalog(f.config)).models[0].alias_display_names.trial, undefined);
 });
+
+test('the capabilities document publishes the title of every name', async (t) => {
+  const f = await fixture(t);
+  // A client that lists services, not models, labels one option per name a person
+  // may send. It reads the document rather than the listing, so the per-name title
+  // has to be in the document too — otherwise `daytime` and `nighttime` on one
+  // model are two options with one label, which is what a picker cannot show.
+  Object.assign(f.marker.models[0], { alias_display_names: { daytime: 'Daytime (160K, vision)' } });
+  await fs.writeFile(f.file, JSON.stringify(f.marker));
+
+  let row = null;
+  for (let attempt = 0; attempt < 40 && !row; attempt += 1) {
+    const doc = await (await fetch(f.base + '/v1/router/capabilities')).json();
+    row = doc.models.find((model) => model.id === CODING)?.metadata?.alias_display_names ?? null;
+    if (row) assert.deepEqual(row, { 'local-active': 'local-active', daytime: 'Daytime (160K, vision)' });
+    else await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(row, 'the document carries a title for each declared name');
+  const doc = await (await fetch(f.base + '/v1/router/capabilities')).json();
+  const listing = await (await fetch(f.base + '/v1/models')).json();
+  for (const model of doc.models) {
+    // The document and the listing agree, because both derive from the same map.
+    for (const [name, title] of Object.entries(model.metadata.alias_display_names)) {
+      assert.equal(listing.data.find((entry) => entry.id === name).x_ollama_router.display_name, title);
+    }
+  }
+});
