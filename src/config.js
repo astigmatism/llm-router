@@ -2,6 +2,12 @@ import path from 'node:path';
 import { parseDefaultThink } from './reasoning.js';
 import { UNSUPPORTED_TOOLS_POLICIES } from './native-tools.js';
 
+// A catalog host names one machine that publishes models to this router. The
+// identifier travels in URLs (/admin/api/hosts/<host>/catalog), in capability
+// documents and in event records, so it stays a plain slug.
+export const HOST_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+export const LOCAL_HOST_ID = 'local';
+
 function envString(env, key, fallback) {
   const value = env[key];
   if (value === undefined || value === null || String(value).trim() === '') return fallback;
@@ -44,6 +50,18 @@ function envCsv(env, key, fallback = []) {
   return raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function envHosts(env, key, fallback) {
+  const hosts = envCsv(env, key, fallback);
+  for (const host of hosts) {
+    if (!HOST_ID_PATTERN.test(host)) {
+      throw new TypeError(`${key} must list host identifiers matching ${HOST_ID_PATTERN}; received ${JSON.stringify(host)}.`);
+    }
+  }
+  const unique = [...new Set(hosts)];
+  if (!unique.length) throw new TypeError(`${key} must name at least one host.`);
+  return unique;
+}
+
 function envEnum(env, key, fallback, allowed) {
   const value = envString(env, key, fallback).toLowerCase();
   if (allowed.has(value)) return value;
@@ -64,6 +82,11 @@ export function normalizeBaseUrl(value) {
 
 export function loadConfig(env = process.env) {
   const dataDir = envString(env, 'DATA_DIR', '/app/data');
+  const routerHosts = envHosts(env, 'ROUTER_HOSTS', [LOCAL_HOST_ID]);
+  const defaultHost = envString(env, 'ROUTER_DEFAULT_HOST', routerHosts[0]);
+  if (!routerHosts.includes(defaultHost)) {
+    throw new TypeError(`ROUTER_DEFAULT_HOST must name one of ROUTER_HOSTS (${routerHosts.join(', ')}). Received: ${JSON.stringify(defaultHost)}.`);
+  }
   const adminToken = envString(env, 'ADMIN_TOKEN', '');
   const defaultThinkRaw = envString(env, 'DEFAULT_THINK', '');
   const defaultThinkConfigured = Boolean(defaultThinkRaw);
@@ -79,10 +102,22 @@ export function loadConfig(env = process.env) {
     upstreamUrl: normalizeBaseUrl(envString(env, 'OLLAMA_UPSTREAM_URL', 'http://ollama:11434')),
     llamaCppUpstreamUrl: normalizeBaseUrl(envString(env, 'LLAMA_CPP_UPSTREAM_URL', 'http://llama-cpp:8080')),
     upstreamTimeoutMs: envInt(env, 'OLLAMA_UPSTREAM_TIMEOUT_MS', 30000, 1000),
+    // A backend on another machine is reached over the LAN: bound the connect
+    // phase explicitly instead of relying on the transport default.
+    upstreamConnectTimeoutMs: envInt(env, 'UPSTREAM_CONNECT_TIMEOUT_MS', 10000, 100),
     generationStallTimeoutMs: envInt(env, 'GENERATION_STALL_TIMEOUT_MS', 120000, 1),
     responsesContextShift: envBool(env, 'RESPONSES_CONTEXT_SHIFT', false),
     activeModelFile: envString(env, 'ACTIVE_MODEL_FILE', '/app/runtime/active-model.json'),
     routerControlFile: envString(env, 'ROUTER_CONTROL_FILE', '/app/runtime/router-control.json'),
+    // Catalog hosts: the machines that publish models to this router. `local`
+    // reads ACTIVE_MODEL_FILE; every other host is served by the catalog its
+    // machine pushed into CATALOG_STORE_DIR.
+    routerHosts,
+    defaultHost,
+    catalogStoreDir: envString(env, 'CATALOG_STORE_DIR', path.join(dataDir, 'catalogs')),
+    catalogPushToken: envString(env, 'CATALOG_PUSH_TOKEN', ''),
+    catalogMaxAgeMs: envInt(env, 'CATALOG_MAX_AGE_MS', 0, 0),
+    expectRoutableBackendUrls: envBool(env, 'ROUTER_EXPECT_ROUTABLE_BACKEND_URLS', false),
     activeModelFallback: envString(env, 'ACTIVE_MODEL', ''),
     routerModelAlias: envRequiredString(env, 'ROUTER_MODEL_ALIAS', 'local-active'),
     routerModelMetadataTtlMs: envInt(env, 'ROUTER_MODEL_METADATA_TTL_MS', 5000, 0),
@@ -132,12 +167,19 @@ export function publicConfig(config) {
     adminPortalAuthRequired: false,
     legacyAdminApiAuthEnabled: Boolean(config.adminToken),
     upstreamUrl: config.upstreamUrl,
+    upstreamConnectTimeoutMs: config.upstreamConnectTimeoutMs,
     llamaCppUpstreamUrl: config.llamaCppUpstreamUrl,
     upstreamTimeoutMs: config.upstreamTimeoutMs,
     generationStallTimeoutMs: config.generationStallTimeoutMs,
     responsesContextShift: config.responsesContextShift,
     activeModelFile: config.activeModelFile,
     routerControlFile: config.routerControlFile,
+    routerHosts: config.routerHosts,
+    defaultHost: config.defaultHost,
+    catalogStoreDir: config.catalogStoreDir,
+    hasCatalogPushToken: Boolean(config.catalogPushToken),
+    catalogMaxAgeMs: config.catalogMaxAgeMs,
+    expectRoutableBackendUrls: config.expectRoutableBackendUrls,
     hasActiveModelFallback: Boolean(config.activeModelFallback),
     routerModelAlias: config.routerModelAlias,
     routerModelMetadataTtlMs: config.routerModelMetadataTtlMs,
