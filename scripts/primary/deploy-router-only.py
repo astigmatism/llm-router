@@ -16,6 +16,9 @@ PRIMARY = Path('/home/astigmatism/apps/local-ai-primary')
 SOURCE = Path(__file__).resolve().parents[2]
 IMAGE = os.environ.get('ROUTER_PUBLICATION_IMAGE', 'llm-router:latest')
 ROUTER_NAME = 'llm-router'
+# The router this release replaces. A router on its own instance answers elsewhere;
+# set ROUTER_HEALTH_URL rather than editing this file.
+ROUTER_HEALTH_URL = os.environ.get('ROUTER_HEALTH_URL', 'http://192.168.1.4:11434/health')
 IDENTITY_FILE = 'compose.router-identity.json'
 OWNER_PUBLISHER_HASH = 'ecb9f08c52a560a825e24e115e077577ca7f659bcaf259626e248e93f8134689'
 
@@ -156,7 +159,7 @@ def main():
         deadline = time.monotonic() + 120
         while True:
             try:
-                with urllib.request.urlopen('http://192.168.1.4:11434/health', timeout=3) as response:
+                with urllib.request.urlopen(ROUTER_HEALTH_URL, timeout=3) as response:
                     if response.status == 200: break
             except Exception:
                 pass

@@ -106,6 +106,8 @@ When the controller and the router are not on the same host, the shared-director
 - Drain: `POST /admin/api/runtime-drain` with `{"enabled": true, "host": "<host>"}` admits no new work whose model runs on that machine, leaves traffic to other machines flowing, and `GET /admin/api/runtime-state` reports when that machine's accepted work has finished. Omit `host` for a router release of the router itself.
 - Backend URLs must be reachable from the router, so the launch definition publishes its llama.cpp port on the LAN and the catalog names that address; `ROUTER_EXPECT_ROUTABLE_BACKEND_URLS` reports a loopback claim as `BACKEND_URL_NOT_ROUTABLE`.
 
+The publisher takes three settings in the stack environment and needs no code change: `ROUTER_PUSH_URL` (the router's base, e.g. `http://192.168.1.23:11435`), `CATALOG_PUSH_TOKEN`, and `ROUTER_HOST_ID` (this machine's ID in the router's `ROUTER_HOSTS`). With them set, `primary.py` sends every admin call — drain, idle wait, catalog, verification — to that router with the publisher token, drains only this machine, reads back the revision it published, and verifies only the models it is responsible for. Without them the release is the historical local handoff on this machine's admin port.
+
 Everything else about a release — reservation, verification, republish, reopening admission — is the sequence above. See [multi-host deployments](MULTI_HOST.md).
 
 ### Strata trial integration

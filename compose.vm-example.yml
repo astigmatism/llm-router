@@ -1,0 +1,100 @@
+# The router on its own instance, with the models elsewhere.
+#
+# This is the shape for a machine that routes but does not run GPUs: no model
+# directory to mount, no shared Docker network with the backends, and a catalog
+# that arrives over HTTP from the machines that do run them. `local` is declared
+# with the remote hosts so the router can be given a model to hold locally
+# without reconfiguring anything, and the host whose machine publishes first is
+# the one that answers an unnamed request.
+#
+# Secrets stay out of this file. Compose reads them from the credentials
+# directory at the path the machine's own layout defines.
+#
+# Before the first start:
+#   install -d -m 0755 -o 1000 -g 1000 data data/runtime data/history
+services:
+  ai-router:
+    build:
+      context: .
+    image: "${ROUTER_IMAGE:-llm-router:latest}"
+    container_name: "${ROUTER_CONTAINER_NAME:-llm-router}"
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m
+    pull_policy: never
+    env_file:
+      - path: "${ROUTER_ENV_FILE:-/home/astigmatism/credentials/llm-router/router.env}"
+        format: raw
+    ports:
+      # Ollama-compatible API for clients, and the catalog publication endpoint.
+      - "${ROUTER_BIND_IP:-192.168.1.23}:${ROUTER_PUBLIC_PORT:-11434}:11434"
+      # Unauthenticated human admin portal. Trusted network only.
+      - "${ROUTER_BIND_IP:-192.168.1.23}:${ADMIN_PUBLIC_PORT:-11435}:${ADMIN_PORT:-11435}"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "11434"
+      ADMIN_ENABLED: "${ADMIN_ENABLED:-true}"
+      ADMIN_BIND_HOST: "${ADMIN_BIND_HOST:-0.0.0.0}"
+      ADMIN_PORT: "${ADMIN_PORT:-11435}"
+
+      # The machines whose catalogs this router serves, and which one answers an
+      # unnamed request. Order is precedence for a name two machines claim.
+      ROUTER_HOSTS: "${ROUTER_HOSTS:-local,rosalina}"
+      ROUTER_DEFAULT_HOST: "${ROUTER_DEFAULT_HOST:-rosalina}"
+      CATALOG_STORE_DIR: "/app/data/catalogs"
+      # CATALOG_PUSH_TOKEN is delivered from the env file, never from here.
+      CATALOG_MAX_AGE_MS: "${CATALOG_MAX_AGE_MS:-3600000}"
+      # The backends are on other machines, so a loopback backend URL is a
+      # mistake worth hearing about rather than debugging as an unexplained 503.
+      ROUTER_EXPECT_ROUTABLE_BACKEND_URLS: "${ROUTER_EXPECT_ROUTABLE_BACKEND_URLS:-true}"
+
+      # `local` is still file-backed: the runtime on this machine, if it has one,
+      # keeps writing here. With nothing published to it, it simply contributes no
+      # models and reports HOST_CATALOG_UNPUBLISHED.
+      ACTIVE_MODEL_FILE: "/app/data/runtime/active-model.json"
+      ROUTER_MODEL_ALIAS: "${ROUTER_MODEL_ALIAS:-local-active}"
+      ROUTER_MODEL_METADATA_TTL_MS: "${ROUTER_MODEL_METADATA_TTL_MS:-5000}"
+      ROUTER_CAPABILITY_POLL_MS: "${ROUTER_CAPABILITY_POLL_MS:-5000}"
+      ROUTER_EVENTS_HEARTBEAT_MS: "${ROUTER_EVENTS_HEARTBEAT_MS:-15000}"
+      ROUTER_EVENTS_MAX_SUBSCRIBERS: "${ROUTER_EVENTS_MAX_SUBSCRIBERS:-64}"
+
+      MODEL_POLICY_MODE: "catalog"
+      REWRITE_REQUESTED_MODEL_TO_ACTIVE: "${REWRITE_REQUESTED_MODEL_TO_ACTIVE:-false}"
+      FORCE_KEEP_ALIVE: "-1"
+      UNSUPPORTED_TOOLS_POLICY: "${UNSUPPORTED_TOOLS_POLICY:-drop}"
+      ALLOW_MODEL_MANAGEMENT: "false"
+
+      DATA_DIR: "/app/data"
+      REQUEST_HISTORY_LIMIT: "${REQUEST_HISTORY_LIMIT:-2500}"
+      EVENT_HISTORY_LIMIT: "${EVENT_HISTORY_LIMIT:-2000}"
+      REQUEST_LOG_MAX_BYTES: "${REQUEST_LOG_MAX_BYTES:-5242880}"
+      EVENT_LOG_MAX_BYTES: "${EVENT_LOG_MAX_BYTES:-5242880}"
+      GENERATION_RETENTION_DAYS: "${GENERATION_RETENTION_DAYS:-7}"
+      GENERATION_MAX_BYTES: "${GENERATION_MAX_BYTES:-1073741824}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-0}"
+      PROMPT_LOGGING: "${PROMPT_LOGGING:-metadata}"
+
+      # This machine has no GPU to report. The panel's GPU telemetry describes
+      # the host the router runs on, not the machines that publish models here.
+      GPU_TELEMETRY_ENABLED: "${GPU_TELEMETRY_ENABLED:-false}"
+    volumes:
+      # One mount: the catalog store, the drain control file, the request logs,
+      # and `local`'s marker if this machine ever publishes one.
+      - ./data:/app/data
+    networks:
+      router:
+        aliases:
+          - ai-router
+          - llm-router
+          - local-ai-ollama-router
+
+networks:
+  router:
+    name: llm-router

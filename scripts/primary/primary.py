@@ -51,32 +51,68 @@ def inspect(name):
     raw = docker('inspect', name, check=False)
     return json.loads(raw)[0] if raw and raw != '[]' else None
 
-def http(url, body=None, headers=None, timeout=30):
-    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+def http(url, body=None, headers=None, timeout=30, method=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method=method,
         headers={'Content-Type': 'application/json', **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.load(response)
 
-def admin(path, body=None):
+def stack_env():
     env = {}
     for line in (STACK / '.env').read_text().splitlines():
         if line.strip() and not line.lstrip().startswith('#') and '=' in line:
             k, v = line.split('=', 1)
             parts = shlex.split(v, comments=True)
             env[k.strip()] = parts[0] if parts else ''
+    return env
+
+# A router on its own machine is not reachable through this host's shared
+# directory or its Docker network, so every admin call — the catalog push, the
+# drain, the state read — goes to that router over the network with the publisher
+# token. Configure ROUTER_PUSH_URL (the router's base, e.g. http://192.168.1.23:
+# 11435), CATALOG_PUSH_TOKEN and ROUTER_HOST_ID in the stack env; the release
+# keeps every other part of its sequence. Unset means the historical local
+# handoff on this machine's admin port.
+def push_target():
+    env = stack_env()
+    base = env.get('ROUTER_PUSH_URL', '').rstrip('/')
+    token = env.get('CATALOG_PUSH_TOKEN', '')
+    if not base or not token:
+        return None
+    return {'base': base, 'token': token, 'host': env.get('ROUTER_HOST_ID', '') or None}
+
+def admin(path, body=None):
+    target = push_target()
+    if target:
+        return http(target['base'] + '/admin/api/' + path, body,
+            {'Authorization': 'Bearer ' + target['token']})
+    env = stack_env()
     return http('http://' + env.get('ROUTER_BIND_IP', '192.168.1.4') + ':' +
         env.get('ADMIN_PUBLIC_PORT', '11435') + '/admin/api/' + path, body,
         {env.get('ADMIN_SESSION_HEADER', 'X-Admin-Token'): env['ADMIN_TOKEN']})
 
 def drain(enabled):
-    return admin('runtime-drain', {'enabled': enabled, 'reason': 'primary runtime maintenance' if enabled else 'primary ready'})
+    body = {'enabled': enabled, 'reason': 'primary runtime maintenance' if enabled else 'primary ready'}
+    target = push_target()
+    if target and target['host']:
+        body['host'] = target['host']
+    return admin('runtime-drain', body)
 
 def wait_idle():
+    target = push_target()
+    host = target['host'] if target else None
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         s = admin('runtime-state')['runtime']
-        if s['active_count'] == 0 and s.get('queued_count', 0) == 0:
-            return
+        if host is None:
+            if s['active_count'] == 0 and s.get('queued_count', 0) == 0:
+                return
+        else:
+            # Another machine's generation is not this machine's maintenance window.
+            if not s.get('draining_hosts') or host in s['draining_hosts']:
+                if s.get('active_by_host', {}).get(host, 0) == 0 and s.get('queued_by_host', {}).get(host, 0) == 0:
+                    return
         time.sleep(2)
     raise RuntimeError('Active requests did not finish; no backend has been stopped')
 
@@ -226,10 +262,32 @@ def publish_marker():
         entry['updated_at'] = catalog['updated_at']
         entry['backend_revision'] = m['engine']['revision']
     write(MARKER, catalog)
-    admin('reload-config', {})
+    # A shared directory and a reload call are one handoff; a router that lives
+    # elsewhere gets the same catalog over HTTP and this runtime reads back the
+    # revision it published, so a receipt is proof rather than optimism.
+    target = push_target()
+    if target and target['host']:
+        receipt = http(target['base'] + '/admin/api/hosts/' + target['host'] + '/catalog', catalog,
+            {'Authorization': 'Bearer ' + target['token']}, method='PUT')
+        if not receipt.get('ok') or receipt.get('default_model') != catalog['default_model']:
+            raise RuntimeError('Router refused the catalog: ' + json.dumps(receipt.get('warnings') or receipt))
+        if receipt.get('warnings'):
+            print('Router warnings for the published catalog: ' + ', '.join(receipt['warnings']), flush=True)
+        print('Published catalog revision ' + receipt['revision'][:12] + ' to host ' + target['host'], flush=True)
+    else:
+        admin('reload-config', {})
     state = admin('runtime-state')
     entries = state.get('models', [])
-    if (state['active_model']['profile'] != 'primary'
+    # A shared deployment lists every machine's models. This release answers for
+    # the ones it published, and reports another machine's active model only when
+    # this machine is the one the router answers unnamed requests with.
+    default_host = None
+    if target and target['host']:
+        mine = {entry['model'] for entry in catalog['models']}
+        entries = [entry for entry in entries if entry['id'] in mine]
+        default_host = admin('hosts').get('default_host')
+    active_is_mine = default_host is None or default_host == target['host']
+    if ((active_is_mine and state['active_model']['profile'] != 'primary')
         or {entry['id'] for entry in entries} != {entry['model'] for entry in catalog['models']}
         or not all(entry['x_ollama_router']['health']['available'] for entry in entries)):
         raise RuntimeError('Router resident catalog/readiness verification failed')
