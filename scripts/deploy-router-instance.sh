@@ -77,12 +77,16 @@ grep -q '^CATALOG_PUSH_TOKEN=.' "$ENV_FILE" || { say "$ENV_FILE has no CATALOG_P
 install -d -m 0755 "$BASE/data" "$BASE/data/history" "$BASE/runtime"
 chown -R 1000:1000 "$BASE/data" "$BASE/runtime"
 # An early version of this script let Compose resolve the mounts against the
-# checkout. Move any state it left there rather than starting a second store.
-for stray in "$SOURCE/data" "$SOURCE/runtime"; do
-  [[ -d $stray && ! -L $stray ]] || continue
-  find "$stray" -mindepth 1 -maxdepth 1 -exec mv -n {} "$BASE/$(basename "$stray")/" \;
-  rmdir "$stray" 2>/dev/null && say "moved stray state out of the checkout: $(basename "$stray")" || true
-done
+# checkout, which wrote state next to the tracked files in ./data and ./runtime.
+# Move exactly those paths and nothing else: both directories belong to the
+# repository, and sweeping one of them takes the Dockerfile's `COPY runtime` with
+# it, which is a deployment that fails for a reason unrelated to routing.
+if [[ -d $SOURCE/data/catalogs ]]; then
+  mv -n "$SOURCE/data/catalogs" "$BASE/data/" && say "moved the catalog store out of the checkout"
+fi
+if [[ -f $SOURCE/runtime/router-control.json ]]; then
+  mv -n "$SOURCE/runtime/router-control.json" "$BASE/runtime/" && say "moved the drain control file out of the checkout"
+fi
 
 # 4. Start. Compose builds from the checkout it lives in; the image is never
 #    pulled, so what is running is what is committed.

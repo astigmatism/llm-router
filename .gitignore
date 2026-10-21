@@ -10,6 +10,7 @@ data/*.log
 data/*.json
 data/catalogs/
 runtime/active-model.json
+runtime/router-control.json
 runtime/*.local.json
 __pycache__/
 *.py[cod]
