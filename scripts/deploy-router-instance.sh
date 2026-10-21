@@ -25,6 +25,11 @@ COMPOSE_FILE="${COMPOSE_FILE:-$SOURCE/compose.vm-example.yml}"
 umask 077
 say() { printf '%s\n' "$*"; }
 
+# The hash of the script this process started reading, taken before the checkout
+# is updated. Bash reads a script as it runs, so once the file changes underneath
+# it every later line comes from the copy it already read.
+STARTED_SHA256="$(sha256sum "$(readlink -f "${BASH_SOURCE[0]}")" | cut -d" " -f1)"
+
 # 1. Source. Public repository, so no credential is needed to fetch it. A
 #    deployment checkout stays on a branch and is never edited in place.
 if [[ -d $SOURCE/.git ]]; then
@@ -37,14 +42,11 @@ else
 fi
 say "source  $(git -C "$SOURCE" rev-parse --short HEAD) $(git -C "$SOURCE" status --porcelain | wc -l | tr -d ' ') dirty"
 
-# Bash reads a script as it runs, so an installer that updates its own source is
-# still executing the previous revision for every line after the update. Re-run
-# the revision that is now on disk rather than deploying a version of itself that
-# no longer exists, which is how a fix lands in the middle of a deployment and
-# quietly does nothing.
-SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+# Re-run the revision that is now on disk rather than deploying a version of
+# itself that no longer exists, which is how a fix lands in the middle of a
+# deployment and quietly does nothing.
 FRESH="$SOURCE/scripts/deploy-router-instance.sh"
-if [[ ${ROUTER_INSTANCE_SELF:-0} != 1 && -f $FRESH && $SELF != $(readlink -f "$FRESH" 2>/dev/null) ]]; then
+if [[ ${ROUTER_INSTANCE_SELF:-0} != 1 && -f $FRESH && $(sha256sum "$FRESH" | cut -d" " -f1) != "$STARTED_SHA256" ]]; then
   say "re-running the installer from the updated checkout at $(git -C "$SOURCE" rev-parse --short HEAD)"
   ROUTER_INSTANCE_SELF=1 BIND_IP="$BIND_IP" ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
   BASE="$BASE" ENV_FILE="$ENV_FILE" REPO_URL="$REPO_URL" REV="$REV" COMPOSE_FILE="$COMPOSE_FILE" \
