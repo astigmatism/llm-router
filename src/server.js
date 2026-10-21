@@ -364,8 +364,20 @@ function notifyCapabilities(context) {
   void context.capabilities.refresh().catch(() => {});
 }
 
+// The portal lists what a client can select, so each row names the machine
+// running it as soon as the deployment spans more than one.
+async function summaryModels(context) {
+  const entries = (await context.modelDiscovery.document(null, { includeAliases: false })).entries;
+  if (context.config.routerHosts.length === 1) return entries;
+  const catalog = await readModelCatalog(context.config);
+  const hostOf = new Map((catalog.models ?? []).filter((model) => model.host).map((model) => [model.model, model.host]));
+  return entries.map((entry) => (hostOf.has(entry.id)
+    ? { ...entry, x_ollama_router: { ...entry.x_ollama_router, host: hostOf.get(entry.id) } }
+    : entry));
+}
+
 async function buildSummary(context) {
-  const activeModel = await readActiveModel(context.config);
+  const activeModel = await readDeploymentActiveModel(context.config);
   const backend = resolveBackendAdapter(context.config, activeModel);
   const [upstream, ps, gpu] = await Promise.all([
     backend.health(),
@@ -402,7 +414,8 @@ async function buildSummary(context) {
     },
     config: publicConfig(context.config),
     activeModel,
-    models: (await context.modelDiscovery.document(null, { includeAliases: false })).entries,
+    ...(context.config.routerHosts.length === 1 ? {} : { hosts: (await deploymentHosts(context)).hosts }),
+    models: await summaryModels(context),
     upstream,
     ollamaPs: ps,
     activeLoadedState,
@@ -511,7 +524,7 @@ async function handleCatalogRetire(request, response, host, context) {
   sendJson(response, 200, { ok: true, host, removed: result.removed, file: result.file });
 }
 
-async function handleHostsList(response, context) {
+async function deploymentHosts(context) {
   const gate = context.requestGate.snapshot();
   let catalog = null;
   let error = null;
@@ -520,7 +533,7 @@ async function handleHostsList(response, context) {
   } catch (readError) {
     error = { code: readError.code || 'INTERNAL_ERROR', message: readError.message };
   }
-  const hosts = catalog?.hosts ?? await Promise.all(context.config.routerHosts.map(async (host) => {
+  const fallback = await Promise.all(context.config.routerHosts.map(async (host) => {
     const source = await readHostSource(context.config, host);
     return {
       id: host, display_name: host, default: host === context.config.defaultHost, resident: false,
@@ -529,18 +542,19 @@ async function handleHostsList(response, context) {
       error: source.readError ? { code: 'HOST_CATALOG_UNPUBLISHED', message: source.readError } : null
     };
   }));
-  sendJson(response, 200, {
-    ok: true,
-    default_host: context.config.defaultHost,
-    hosts: hosts.map((host) => ({
-      ...host,
-      draining: gate.draining || Boolean(gate.hosts?.[host.id]?.draining),
-      drain_reason: gate.hosts?.[host.id]?.drain_reason ?? (gate.draining ? gate.drain_reason : null),
-      active: gate.active_by_host?.[host.id] ?? 0,
-      queued: gate.queued_by_host?.[host.id] ?? 0
-    })),
-    ...(error ? { error } : {})
-  });
+  const hosts = (catalog?.hosts ?? fallback).map((host) => ({
+    ...host,
+    draining: gate.draining || Boolean(gate.hosts?.[host.id]?.draining),
+    drain_reason: gate.hosts?.[host.id]?.drain_reason ?? (gate.draining ? gate.drain_reason : null),
+    active: gate.active_by_host?.[host.id] ?? 0,
+    queued: gate.queued_by_host?.[host.id] ?? 0
+  }));
+  return { hosts, error };
+}
+
+async function handleHostsList(response, context) {
+  const { hosts, error } = await deploymentHosts(context);
+  sendJson(response, 200, { ok: true, default_host: context.config.defaultHost, hosts, ...(error ? { error } : {}) });
 }
 
 async function handleAdminApi(request, response, pathname, context, { requireAuth = true } = {}) {

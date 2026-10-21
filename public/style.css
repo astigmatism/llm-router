@@ -91,6 +91,17 @@ button:hover, .api-link:hover { border-color: var(--accent); }
 .kv:last-child { border-bottom: 0; }
 .kv-label { color: var(--muted); }
 .kv-value { word-break: break-word; }
+.badge {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: .05rem .4rem;
+  vertical-align: middle;
+}
+
 .issue {
   border-left: 3px solid var(--warn);
   padding: .55rem .75rem;

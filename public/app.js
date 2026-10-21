@@ -29,6 +29,17 @@ if (requestFilter) {
 }
 
 document.querySelector('#refresh').addEventListener('click', refresh);
+// The hosts table is re-rendered on every refresh, so the buttons are handled
+// from the panel rather than bound to each row.
+document.querySelector('#hosts').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-drain-host]');
+  if (!button) return;
+  void postControl('/admin/api/runtime-drain', {
+    host: button.dataset.drainHost,
+    enabled: button.dataset.enabled === 'true',
+    reason: button.dataset.enabled === 'true' ? 'paused from the admin portal' : null
+  });
+});
 document.querySelector('#prewarm').addEventListener('click', () => postControl('/admin/api/prewarm', { model: document.querySelector('#control-model').value }));
 document.querySelector('#reload-config').addEventListener('click', () => postControl('/admin/api/reload-config', {}));
 document.querySelector('#test-chat').addEventListener('click', () => postControl('/admin/api/test-chat', { model: document.querySelector('#control-model').value, prompt: 'Reply with a short router health check.' }));
@@ -122,6 +133,30 @@ function renderCards(summary) {
 
 function kv(label, value) {
   return `<div class="kv"><div class="kv-label">${text(label)}</div><div class="kv-value">${text(value)}</div></div>`;
+}
+
+// One row per machine that publishes models here. Absent for a router with a
+// single host, which is the deployment the portal was written for.
+function renderHosts(summary) {
+  const section = document.querySelector('#hosts-section');
+  const hosts = summary.hosts;
+  if (!hosts?.length) {
+    section.hidden = true;
+    section.innerHTML = '';
+    return;
+  }
+  section.hidden = false;
+  document.querySelector('#hosts').innerHTML = '<table><tr><th>Machine</th><th>Models</th><th>Health</th><th>Draining</th><th>Last published</th><th>Traffic</th><th></th></tr>'
+    + hosts.map((host) => `<tr>
+      <td>${text(host.display_name ?? host.id)}${host.default ? ' <span class="badge">default</span>' : ''}</td>
+      <td>${text((host.model_ids || []).join(', ') || '—')}</td>
+      <td>${host.published ? (host.error ? `unpublished (${text(host.error.code)})` : 'published') : 'no catalog'}</td>
+      <td>${host.draining ? `yes${host.drain_reason ? ` — ${text(host.drain_reason)}` : ''}` : 'no'}</td>
+      <td>${text(host.accepted_at ?? 'never')}</td>
+      <td>${text(host.active ?? 0)} active, ${text(host.queued ?? 0)} queued</td>
+      <td><button data-drain-host="${text(host.id)}" data-enabled="${host.draining ? 'false' : 'true'}">${host.draining ? 'Resume traffic' : 'Drain for maintenance'}</button></td>
+    </tr>`).join('') + '</table>'
+    + (summary.hosts_error ? `<div class="issue">${text(summary.hosts_error.message)}</div>` : '');
 }
 
 function renderPolicy(summary) {
@@ -234,14 +269,16 @@ async function refresh() {
     lastSummary = summary;
     renderCards(summary);
     const models = summary.models || [];
-    document.querySelector('#model-catalog').innerHTML = '<table><tr><th>Model</th><th>Health</th><th>Context</th><th>Slots</th><th>Capabilities</th><th>Aliases</th></tr>' + models.map((entry) => {
+    const multiHost = models.some((entry) => entry.x_ollama_router?.host);
+    document.querySelector('#model-catalog').innerHTML = `<table><tr><th>Model</th>${multiHost ? '<th>Machine</th>' : ''}<th>Health</th><th>Context</th><th>Slots</th><th>Capabilities</th><th>Aliases</th></tr>` + models.map((entry) => {
       const meta = entry.x_ollama_router;
-      return `<tr><td>${text(meta.display_name ?? meta.upstream_model)}</td><td>${text(meta.health?.available ? 'healthy' : 'unavailable')}</td><td>${text(meta.context_window)}</td><td>${text(meta.active_request_limit)}</td><td>${text(meta.capabilities?.join(', '))}</td><td>${text(meta.aliases?.join(', '))}</td></tr>`;
+      return `<tr><td>${text(meta.display_name ?? meta.upstream_model)}</td>${multiHost ? `<td>${text(meta.host ?? '—')}</td>` : ''}<td>${text(meta.health?.available ? 'healthy' : 'unavailable')}</td><td>${text(meta.context_window)}</td><td>${text(meta.active_request_limit)}</td><td>${text(meta.capabilities?.join(', '))}</td><td>${text(meta.aliases?.join(', '))}</td></tr>`;
     }).join('') + '</table>';
     const picker = document.querySelector('#control-model');
     const previous = picker.value;
     picker.innerHTML = models.map((entry) => `<option value="${text(entry.id)}">${text(entry.x_ollama_router?.display_name ?? entry.id)}</option>`).join('');
     if (models.some((entry) => entry.id === previous)) picker.value = previous;
+    renderHosts(summary);
     renderPolicy(summary);
     renderIssues(summary);
     lastRequests = requests.requests || [];
