@@ -44,6 +44,15 @@ ROUTER_HOSTS=local,rosalina
 ROUTER_DEFAULT_HOST=local
 ```
 
+Joining is therefore two edits, one on each side: the ID in the router's list, and
+the router's address in the machine's definition. The list is read at startup, so a
+new machine appears when the router next starts — about a second, once per machine,
+against the guarantee that no machine can rename what clients are already sending.
+A deployment that grows on its own, with machines enrolling by first appearance,
+would need precedence and a default host decided by arrival order; this one decides
+them by writing them down. The publisher's view of the same rule, including what an
+undeclared ID is told, is in [runtime integration](RUNTIME_INTEGRATION.md).
+
 `local` is a reserved ID meaning *the machine this router process runs on*. It
 keeps the handoff exactly as it has always worked: the runtime writes
 `ACTIVE_MODEL_FILE` (falling back to the `ACTIVE_MODEL` environment value), then
