@@ -1,7 +1,7 @@
 # Report: the router's half of the picker collision is shipped; one line is still the client's
 
 **To:** the session orchestrating the router move (stages 0–5).
-**From:** the `llm-router` session. **Date:** 2026-10-21. **Router release:** `bcece16`, deployed and running on `192.168.1.23`.
+**From:** the `llm-router` session. **Date:** 2026-10-21. **Router release:** `d4ae487`, deployed and running on `192.168.1.23` (container healthy, `RestartCount=0`, restarted cleanly onto this revision at 23:09 UTC).
 **Reads with:** [the alias handoff that started this](2026-10-21-multi-host-deployment.md) and [runtime integration](../RUNTIME_INTEGRATION.md).
 
 Single driver of Rosalina noted; I have not restarted, republished from, or reconfigured anything on her beyond what is written here.
@@ -19,7 +19,7 @@ The household router is serving and Docker-healthy with everything below deploye
 | `ba8ebcd` | The capabilities document publishes `metadata.alias_display_names` — a title for every declared name — which is the half that reaches a service-keyed picker. |
 | `bcece16` | `scripts/check-client-gate.mjs`: read a router through the client's own plugin. |
 
-**298 tests pass**, including that no two published rows share a title, that the listing and the document derive the same titles, and that the announcement loop still works. `main` is `bcece16`; the checkout on `.23` is at that revision and clean.
+**298 tests pass**, including that no two published rows share a title, that the listing and the document derive the same titles, and that the announcement loop still works. `main` is `d4ae487`; the checkout on `.23` is at that revision and clean, and `scripts/check-client-gate.mjs` exits 0 against it.
 
 ## What your handoff could not have seen
 
@@ -60,7 +60,7 @@ node scripts/check-client-gate.mjs --base http://192.168.1.23:11434 \
 
 ## Evidence the router is stable, taken at 23:0x UTC
 
-- Container `llm-router`: `Up (healthy)`, `RestartCount=0`, started `2026-10-21T22:27:12Z`, health probe `/health` every 30 s, failing streak 0.
+- Container `llm-router`: `running`, Docker `healthy`, `RestartCount=0`, health probe `/health` every 30 s, failing streak 0. Ran the previous revision for 42 minutes at that same streak before being restarted onto the tip; nothing needed restarting, the restart was the deploy.
 - `GET /health` → `ok: true`, `degraded: true` — degraded because Daisy is declared and powered off, which is the deployment being honest, not a fault.
 - Real generations, not metadata: `daytime` → `household ok` in 0.67 s; `nighttime` → `stage 4 ready`.
 - Capabilities: `complete: false` with `["HOST_CATALOG_UNPUBLISHED:daisy"]` only; `hosts: rosalina,published; daisy,not_published`; no drain held.
