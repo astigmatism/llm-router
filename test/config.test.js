@@ -121,3 +121,38 @@ test('configures capability polling and event stream limits with safe minimums',
   assert.equal(published.eventsMaxSubscribers, 8);
   assert.equal(published.capabilityPollMs, 5000);
 });
+
+test('declares one local host and no host distinction by default', () => {
+  const config = loadConfig({ DATA_DIR: '/tmp/router-data' });
+  assert.deepEqual(config.routerHosts, ['local']);
+  assert.equal(config.defaultHost, 'local');
+  assert.equal(config.catalogStoreDir, '/tmp/router-data/catalogs');
+  assert.equal(config.catalogPushToken, '');
+  assert.equal(config.catalogMaxAgeMs, 0);
+  assert.equal(config.expectRoutableBackendUrls, false);
+  // The token itself is never published, only whether the deployment has one.
+  assert.equal(publicConfig(config).hasCatalogPushToken, false);
+  assert.equal(publicConfig(loadConfig({ CATALOG_PUSH_TOKEN: 'secret' })).hasCatalogPushToken, true);
+  assert.ok(!JSON.stringify(publicConfig(loadConfig({ CATALOG_PUSH_TOKEN: 'secret' }))).includes('secret'));
+});
+
+test('declares hosts in precedence order with a default among them', () => {
+  const config = loadConfig({ ROUTER_HOSTS: 'local, rosalina ,rosalina, daisy', ROUTER_DEFAULT_HOST: 'rosalina' });
+  assert.deepEqual(config.routerHosts, ['local', 'rosalina', 'daisy']);
+  assert.equal(config.defaultHost, 'rosalina');
+  assert.deepEqual(publicConfig(config).routerHosts, ['local', 'rosalina', 'daisy']);
+  assert.equal(publicConfig(config).defaultHost, 'rosalina');
+  // The first declared host is the default when none is named: precedence has
+  // to mean something even before an operator states it.
+  assert.equal(loadConfig({ ROUTER_HOSTS: 'daisy,local' }).defaultHost, 'daisy');
+});
+
+test('refuses a host list that cannot name its hosts or its default', () => {
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: 'Rosalina' }), /ROUTER_HOSTS/);
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: ' , ' }), /must name at least one host/);
+  assert.deepEqual(loadConfig({ ROUTER_HOSTS: 'local,,local' }).routerHosts, ['local']);
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: 'host name' }), /ROUTER_HOSTS/);
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: 'x'.repeat(65) }), /ROUTER_HOSTS/);
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: 'local', ROUTER_DEFAULT_HOST: 'rosalina' }), /ROUTER_DEFAULT_HOST must name one of ROUTER_HOSTS/);
+  assert.throws(() => loadConfig({ ROUTER_HOSTS: 'local,rosalina', ROUTER_DEFAULT_HOST: 'daisy' }), /ROUTER_DEFAULT_HOST must name one of ROUTER_HOSTS/);
+});
