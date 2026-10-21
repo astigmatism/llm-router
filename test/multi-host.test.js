@@ -232,11 +232,12 @@ test('the default host selects the model an unnamed request answers with', async
 });
 
 test('runtime-state names the pushed default host as what an unnamed request answers with', async (t) => {
-  // A runtime reopens the door it closed only after the router tells it, over the same connection, that
-  // the configuration it published is the one now answering. On a router with a marker file that has
-  // always been answerable; on a router whose default host published over HTTP it is answerable only if
-  // runtime-state stops reading the empty marker — and `profile` has to travel with the model, because
-  // that is the field the runtime compares, the way it always did.
+  // A runtime reopens the door it closed only after the router tells it, over the same connection,
+  // which model is now answering unnamed requests. On a router with a marker file that has always been
+  // answerable; on a router whose default host published over HTTP it is answerable only if
+  // runtime-state reads the published host, which is what it does now. The configuration's own name is
+  // on the roster, beside the revision it accepted; `profile` stays the publisher's name for the
+  // resident, because that is what it has always named.
   const f = await fixture(t, { secondHost: 'rosalina', env: { ROUTER_DEFAULT_HOST: 'rosalina', ADMIN_ENABLED: 'true' } });
   const backend = await fakeBackend(NIGHT, t, f.hits, catalogEntry(NIGHT, []).max_active_requests);
   const catalog = Object.assign(
@@ -245,8 +246,12 @@ test('runtime-state names the pushed default host as what an unnamed request ans
   assert.equal((await f.publish('rosalina', catalog)).status, 200);
   const state = await (await fetch(f.base + '/admin/api/runtime-state', { headers: { 'x-admin-token': 'test' } })).json();
   assert.equal(state.active_model.model, NIGHT);
-  assert.equal(state.active_model.profile, 'recovery-cache');
+  assert.equal(state.active_model.profile, catalog.profile,
+    'the publisher\'s name for its resident travels unchanged; the router renames nothing');
   assert.equal(state.active_model.context_length, catalog.context_length);
+  const roster = await f.get('/admin/api/hosts');
+  assert.equal(roster.hosts.find((host) => host.id === 'rosalina').configuration.id, 'recovery-cache',
+    'the configuration this machine published is named where an owner can compare it');
   const health = await f.get('/health');
   assert.equal(health.activeModel.model, NIGHT, 'health and runtime-state must not disagree');
 });
