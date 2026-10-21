@@ -37,6 +37,20 @@ else
 fi
 say "source  $(git -C "$SOURCE" rev-parse --short HEAD) $(git -C "$SOURCE" status --porcelain | wc -l | tr -d ' ') dirty"
 
+# Bash reads a script as it runs, so an installer that updates its own source is
+# still executing the previous revision for every line after the update. Re-run
+# the revision that is now on disk rather than deploying a version of itself that
+# no longer exists, which is how a fix lands in the middle of a deployment and
+# quietly does nothing.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+FRESH="$SOURCE/scripts/deploy-router-instance.sh"
+if [[ ${ROUTER_INSTANCE_SELF:-0} != 1 && -f $FRESH && $SELF != $(readlink -f "$FRESH" 2>/dev/null) ]]; then
+  say "re-running the installer from the updated checkout at $(git -C "$SOURCE" rev-parse --short HEAD)"
+  ROUTER_INSTANCE_SELF=1 BIND_IP="$BIND_IP" ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
+  BASE="$BASE" ENV_FILE="$ENV_FILE" REPO_URL="$REPO_URL" REV="$REV" COMPOSE_FILE="$COMPOSE_FILE" \
+    exec bash "$FRESH"
+fi
+
 # 2. Secrets. Generated once and then never printed; the file is the record.
 install -d -m 0700 "$(dirname "$ENV_FILE")"
 if [[ ! -f $ENV_FILE ]]; then
