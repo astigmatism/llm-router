@@ -161,7 +161,9 @@ test('capabilities document describes residents, configuration and live facts, a
   const doc = await response.json();
   assert.equal(response.headers.get('etag'), `"${doc.revision}"`);
   assert.equal(doc.object, 'router.capabilities');
-  assert.equal(doc.schema_version, 1);
+  assert.equal(doc.schema_version, 2);
+  // One machine publishing is the deployment: no host distinction is invented.
+  assert.equal(doc.hosts, undefined);
   assert.equal(doc.complete, true, JSON.stringify(doc.warnings));
   assert.deepEqual(doc.warnings, []);
   assert.deepEqual(doc.router, { name: 'llm-router', version: f.config.version, accepting_requests: true, draining: false, drain_reason: null, maintenance: false });

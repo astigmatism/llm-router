@@ -13,7 +13,10 @@ import { createHash } from 'node:crypto';
 // GET /v1/router/events for changes. Every event carries a complete document,
 // so a client never has to apply a diff.
 
-export const CAPABILITIES_SCHEMA_VERSION = 1;
+// Version 2 adds `hosts` and the host each model belongs to, both of which
+// appear only once a deployment spans more than one machine. Every field a
+// version 1 client reads is unchanged, and unknown fields are ignored.
+export const CAPABILITIES_SCHEMA_VERSION = 2;
 const LOAD_EVENT_INTERVAL_MS = 1000;
 const MAX_SUBSCRIBER_BACKLOG_BYTES = 1024 * 1024;
 const RECONNECT_RETRY_MS = 3000;
@@ -21,9 +24,12 @@ const RECONNECT_RETRY_MS = 3000;
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('base64url');
 const errorCode = (error) => (typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'MODEL_DISCOVERY_FAILED');
 
-function modelSummary(entry, acceptingRequests, compatibilityAlias) {
+function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHosts) {
   const meta = entry.x_ollama_router || {};
   const aliases = Array.isArray(meta.aliases) ? [...meta.aliases] : [];
+  // A machine under maintenance stops its own traffic; the models that run
+  // somewhere else stay available.
+  const hostDraining = meta.host !== undefined && drainingHosts.has(meta.host);
   return {
     id: entry.id,
     // The stable ID clients should send for this model: its service alias
@@ -33,7 +39,8 @@ function modelSummary(entry, acceptingRequests, compatibilityAlias) {
     aliases,
     // A listed model is usable only while its backend answers health checks
     // and the router is admitting new requests.
-    available: acceptingRequests && (meta.health ? meta.health.available === true : true),
+    available: acceptingRequests && !hostDraining && (meta.health ? meta.health.available === true : true),
+    ...(meta.host === undefined ? {} : { host: meta.host }),
     slots: meta.active_request_limit ?? null,
     context_window: meta.context_window ?? null,
     input_modalities: meta.input_modalities ?? null,
@@ -86,7 +93,29 @@ export class CapabilityPublisher {
       warnings.push(errorCode(error));
     }
     if (Array.isArray(catalog?.warnings)) warnings.push(...catalog.warnings);
-    const models = entries.map((entry) => modelSummary(entry, router.accepting_requests, config.routerModelAlias));
+    const drainingHosts = new Set(gate.draining_hosts ?? []);
+    const models = entries.map((entry) => modelSummary(entry, router.accepting_requests, config.routerModelAlias, drainingHosts));
+    // One machine publishing here is the deployment: naming hosts would only
+    // invite clients to depend on a distinction that does not exist yet.
+    const multiHost = config.routerHosts.length > 1;
+    const hosts = multiHost ? (catalog?.hosts ?? []).map((host) => {
+      const drain = gate.hosts?.[host.id];
+      const hosted = models.filter((model) => model.host === host.id);
+      return {
+        id: host.id,
+        display_name: host.display_name ?? host.id,
+        default: host.default === true,
+        published: host.published === true,
+        // The machine can serve something right now: not drained, and at least
+        // one of its models answers its own health check.
+        available: !gate.draining && !drain?.draining && hosted.some((model) => model.available),
+        draining: gate.draining || Boolean(drain?.draining),
+        drain_reason: drain?.drain_reason ?? (gate.draining ? gate.drain_reason : null),
+        configuration: host.configuration ?? null,
+        model_ids: host.model_ids ?? [],
+        error: host.error ? { code: host.error.code, message: host.error.message } : null
+      };
+    }) : null;
     const ids = {};
     for (const model of models) {
       ids[model.id] = model.id;
@@ -101,7 +130,8 @@ export class CapabilityPublisher {
       default_model: catalog?.resident ? catalog.defaultModel : (models[0]?.id ?? null),
       models,
       offline_services: (catalog?.offlineServices || []).map((service) => ({ ...service, aliases: [...service.aliases] })),
-      ids
+      ids,
+      ...(hosts === null ? {} : { hosts })
     };
     return { capability, revision: digest(capability) };
   }

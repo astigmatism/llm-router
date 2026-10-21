@@ -1,5 +1,5 @@
 import { parseMarker } from './active-model.js';
-import { readHostSources, readHostSource, LOCAL_HOST_ID } from './catalog-source.js';
+import { hostCatalogFile, readHostSource, readHostSources, LOCAL_HOST_ID } from './catalog-source.js';
 import { BackendAdapterError, SUPPORTED_BACKEND_KINDS, validatedReasoningPolicy } from './backend-adapters.js';
 
 // Largest one-slot working context a resident entry may publish. The native
@@ -405,3 +405,58 @@ export function selectCatalogModel(catalog, requested) {
 }
 
 export { parseHostCatalog };
+
+// Validate what a machine proposes to publish before this router agrees to hold
+// it. The proposal is read with the same rules as any other host's catalog, so
+// one is never accepted at the door and then refused at request time: the
+// publisher hears the reason while it still has the payload in hand.
+export async function inspectPublishedCatalog(config, host, raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new BackendAdapterError(400, 'INVALID_MODEL_CATALOG', 'The published catalog must be a JSON object.', 'catalog');
+  }
+  if (!Object.hasOwn(raw, 'models')) {
+    throw new BackendAdapterError(400, 'HOST_CATALOG_INCOMPATIBLE', 'A host must publish a model catalog; a bare model marker carries no contract to admit against.', 'catalog');
+  }
+  const source = {
+    host,
+    file: hostCatalogFile(config, host),
+    present: true,
+    loadedFrom: 'pushed',
+    raw,
+    revision: null,
+    acceptedAt: null,
+    acceptedAtMs: null
+  };
+  const parsed = parseHostCatalog(config, source, false);
+  if (parsed.error) {
+    throw new BackendAdapterError(400, parsed.error.code || 'INVALID_MODEL_CATALOG', parsed.error.message, 'catalog');
+  }
+  // Client-facing names must stay unambiguous across the deployment: a client
+  // sends `daytime` and must not have to know which machine it lands on.
+  const claims = new Map();
+  for (const model of parsed.models) {
+    for (const id of [model.model, ...(model.aliases ?? [])]) claims.set(id, model.model);
+  }
+  for (const service of parsed.offlineServices) {
+    for (const id of [service.model, ...service.aliases]) claims.set(id, service.model);
+  }
+  const conflicts = [];
+  for (const other of await readHostSources(config)) {
+    if (other.host === host) continue;
+    const neighbor = parseHostCatalog(config, other, false);
+    const ids = new Set(neighbor.models.flatMap((model) => [model.model, ...(model.aliases ?? [])]));
+    for (const service of neighbor.offlineServices) {
+      for (const id of [service.model, ...service.aliases]) ids.add(id);
+    }
+    for (const id of claims.keys()) {
+      if (ids.has(id)) conflicts.push({ id, claimed_by: other.host, model: claims.get(id) });
+    }
+  }
+  if (conflicts.length) {
+    throw new BackendAdapterError(409, 'CATALOG_ID_CONFLICT',
+      `Model identifiers must be unique across the deployment: ${conflicts.slice(0, 5)
+        .map((conflict) => `${JSON.stringify(conflict.id)} is published by host ${JSON.stringify(conflict.claimed_by)}`).join(', ')}.`,
+      'catalog', { conflicts: conflicts.slice(0, 25) });
+  }
+  return parsed;
+}

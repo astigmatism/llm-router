@@ -7,7 +7,8 @@ import { open } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { loadConfig, publicConfig } from './config.js';
 import { readActiveModel } from './active-model.js';
-import { selectModel } from './model-catalog.js';
+import { inspectPublishedCatalog, readDeploymentActiveModel, readModelCatalog, selectModel } from './model-catalog.js';
+import { LOCAL_HOST_ID, readHostSource, removeHostCatalog, writeHostCatalog } from './catalog-source.js';
 import { JsonlStore } from './fs-store.js';
 import { generationRetention } from './generation-retention.js';
 import { Metrics } from './metrics.js';
@@ -154,7 +155,11 @@ function activeModelMetadata(activeModel) {
 }
 
 async function handleHealth(response, context) {
-  const activeModel = await readActiveModel(context.config);
+  // Reported for the machine this deployment answers as its default host, which
+  // is the model an unnamed request selects. The container's own health stays
+  // bound to that machine alone: a second machine in maintenance is reported
+  // below and never takes this check, or the container, down.
+  const activeModel = await readDeploymentActiveModel(context.config);
   const runtime = context.requestGate.snapshot(activeModel);
   const router = {
     appName: context.config.appName,
@@ -179,7 +184,7 @@ async function handleHealth(response, context) {
       backend_ready: false,
       router,
       upstream: { ok: false, status: null, latencyMs: 0, backendKind: activeModel.backend_kind || null, version: null, error: message },
-      activeModel,
+      activeModel: publicActiveModel(activeModel),
       ...errorPayload(code, message)
     });
     return;
@@ -194,8 +199,55 @@ async function handleHealth(response, context) {
     backend_ready: upstream.ok,
     router,
     upstream,
-    activeModel
+    activeModel: publicActiveModel(activeModel),
+    ...await hostStatus(context, runtime)
   });
+}
+
+// Where a model physically lives is the publisher's business. The marker carries
+// the upstream URL, the file paths, and the GPU identity of one machine; the
+// client-facing health endpoint names the model, its contract, and the machine
+// it belongs to, and leaves the rest in the admin view where it is actionable.
+const MODEL_LOCATION_FIELDS = ['backend_url', 'model_path', 'mmproj_path', 'gpu_uuids', 'raw', 'file', 'file_mtime', 'file_mtime_ms', 'loadedFrom', 'metadata_warnings'];
+
+function publicActiveModel(activeModel) {
+  if (!activeModel?.model) return { model: null, loadedFrom: activeModel?.loadedFrom ?? null };
+  return Object.fromEntries(Object.entries(activeModel)
+    .filter(([key, value]) => !MODEL_LOCATION_FIELDS.includes(key) && value !== undefined)
+    .map(([key, value]) => [key, value]));
+}
+
+// Every declared machine, with whether it can serve. The per-machine answers
+// come from the capability publisher, which is already probing each backend on
+// its own schedule: a health check must not start probing the deployment itself
+// and answer late because one machine far away is slow to reply.
+async function hostStatus(context, runtime) {
+  if (context.config.routerHosts.length === 1) return {};
+  let catalog = null;
+  try {
+    catalog = await readModelCatalog(context.config);
+  } catch {
+    catalog = null;
+  }
+  const published = context.capabilities?.current?.capability?.hosts ?? null;
+  const hosts = (catalog?.hosts ?? context.config.routerHosts.map((id) => ({ id, default: id === context.config.defaultHost, model_ids: [], published: false })))
+    .map((host) => {
+      const probed = published?.find((entry) => entry.id === host.id);
+      const drain = runtime.hosts?.[host.id];
+      return {
+        id: host.id,
+        default: host.default === true,
+        published: host.published === true,
+        model_count: host.model_ids?.length ?? 0,
+        available: probed ? probed.available : null,
+        draining: runtime.draining || Boolean(drain?.draining),
+        drain_reason: drain?.drain_reason ?? (runtime.draining ? runtime.drain_reason : null),
+        error: host.error ? { code: host.error.code, message: host.error.message } : (probed?.error ?? null)
+      };
+    });
+  // The service answers, so the router is healthy; `degraded` says some other
+  // machine the deployment advertises is not contributing.
+  return { hosts, degraded: hosts.some((host) => host.published === false || host.available === false || host.draining) };
 }
 
 function requestedDiscoveryModelId(pathname) {
@@ -362,7 +414,153 @@ async function buildSummary(context) {
   };
 }
 
+// One machine's published catalog, accepted at the door and held until it is
+// replaced. The publisher authenticates with CATALOG_PUSH_TOKEN (or the admin
+// token, for a router that has one credential); the check lives here rather
+// than on the listener because the portal port is unauthenticated by design and
+// a catalog is not a page.
+const CATALOG_PUBLISH_ROUTE = /^\/admin\/api\/hosts\/([a-z0-9][a-z0-9._-]{0,63})\/catalog$/;
+const MAX_PUBLISHED_CATALOG_BYTES = 262144;
+
+function catalogPublisherAuth(request, response, config) {
+  const token = config.catalogPushToken || config.adminToken;
+  if (!token) {
+    sendJson(response, 503, errorPayload('CATALOG_PUSH_UNAVAILABLE',
+      'Catalog publication is disabled: set CATALOG_PUSH_TOKEN (or ADMIN_TOKEN) to the token the runtime will present.'));
+    return null;
+  }
+  const authorization = String(request.headers.authorization || '');
+  const presented = authorization.startsWith('Bearer ')
+    ? authorization.slice(7).trim()
+    : String(request.headers[config.adminSessionHeader.toLowerCase()] || '');
+  if (!presented || presented !== token) {
+    sendJson(response, 401, errorPayload('CATALOG_PUBLISH_AUTH_REQUIRED', 'Catalog publication requires the publisher token.'));
+    return null;
+  }
+  return token;
+}
+
+async function handleCatalogPublish(request, response, host, context) {
+  const { config } = context;
+  if (!config.routerHosts.includes(host)) {
+    sendJson(response, 404, errorPayload('HOST_NOT_DECLARED', `Host ${JSON.stringify(host)} is not declared in ROUTER_HOSTS (${config.routerHosts.join(', ')}).`, { hosts: config.routerHosts }));
+    return;
+  }
+  if (host === LOCAL_HOST_ID) {
+    sendJson(response, 400, errorPayload('LOCAL_HOST_IS_FILE_BACKED', `Host ${JSON.stringify(LOCAL_HOST_ID)} is published by ${config.activeModelFile}; it cannot also be written over HTTP.`));
+    return;
+  }
+  let payload;
+  try {
+    payload = parseJsonBuffer(await readRequestBody(request, MAX_PUBLISHED_CATALOG_BYTES));
+  } catch (error) {
+    sendJson(response, error.statusCode || 400, errorPayload('INVALID_CATALOG_BODY', error.message));
+    return;
+  }
+  let parsed;
+  try {
+    parsed = await inspectPublishedCatalog(config, host, payload);
+  } catch (error) {
+    const status = error instanceof BackendAdapterError ? error.statusCode : 500;
+    const code = error instanceof BackendAdapterError ? error.code : 'INTERNAL_ERROR';
+    sendJson(response, status, errorPayload(code, error.message, error.diagnostics ?? undefined));
+    return;
+  }
+  const stored = await writeHostCatalog(config, host, JSON.stringify(payload, null, 2));
+  context.modelDiscovery.invalidate();
+  notifyCapabilities(context);
+  await persistEvent(context.store, {
+    type: 'model_catalog_published',
+    host,
+    revision: stored.revision.slice(0, 12),
+    models: parsed.models.map((model) => model.model),
+    offlineServices: parsed.offlineServices.map((service) => service.model),
+    warnings: parsed.warnings
+  });
+  sendJson(response, 200, {
+    ok: true,
+    host,
+    revision: stored.revision,
+    accepted_at: stored.acceptedAt,
+    file: stored.file,
+    default_model: parsed.defaultModel,
+    models: parsed.models.map((model) => ({ model: model.model, aliases: model.aliases, backend_url: model.backend_url })),
+    offline_services: parsed.offlineServices.map((service) => service.model),
+    configuration: parsed.configuration && !parsed.configuration.invalid ? parsed.configuration : null,
+    warnings: parsed.warnings
+  });
+}
+
+async function handleCatalogRetire(request, response, host, context) {
+  const { config } = context;
+  if (!config.routerHosts.includes(host)) {
+    sendJson(response, 404, errorPayload('HOST_NOT_DECLARED', `Host ${JSON.stringify(host)} is not declared in ROUTER_HOSTS (${config.routerHosts.join(', ')}).`));
+    return;
+  }
+  if (host === LOCAL_HOST_ID) {
+    sendJson(response, 400, errorPayload('LOCAL_HOST_IS_FILE_BACKED', `Host ${JSON.stringify(LOCAL_HOST_ID)} is published by ${config.activeModelFile}; retire its runtime instead.`));
+    return;
+  }
+  const result = await removeHostCatalog(config, host);
+  context.modelDiscovery.invalidate();
+  notifyCapabilities(context);
+  await persistEvent(context.store, { type: 'model_catalog_retired', host, removed: result.removed });
+  sendJson(response, 200, { ok: true, host, removed: result.removed, file: result.file });
+}
+
+async function handleHostsList(response, context) {
+  const gate = context.requestGate.snapshot();
+  let catalog = null;
+  let error = null;
+  try {
+    catalog = await readModelCatalog(context.config);
+  } catch (readError) {
+    error = { code: readError.code || 'INTERNAL_ERROR', message: readError.message };
+  }
+  const hosts = catalog?.hosts ?? await Promise.all(context.config.routerHosts.map(async (host) => {
+    const source = await readHostSource(context.config, host);
+    return {
+      id: host, display_name: host, default: host === context.config.defaultHost, resident: false,
+      published: source.present, model_ids: [], configuration: null, revision: source.revision,
+      accepted_at: source.acceptedAt, file: source.file, loaded_from: source.loadedFrom, warnings: [],
+      error: source.readError ? { code: 'HOST_CATALOG_UNPUBLISHED', message: source.readError } : null
+    };
+  }));
+  sendJson(response, 200, {
+    ok: true,
+    default_host: context.config.defaultHost,
+    hosts: hosts.map((host) => ({
+      ...host,
+      draining: gate.draining || Boolean(gate.hosts?.[host.id]?.draining),
+      drain_reason: gate.hosts?.[host.id]?.drain_reason ?? (gate.draining ? gate.drain_reason : null),
+      active: gate.active_by_host?.[host.id] ?? 0,
+      queued: gate.queued_by_host?.[host.id] ?? 0
+    })),
+    ...(error ? { error } : {})
+  });
+}
+
 async function handleAdminApi(request, response, pathname, context, { requireAuth = true } = {}) {
+  // Catalog publication carries its own publisher credential and is admitted on
+  // either listener: the portal port is unauthenticated by design, and an operator
+  // may give a relocated router only the publisher token.
+  const publishRoute = pathname.match(CATALOG_PUBLISH_ROUTE);
+  if (publishRoute && ['PUT', 'POST'].includes(request.method)) {
+    if (!catalogPublisherAuth(request, response, context.config)) return;
+    await handleCatalogPublish(request, response, publishRoute[1], context);
+    return;
+  }
+  if (publishRoute && request.method === 'DELETE') {
+    if (!catalogPublisherAuth(request, response, context.config)) return;
+    await handleCatalogRetire(request, response, publishRoute[1], context);
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/admin/api/hosts') {
+    await handleHostsList(response, context);
+    return;
+  }
+
   if (requireAuth && !requireAdmin(request, response, context.config)) return;
 
   if (['/admin/api/runtime-state', '/admin/api/runtime-drain', '/admin/api/generation-record'].includes(pathname)) {
@@ -436,18 +634,35 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       sendJson(response, 400, errorPayload('INVALID_DRAIN_STATE', 'enabled must be a boolean.'));
       return;
     }
+    // A drain may name one machine: the runtime taking a host in for maintenance
+    // stops traffic to that host's models and leaves every other machine
+    // serving. Without `host` it remains the whole-router switch it has always
+    // been, which is what a router release pulls.
+    const host = body.host === undefined || body.host === null ? null : String(body.host).trim();
+    if (host !== null && !context.config.routerHosts.includes(host)) {
+      sendJson(response, 400, errorPayload('HOST_NOT_DECLARED', `Host ${JSON.stringify(host)} is not declared in ROUTER_HOSTS (${context.config.routerHosts.join(', ')}).`));
+      return;
+    }
     const activeModel = await readActiveModel(context.config);
-    const runtime = await context.requestGate.setDraining(body.enabled, body.reason);
+    const runtime = await context.requestGate.setDraining(body.enabled, body.reason, host);
     notifyCapabilities(context);
     await persistEvent(context.store, {
       type: 'runtime_drain_changed',
       enabled: body.enabled,
+      host,
       reason: runtime.drain_reason,
       profile: activeModel.profile,
       backendKind: activeModel.backend_kind,
       activeCount: runtime.active_count
     });
-    sendJson(response, 200, { ok: true, runtime: context.requestGate.snapshot(activeModel) });
+    sendJson(response, 200, {
+      ok: true,
+      host,
+      runtime: context.requestGate.snapshot(activeModel),
+      drain: host === null
+        ? { draining: runtime.draining, reason: runtime.drain_reason }
+        : context.requestGate.drainState(host)
+    });
     return;
   }
 
@@ -489,6 +704,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     return;
   }
 
+
   if (request.method === 'POST' && pathname === '/admin/api/maintenance') {
     let body = {};
     try {
@@ -517,7 +733,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       const adminAbort = connectionAbort(request, response);
       let adminLease;
       try {
-      adminLease = await context.requestGate.acquire({ endpoint: pathname, clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, signal: adminAbort.signal });
+      adminLease = await context.requestGate.acquire({ endpoint: pathname, clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, host: activeModel.host ?? null, signal: adminAbort.signal });
       const started = Date.now();
       if (Buffer.byteLength(activeModel.model, 'utf8') > LLAMA_PREWARM_MAX_MODEL_BYTES) {
         await persistEvent(context.store, {
@@ -685,7 +901,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     try {
       let result;
       if (isLlamaWireKind(backend.kind)) {
-        lease = await context.requestGate.acquire({ endpoint: '/admin/api/test-chat', clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, signal: adminAbort.signal });
+        lease = await context.requestGate.acquire({ endpoint: '/admin/api/test-chat', clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, host: activeModel.host ?? null, signal: adminAbort.signal });
         await backend.ensureAvailable(adminAbort.signal);
         const prepared = await backend.prepareProxy({
           method: 'POST',
@@ -1133,6 +1349,7 @@ async function handleProxy(request, response, url, context) {
           limit: backend.maxActiveRequests,
           backendKey: backend.admissionKey,
           model: activeModel.model,
+          host: activeModel.host ?? null,
           signal: clientController.signal,
           onQueued: () => {
             stopQueueHeartbeat = queueHeartbeat(response, commonRecord.streaming
