@@ -388,7 +388,16 @@ export async function readDeploymentActiveModel(config) {
   const source = await readHostSource(config, config.defaultHost);
   const single = config.routerHosts.length === 1 && config.defaultHost === LOCAL_HOST_ID;
   const host = parseHostCatalog(config, source, single);
-  if (host.models.length) return host.models.find((model) => model.model === host.defaultModel) ?? host.models[0];
+  if (host.models.length) {
+    const model = host.models.find((model) => model.model === host.defaultModel) ?? host.models[0];
+    // The marker contract has always carried the name of the configuration that is serving, and
+    // `profile` is what an owner reads to tell one configuration from another — the runtime compares
+    // it against what it just published before it reopens the door. A pushed catalog states the same
+    // fact one level up, on the document it published, so it is carried down to the model here:
+    // without it, "what is running now" is answerable on a router that shares a machine with its
+    // backends and unanswerable on one that does not.
+    return { ...model, profile: host.configuration?.id ?? null };
+  }
   return source.marker ?? {
     model: null,
     loadedFrom: source.loadedFrom,
