@@ -24,12 +24,12 @@ const RECONNECT_RETRY_MS = 3000;
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('base64url');
 const errorCode = (error) => (typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'MODEL_DISCOVERY_FAILED');
 
-function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHosts) {
+function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHosts, host) {
   const meta = entry.x_ollama_router || {};
   const aliases = Array.isArray(meta.aliases) ? [...meta.aliases] : [];
   // A machine under maintenance stops its own traffic; the models that run
   // somewhere else stay available.
-  const hostDraining = meta.host !== undefined && drainingHosts.has(meta.host);
+  const hostDraining = host !== undefined && host !== null && drainingHosts.has(host);
   return {
     id: entry.id,
     // The stable ID clients should send for this model: its service alias
@@ -40,7 +40,7 @@ function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHost
     // A listed model is usable only while its backend answers health checks
     // and the router is admitting new requests.
     available: acceptingRequests && !hostDraining && (meta.health ? meta.health.available === true : true),
-    ...(meta.host === undefined ? {} : { host: meta.host }),
+    ...(host === undefined || host === null ? {} : { host }),
     slots: meta.active_request_limit ?? null,
     context_window: meta.context_window ?? null,
     input_modalities: meta.input_modalities ?? null,
@@ -94,7 +94,16 @@ export class CapabilityPublisher {
     }
     if (Array.isArray(catalog?.warnings)) warnings.push(...catalog.warnings);
     const drainingHosts = new Set(gate.draining_hosts ?? []);
-    const models = entries.map((entry) => modelSummary(entry, router.accepting_requests, config.routerModelAlias, drainingHosts));
+    // The catalog owns the mapping from a model to the machine running it; the
+    // discovery entry describes what that machine's backend reported.
+    const hostOf = new Map((catalog?.models ?? []).filter((model) => model.host).map((model) => [model.model, model.host]));
+    const models = entries.map((entry) => modelSummary(
+      entry,
+      router.accepting_requests,
+      config.routerModelAlias,
+      drainingHosts,
+      hostOf.get(entry.id)
+    ));
     // One machine publishing here is the deployment: naming hosts would only
     // invite clients to depend on a distinction that does not exist yet.
     const multiHost = config.routerHosts.length > 1;

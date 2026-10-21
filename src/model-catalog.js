@@ -267,7 +267,9 @@ function parseHostCatalog(config, source, single) {
     }
     if (!source.present) {
       const missing = new Error(source.readError || 'No catalog has been published.');
-      missing.code = 'HOST_CATALOG_UNPUBLISHED';
+      missing.code = source.loadedFrom === 'invalid' ? 'HOST_CATALOG_INVALID'
+        : source.loadedFrom === 'error' ? 'HOST_CATALOG_UNREADABLE'
+          : 'HOST_CATALOG_UNPUBLISHED';
       throw missing;
     }
     // A bare marker is the historical single-marker shape: valid for the
@@ -308,7 +310,10 @@ export async function readModelCatalog(config) {
   for (const host of hosts) {
     for (const model of host.models) {
       // A single-marker host has no alias contract; only catalog entries do.
-      const entries = [model.model, ...(Array.isArray(model.aliases) ? model.aliases : [])];
+      // The reserved alias is not a claim on a name: it means "whatever this
+      // deployment has marked active", so every machine may carry it.
+      const entries = [model.model, ...(Array.isArray(model.aliases) ? model.aliases : [])]
+        .filter((id) => id !== config.routerModelAlias);
       const clash = entries.map((id) => ids.get(id)).find((owner) => owner && owner !== host.id);
       if (clash) {
         // Two machines claiming one client-facing name: the first-declared host
@@ -318,7 +323,13 @@ export async function readModelCatalog(config) {
         continue;
       }
       for (const id of entries) ids.set(id, host.id);
-      models.push(model);
+      // The reserved alias names this deployment's active model, and only the
+      // default host's model is that. A second machine may carry it — that is
+      // how it publishes the same contract it publishes alone — but it is not a
+      // second name for it here.
+      models.push(host.id === config.defaultHost || single
+        ? model
+        : { ...model, aliases: model.aliases.filter((id) => id !== config.routerModelAlias) });
     }
     warnings.push(...host.warnings);
   }
@@ -433,12 +444,15 @@ export async function inspectPublishedCatalog(config, host, raw) {
   }
   // Client-facing names must stay unambiguous across the deployment: a client
   // sends `daytime` and must not have to know which machine it lands on.
+  // The reserved alias names "whatever this deployment has marked active", so
+  // every machine may carry it; it identifies no service and cannot collide.
+  const claimable = (id) => id !== config.routerModelAlias;
   const claims = new Map();
   for (const model of parsed.models) {
-    for (const id of [model.model, ...(model.aliases ?? [])]) claims.set(id, model.model);
+    for (const id of [model.model, ...(model.aliases ?? [])]) if (claimable(id)) claims.set(id, model.model);
   }
   for (const service of parsed.offlineServices) {
-    for (const id of [service.model, ...service.aliases]) claims.set(id, service.model);
+    for (const id of [service.model, ...service.aliases]) if (claimable(id)) claims.set(id, service.model);
   }
   const conflicts = [];
   for (const other of await readHostSources(config)) {
@@ -448,6 +462,7 @@ export async function inspectPublishedCatalog(config, host, raw) {
     for (const service of neighbor.offlineServices) {
       for (const id of [service.model, ...service.aliases]) ids.add(id);
     }
+    ids.delete(config.routerModelAlias);
     for (const id of claims.keys()) {
       if (ids.has(id)) conflicts.push({ id, claimed_by: other.host, model: claims.get(id) });
     }

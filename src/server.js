@@ -423,8 +423,10 @@ const CATALOG_PUBLISH_ROUTE = /^\/admin\/api\/hosts\/([a-z0-9][a-z0-9._-]{0,63})
 const MAX_PUBLISHED_CATALOG_BYTES = 262144;
 
 function catalogPublisherAuth(request, response, config) {
-  const token = config.catalogPushToken || config.adminToken;
-  if (!token) {
+  // Either credential publishes: the publisher token is what a runtime holds,
+  // and the admin token already governs everything else an operator can do.
+  const accepted = [config.catalogPushToken, config.adminToken].filter(Boolean);
+  if (!accepted.length) {
     sendJson(response, 503, errorPayload('CATALOG_PUSH_UNAVAILABLE',
       'Catalog publication is disabled: set CATALOG_PUSH_TOKEN (or ADMIN_TOKEN) to the token the runtime will present.'));
     return null;
@@ -433,11 +435,12 @@ function catalogPublisherAuth(request, response, config) {
   const presented = authorization.startsWith('Bearer ')
     ? authorization.slice(7).trim()
     : String(request.headers[config.adminSessionHeader.toLowerCase()] || '');
-  if (!presented || presented !== token) {
-    sendJson(response, 401, errorPayload('CATALOG_PUBLISH_AUTH_REQUIRED', 'Catalog publication requires the publisher token.'));
+  if (!presented || !accepted.includes(presented)) {
+    sendJson(response, 401, errorPayload('CATALOG_PUBLISH_AUTH_REQUIRED',
+      'Catalog publication requires CATALOG_PUSH_TOKEN, presented as Authorization: Bearer <token>.'));
     return null;
   }
-  return token;
+  return presented;
 }
 
 async function handleCatalogPublish(request, response, host, context) {
