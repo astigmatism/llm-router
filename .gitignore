@@ -8,6 +8,7 @@ coverage/
 data/*.jsonl
 data/*.log
 data/*.json
+data/catalogs/
 runtime/active-model.json
 runtime/*.local.json
 __pycache__/

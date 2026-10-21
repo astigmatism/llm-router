@@ -57,20 +57,28 @@ grep -q '^CATALOG_PUSH_TOKEN=.' "$ENV_FILE" || { say "$ENV_FILE has no CATALOG_P
 
 # 3. Writable directories. The container runs unprivileged on a read-only root
 #    filesystem, so anything it writes has to be mounted and owned by uid 1000:
-#    ./data holds history and the catalog store, ./runtime holds the drain
-#    control file a release depends on.
+#    data/ holds history and the catalog store, runtime/ holds the drain control
+#    file a release depends on. They sit beside the checkout, never inside it:
+#    an update replaces the source tree, and state written into it goes with it.
 install -d -m 0755 "$BASE/data" "$BASE/data/history" "$BASE/runtime"
-sudo -n chown -R 1000:1000 "$BASE/data" "$BASE/runtime" 2>/dev/null || chown -R 1000:1000 "$BASE/data" "$BASE/runtime"
+chown -R 1000:1000 "$BASE/data" "$BASE/runtime"
+# An early version of this script let Compose resolve the mounts against the
+# checkout. Move any state it left there rather than starting a second store.
+for stray in "$SOURCE/data" "$SOURCE/runtime"; do
+  [[ -d $stray && ! -L $stray ]] || continue
+  find "$stray" -mindepth 1 -maxdepth 1 -exec mv -n {} "$BASE/$(basename "$stray")/" \;
+  rmdir "$stray" 2>/dev/null && say "moved stray state out of the checkout: $(basename "$stray")" || true
+done
 
 # 4. Start. Compose builds from the checkout it lives in; the image is never
 #    pulled, so what is running is what is committed.
 cd "$SOURCE"
-ROUTER_BIND_IP="$BIND_IP" ROUTER_ENV_FILE="$ENV_FILE" \
-ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
-  docker compose -p llm-router -f "$COMPOSE_FILE" build
-ROUTER_BIND_IP="$BIND_IP" ROUTER_ENV_FILE="$ENV_FILE" \
-ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
-  docker compose -p llm-router -f "$COMPOSE_FILE" up -d --pull never --no-build
+# Exported so Compose resolves the state directories to absolute paths whatever
+# directory it is invoked from.
+export ROUTER_BIND_IP="$BIND_IP" ROUTER_ENV_FILE="$ENV_FILE" ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
+  ROUTER_DATA_HOST_DIR="$BASE/data" ROUTER_RUNTIME_HOST_DIR="$BASE/runtime"
+docker compose -p llm-router -f "$COMPOSE_FILE" build
+docker compose -p llm-router -f "$COMPOSE_FILE" up -d --pull never --no-build
 
 # 5. Report. With no machine publishing yet, the router is degraded and answers:
 #    that is the correct state, not a failed install.

@@ -14,6 +14,11 @@
 # read-only rootfs means what is not mounted cannot be written at all):
 #   install -d -m 0755 -o 1000 -g 1000 data data/history
 #   install -d -m 0755 -o 1000 -g 1000 runtime
+# Give ROUTER_DATA_HOST_DIR and ROUTER_RUNTIME_HOST_DIR absolute paths when the
+# checkout is not the state directory. Relative paths resolve against the
+# Compose project directory, which for a checkout-based deployment is inside the
+# git tree — and a catalog store that lives where `git clean` reaches is a
+# catalog store that an update can delete.
 # `runtime/` holds the drain control file the runtime maintains during a release,
 # and `local`'s marker if this machine ever publishes one; without a writable
 # directory there, a drain is refused with EROFS.
@@ -92,10 +97,10 @@ services:
     volumes:
       # Request history, generation archives, and the catalog store the other
       # machines publish into.
-      - ./data:/app/data
+      - ${ROUTER_DATA_HOST_DIR:-./data}:/app/data
       # The drain control file and `local`'s marker. This mount is not optional:
       # it is where the router keeps the state a release depends on.
-      - ./runtime:/app/runtime
+      - ${ROUTER_RUNTIME_HOST_DIR:-./runtime}:/app/runtime
     networks:
       router:
         aliases:
