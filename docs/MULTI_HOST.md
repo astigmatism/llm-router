@@ -269,6 +269,11 @@ That makes the migration incremental and the rollback a configuration change:
 Rollback is `ROUTER_HOSTS` unset and the old `ACTIVE_MODEL_FILE` handoff: the
 catalog store is left alone, and the code that reads it is not reached.
 
+Steps 3 and 4 are somebody else's repository, so each has a handoff written to be
+read without this one: [the runtime publishes its catalog](handoffs/2026-10-21-ai-runtime-publisher.md)
+for the machine that runs models, and [the router now spans several
+machines](handoffs/2026-10-21-multi-host-deployment.md) for each client that sends requests.
+
 ## 10. Reference
 
 - Configuration keys: `ROUTER_HOSTS`, `ROUTER_DEFAULT_HOST`, `CATALOG_STORE_DIR`,
