@@ -100,6 +100,8 @@ An interrupted router release retains its reservation and drain. Restore or comp
 
 ### Publishing to a router on another machine
 
+The general contract for that case — the definition a machine holds, when it publishes, what each answer means — is [runtime integration](RUNTIME_INTEGRATION.md). What follows is how this runtime's publisher applies it.
+
 When the controller and the router are not on the same host, the shared-directory handoff is replaced by an HTTP one, and the release sequence changes only in how it says "here is my catalog" and "hold traffic for my machines":
 
 - Publication: `PUT /admin/api/hosts/<host>/catalog` with `Authorization: Bearer <CATALOG_PUSH_TOKEN>` and the same schema-version-3 catalog the controller writes today, root projection included. The response repeats the accepted revision and models, so the controller confirms the copy being served is the copy it sent; a refusal is the same validation the controller would hit at request time, reported while it still holds the payload.

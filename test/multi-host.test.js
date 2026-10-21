@@ -406,3 +406,46 @@ test('a model on another machine is served by that machine and never by the defa
   const health = await f.get('/health');
   assert.equal(health.activeModel.model, CODING, 'the default host still answers the unnamed request');
 });
+
+test('an accepted publication is announced to consumers and to the operator log', async (t) => {
+  const f = await fixture(t, { secondHost: 'rosalina' });
+  const backend = await fakeBackend(NIGHT, t, f.hits, catalogEntry(NIGHT, []).max_active_requests);
+  const catalog = hostCatalog([catalogEntry(NIGHT, ['nighttime'])].map((entry) => ({ ...entry, backend_url: backend.url })));
+
+  const capabilities = async () => {
+    const response = await fetch(`${f.base}/v1/router/capabilities`);
+    return { revision: response.headers.get('etag'), document: await response.json() };
+  };
+  const settle = async (predicate) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const current = await capabilities();
+      if (predicate(current.document)) return current;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.fail('the capabilities document never reflected the change');
+  };
+
+  const before = (await capabilities()).document;
+  assert.equal(before.hosts.find((host) => host.id === 'rosalina').published, false);
+  const revisionBefore = (await capabilities()).revision;
+
+  // A consumer that only ever reads the document sees the new state, and so does
+  // one subscribed to the event stream: both follow the same revision.
+  assert.equal((await f.publish('rosalina', catalog)).status, 200);
+  const after = await settle((document) => document.hosts.find((host) => host.id === 'rosalina').published);
+  assert.notEqual(after.revision, revisionBefore);
+  assert.equal(after.document.models.find((entry) => entry.id === NIGHT).host, 'rosalina');
+  assert.equal(after.document.hosts.find((host) => host.id === 'rosalina').available, true);
+
+  // The operator sees which machine handed over what.
+  const events = await (await fetch(`${f.base}/admin/api/events?limit=10`, { headers: { 'x-admin-token': 'test' } })).json();
+  const event = events.events.find((entry) => entry.type === 'model_catalog_published');
+  assert.ok(event, 'the publication is recorded');
+  assert.equal(event.host, 'rosalina');
+  assert.deepEqual(event.models, [NIGHT]);
+
+  // Retirement announces itself the same way.
+  assert.equal((await f.publish('rosalina', null, { method: 'DELETE' })).status, 200);
+  const retired = await settle((document) => !document.models.some((entry) => entry.id === NIGHT));
+  assert.notEqual(retired.revision, after.revision);
+});

@@ -67,6 +67,8 @@ is published as *the* configuration. It must be one of `ROUTER_HOSTS`.
 
 ## 3. Publishing a catalog
 
+From here the endpoint is the interesting part; the *when*, the exact contents, and what each refusal obliges the publishing machine to do are the producer's contract, in [runtime integration](RUNTIME_INTEGRATION.md).
+
 ```
 PUT /admin/api/hosts/<host>/catalog
 Authorization: Bearer <CATALOG_PUSH_TOKEN>
@@ -264,6 +266,8 @@ catalog store is left alone, and the code that reads it is not reached.
   `CATALOG_PUSH_TOKEN`, `CATALOG_MAX_AGE_MS`,
   `ROUTER_EXPECT_ROUTABLE_BACKEND_URLS` — see [CONFIGURATION.md](CONFIGURATION.md).
 - Endpoints and payloads: [API.md](API.md#hosts).
+- The publisher's side — the definition a machine holds, when it publishes, what each
+  answer obliges it to do: [RUNTIME_INTEGRATION.md](RUNTIME_INTEGRATION.md).
 - Capabilities document fields: [CAPABILITIES.md](CAPABILITIES.md), and the
   client-facing rules in [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md).
 - How the pieces fit together: [ARCHITECTURE.md](ARCHITECTURE.md).

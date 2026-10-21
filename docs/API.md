@@ -37,7 +37,7 @@ See [Deployment capabilities and change events](CAPABILITIES.md) for the schema,
 
 ## Hosts
 
-A router serves the models published by one or more machines. With a single host — every deployment that sets no `ROUTER_HOSTS` — there is nothing to report and these fields and endpoints read as if absent. See [Multi-host deployments](MULTI_HOST.md).
+A router serves the models published by one or more machines. With a single host — every deployment that sets no `ROUTER_HOSTS` — there is nothing to report and these fields and endpoints read as if absent. See [Multi-host deployments](MULTI_HOST.md). The publisher's side — what a runtime sends, when, and what each answer obliges it to do — is [runtime integration](RUNTIME_INTEGRATION.md).
 
 ### `GET /admin/api/hosts`
 

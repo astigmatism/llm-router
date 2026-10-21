@@ -9,6 +9,8 @@ The deployed `primary` runtime exposes two resident models with independent one-
 
 **Building a client?** Read the [client contract](docs/CLIENT_CONTRACT.md): the rules every application that uses this router must follow.
 
+**Running models on a machine?** Read the [runtime integration contract](docs/RUNTIME_INTEGRATION.md): the definition a machine holds so it knows where the router is, when it publishes its catalog, and what each answer means. Consumers never hear from a runtime; they hear from the router.
+
 A Docker-ready router that sits between AI clients and model inference servers. It enforces model policy, preserves streaming responses, persists request history, collects inference telemetry, and serves an admin portal on a separate port. The legacy Ollama backend also receives `keep_alive: -1` for protected requests.
 
 Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the runtime controller manages the resident model backends.

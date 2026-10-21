@@ -284,6 +284,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [API reference](API.md), including [llama.cpp sampling controls](API.md#llamacpp-sampling-controls).
 - [Model discovery](MODEL_DISCOVERY.md): the `x_ollama_router` metadata fields.
 - [Multi-host deployments](MULTI_HOST.md): what a router spanning several machines publishes, and what stays the same.
+- [Runtime integration](RUNTIME_INTEGRATION.md): the other side of this contract — how a machine that runs models gets them into the router. A client never needs it, and never talks to one.
 - [Primary integration](PRIMARY_INTEGRATION.md): output policy, queueing, context recovery and archives.
 - Reference clients, tested against the router: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+ and browsers).
 - [Client handoff](handoffs/2026-10-07-capability-subscribers.md): how each current project should change to meet this contract.
