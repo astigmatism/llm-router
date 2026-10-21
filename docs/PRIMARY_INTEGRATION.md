@@ -98,6 +98,16 @@ The router-only publisher detects the marker, reserves runtime configuration thr
 
 An interrupted router release retains its reservation and drain. Restore or complete the router release, then run `docker exec local-ai-runtime python3 -m runtime router-maintenance-end`. This command verifies the backends and republishes the catalog before reopening admission.
 
+### Publishing to a router on another machine
+
+When the controller and the router are not on the same host, the shared-directory handoff is replaced by an HTTP one, and the release sequence changes only in how it says "here is my catalog" and "hold traffic for my machines":
+
+- Publication: `PUT /admin/api/hosts/<host>/catalog` with `Authorization: Bearer <CATALOG_PUSH_TOKEN>` and the same schema-version-3 catalog the controller writes today, root projection included. The response repeats the accepted revision and models, so the controller confirms the copy being served is the copy it sent; a refusal is the same validation the controller would hit at request time, reported while it still holds the payload.
+- Drain: `POST /admin/api/runtime-drain` with `{"enabled": true, "host": "<host>"}` admits no new work whose model runs on that machine, leaves traffic to other machines flowing, and `GET /admin/api/runtime-state` reports when that machine's accepted work has finished. Omit `host` for a router release of the router itself.
+- Backend URLs must be reachable from the router, so the launch definition publishes its llama.cpp port on the LAN and the catalog names that address; `ROUTER_EXPECT_ROUTABLE_BACKEND_URLS` reports a loopback claim as `BACKEND_URL_NOT_ROUTABLE`.
+
+Everything else about a release — reservation, verification, republish, reopening admission — is the sequence above. See [multi-host deployments](MULTI_HOST.md).
+
 ### Strata trial integration
 
 Strata shares OpenAI generation, `/health`, `/slots`, and `/props`, but does not

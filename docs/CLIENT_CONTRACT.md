@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1.2 · 2026-10-13.** Applies to LLM Router `57e4096` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees. No client change is required; see [changes](#15-changes).
+**Version 1.3 · 2026-10-21.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing. No client change is required; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -84,7 +84,8 @@ The router distinguishes sharply between a name that means a service and a name 
 | `revision` | Content hash of everything below except load. If `revision` is unchanged, nothing relevant has changed. |
 | `router.accepting_requests` | False while the router drains for a configuration switch, or during maintenance. |
 | `configuration.id`, `configuration.exclusive` | The AI Runtime configuration, and whether it is solo. |
-| `models[]` | Each usable model: `service` (the ID to send), `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. |
+| `models[]` | Each usable model: `service` (the ID to send), `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. In a deployment whose models live on more than one machine, each also carries `host`. |
+| `hosts[]` | Only when the deployment spans more than one machine: each one's `id`, `display_name`, `default`, `published`, `available`, `draining`, `drain_reason`, `configuration`, and `model_ids`. See below. |
 | `offline_services[]` | Services this configuration deliberately stops: `model`, `aliases`, `display_name`, `reason`. |
 | `ids` | Every accepted ID → its current canonical model. |
 | `complete`, `warnings` | Whether this router trusts the picture it is publishing. See below. |
@@ -93,6 +94,22 @@ The router distinguishes sharply between a name that means a service and a name 
 Clients MUST ignore unknown fields. `metadata` is identical to the model's `x_ollama_router` object in `/v1/models`. The OpenAI and Ollama listings (`/v1/models`, `/api/tags`) show only models that can be selected right now, so an offline service is absent from them; only the capabilities document says why.
 
 The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
+
+### Several machines, one router
+
+A router may serve models that run on different machines in the same network.
+This is invisible to model selection: `hosts[]` says which machine runs what, and
+each model carries the same `host`, so a client can show it or ignore it. Nothing
+else changes — one model list, one set of IDs, one queue per model, one set of
+rules below. A model that moves between machines keeps its service ID and its
+contract; a client that cached nothing about location is unaffected.
+
+What a client may find out is that a machine is missing: `hosts[].published`
+false, or `hosts[].available` false, or `hosts[].error` naming why. Treat that
+the way you treat a model being unavailable — the model is not `available`, and
+§5's fallback is the response. It is never a reason to stop sending requests to
+the router: an unnamed request answers from the machine the router was told is
+its default, whatever else is down.
 
 ### Change events
 
@@ -170,7 +187,7 @@ Benchmarking and evaluation clients are the exception. A benchmark's identity is
   - Non-streaming requests receive nothing until the result.
 - **Deadlines:** there is no queue or total-generation deadline. A client's read timeout MUST allow for queueing plus generation, or the client MUST stream. A backend that stops making progress for 120 s ends the request as an error.
 - **Cancellation:** closing the connection cancels the request immediately, including while it is queued. A client SHOULD NOT abandon and resubmit a queued request, because that loses its place.
-- **Draining:** during a configuration switch or maintenance, new requests receive 503 `BACKEND_DRAINING` or `MAINTENANCE_MODE`. Requests already accepted, including queued ones, finish normally. A switch usually takes one to two minutes. A client MUST keep waiting and retrying (backoff from 2 s up to 30 s) for at least 10 minutes, then choose its model again: the configuration may have changed.
+- **Draining:** during a configuration switch or maintenance, new requests receive 503 `BACKEND_DRAINING` or `MAINTENANCE_MODE`. A drain may cover one machine rather than the whole router: requests for models running elsewhere continue normally, and the refusal says which machine is draining. Requests already accepted, including queued ones, finish normally. A switch usually takes one to two minutes. A client MUST keep waiting and retrying (backoff from 2 s up to 30 s) for at least 10 minutes, then choose its model again: the configuration may have changed.
 - **Health checks:** a client SHOULD NOT use `GET /health` to judge model availability; use the capabilities document.
 
 ## 8. Context
@@ -211,7 +228,7 @@ A client MUST read `error.code` from the object form, and SHOULD tolerate a stri
 | `SERVICE_OFFLINE` (503) | The current configuration deliberately stops this service | Fall back now (§5). Not a failure: don't count it toward retry caps, budgets or circuit breakers. |
 | `BACKEND_UNAVAILABLE` (503) | The service's backend isn't healthy | Fall back if possible; otherwise retry with backoff. |
 | `MODEL_NOT_FOUND` (404) | The ID isn't offered: no entry of the active configuration declares it (§3) | Fall back if configured, and log a warning: usually a stale or misspelled ID, or a configuration that stopped offering the service. Never fall back from an opt-in service such as `trial` (§5). |
-| `BACKEND_DRAINING`, `MAINTENANCE_MODE` (503) | Switch or maintenance in progress | Wait (§7), then choose again. |
+| `BACKEND_DRAINING`, `MAINTENANCE_MODE` (503) | Switch or maintenance in progress, on the whole router or on the machine running that model | Wait (§7), then choose again. |
 | `context_length_exceeded` (400) | The request doesn't fit | Shrink the request, or choose a model with a larger window. Don't retry unchanged. |
 | `TOO_MANY_SUBSCRIBERS` (503, events only) | Event-stream limit reached | Poll the capabilities endpoint instead. |
 | Other 5xx; 408, 429; network errors and timeouts | Transient | Retry the same service with backoff. |
@@ -221,7 +238,7 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 
 ## 11. Change and compatibility
 
-- **Schema versions:** the capabilities document has `schema_version: 1`; model metadata (`x_ollama_router`) has `schema_version: 2`; the capability score carries its own `version`. Fields may be **added** at any time without a version change, and clients MUST ignore fields they don't know. Removing a field or changing its meaning increments the schema version. A client SHOULD warn when it sees a schema version it wasn't written for.
+- **Schema versions:** the capabilities document has `schema_version: 2` (version 1 documents remain valid: version 2 only adds `hosts[]` and the per-model `host`, and clients MUST ignore fields they don't know); model metadata (`x_ollama_router`) has `schema_version: 2`, unchanged; the capability score carries its own `version`. Removing a field or changing its meaning increments the schema version. A client SHOULD warn when it sees a schema version it wasn't written for.
 - **Contract versions:** this contract is versioned at the top. A change that requires client changes increments the major version (2, 3, …) and is announced to client maintainers. A minor version (1.1, 1.2, …) only clarifies or adds permissions and never requires client changes, so copies of an earlier minor version stay valid until the next update handoff.
 - **Configurations:** models, context windows, slot counts, the canonical IDs behind service IDs, and the existence of `nighttime` all change with configuration and are not part of the contract. Only the rules for discovering them are.
 - **Copies in client projects:** every client project keeps this contract in its own repository, so whoever works on that project, person or AI agent, sees it there:
@@ -258,6 +275,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [ ] Takes context, reserve, slots and features from the serving model, and recomputes them when it changes. Hard-codes no context size.
 - [ ] Uses read timeouts that allow for queueing, or streams. Doesn't abandon and resubmit queued requests.
 - [ ] Logs model changes and fallbacks, and surfaces refusals from a fallback model instead of retrying them.
+- [ ] If it shows where models run, reads it from `hosts[]`/`host` and treats a missing machine as that machine's models being unavailable (§4).
 - [ ] Keeps a verbatim copy of this contract at `docs/llm-router-contract.md`, a conformance map, and an `AGENTS.md` rule that upholds it (§11).
 
 ## 14. References
@@ -265,6 +283,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [Deployment capabilities and change events](CAPABILITIES.md): the full document schema, event timing and score formula.
 - [API reference](API.md), including [llama.cpp sampling controls](API.md#llamacpp-sampling-controls).
 - [Model discovery](MODEL_DISCOVERY.md): the `x_ollama_router` metadata fields.
+- [Multi-host deployments](MULTI_HOST.md): what a router spanning several machines publishes, and what stays the same.
 - [Primary integration](PRIMARY_INTEGRATION.md): output policy, queueing, context recovery and archives.
 - Reference clients, tested against the router: [Python](clients/router_watch.py) (standard library) and [JavaScript](clients/router-watch.mjs) (Node 18+ and browsers).
 - [Client handoff](handoffs/2026-10-07-capability-subscribers.md): how each current project should change to meet this contract.
@@ -273,6 +292,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
+| 1.3 | §4: the capabilities document is `schema_version: 2`, adding `hosts[]` and a per-model `host` when a deployment serves models from more than one machine; a missing machine means those models are not `available`, and unnamed requests still answer. §7: a drain may scope to one machine. §11: schema note. Clients that send service IDs need no change; a client written against 1.2 keeps working untouched. |
 | 1.2 | §3: the `daytime` row states the guarantee a real published configuration actually provides; `trial` is added as an opt-in service ID; **Two kinds of names** distinguishes catalog service IDs from the reserved compatibility alias `local-active`; an omitted model is the active configuration's default, which is not necessarily `daytime`. §4 documents what `service` reports for a model the catalog gives no alias, and the `CATALOG_HAS_NO_SERVICE_ID` warning. §5, §10 and §13 follow. A client that sends service IDs and does not adopt `trial` needs no change: the added §13 lines record what §3 and §5 already required. |
 | 1.1 | §3: benchmarking and evaluation clients may pin a canonical ID for the duration of a run. §11: minor versions defined. |
 | 1 | Initial contract. |

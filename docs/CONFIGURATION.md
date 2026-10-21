@@ -97,6 +97,22 @@ Reasoning capability metadata belongs to the active deployment profile; the rout
 
 For manual marker updates, `scripts/write-active-model.sh` accepts a capability JSON file as its fourth argument. `runtime/reasoning-capabilities.day.example.json` preserves the historical `xhigh`/`max` → `"max"` behavior, while `runtime/reasoning-capabilities.night.example.json` maps `high`/`xhigh`/`max` to boolean `true`.
 
+## Deployment hosts
+
+A router serves the models of one or more machines. By default there is one, `local`, and everything below is then inert: no store directory is created, no extra field appears in any response, and the catalog is the file the local runtime writes.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `ROUTER_HOSTS` | `local` | CSV of machine IDs whose catalogs this router merges. Order is precedence: it decides which host keeps a name two of them claim. IDs are lowercase, at most 64 characters, of `a-z 0-9 . _ -`. `local` is reserved for this machine and keeps the `ACTIVE_MODEL_FILE` handoff; it cannot be published over HTTP. |
+| `ROUTER_DEFAULT_HOST` | first of `ROUTER_HOSTS` | The host whose active model answers an unnamed request, whose runtime configuration is published as *the* configuration, and which `/health` reports on. Must be one of `ROUTER_HOSTS`. |
+| `CATALOG_STORE_DIR` | `<DATA_DIR>/catalogs` | Where a published host's catalog is stored, one file per host. Created on first publication; read-only to the router otherwise. |
+| `CATALOG_PUSH_TOKEN` | empty | Bearer token accepted by `PUT /admin/api/hosts/<host>/catalog`. `ADMIN_TOKEN` is also accepted; with neither set the endpoint answers 503 `CATALOG_PUSH_UNAVAILABLE`. |
+| `CATALOG_MAX_AGE_MS` | `0` | Age after which a published catalog is reported as `CATALOG_STALE:<host>`. `0` disables the check. A stale catalog keeps serving: a machine that stopped publishing has not necessarily stopped answering. |
+| `ROUTER_EXPECT_ROUTABLE_BACKEND_URLS` | `false` | Report published backends that name a loopback address as `BACKEND_URL_NOT_ROUTABLE:<host>:<address>`. Set it when the router does not share a network namespace with its backends; reported, never refused. |
+
+See [Multi-host deployments](MULTI_HOST.md) for what each machine has to do to be part of the deployment, and for what fails alone versus together.
+
+
 ## Policy
 
 | Variable | Default | Purpose |

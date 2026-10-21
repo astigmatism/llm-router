@@ -26,7 +26,7 @@ The response is always HTTP 200 with a truthful document, including when no mode
 ```jsonc
 {
   "object": "router.capabilities",
-  "schema_version": 1,
+  "schema_version": 2,
   "revision": "q8Zk…",                  // content hash; equals the plain ETag and the event id
   "observed_at": "2026-10-07T02:13:28.004Z", // when this router first saw this revision
   "complete": true,
@@ -56,6 +56,16 @@ The response is always HTTP 200 with a truthful document, including when no mode
     "metadata": { /* identical to this model's x_ollama_router in /v1/models */ }
   }],
   "offline_services": [],                // see below
+  "hosts": [{                            // only when models run on more than one machine
+    "id": "rosalina", "display_name": "rosalina",
+    "default": false,                    // the default host answers an unnamed request
+    "published": true,                   // its machine has handed over a catalog
+    "available": true,                   // not drained, and one of its models answers
+    "draining": false, "drain_reason": null,
+    "configuration": { "id": "…", "exclusive": true, "runtime_revision": "…", "published_at": "…" },
+    "model_ids": ["qwen3.8-27b-abliterated-q6_k"],
+    "error": null                        // why this host contributes nothing, when it does
+  }],
   "ids": {                               // every ID accepted for inference -> canonical model
     "qwen3.8-27b-ud-q6_k_xl-tensor-next": "qwen3.8-27b-ud-q6_k_xl-tensor-next",
     "local-active": "qwen3.8-27b-ud-q6_k_xl-tensor-next",
@@ -69,9 +79,15 @@ The response is always HTTP 200 with a truthful document, including when no mode
 }
 ```
 
-`models` lists canonical residents once each; aliases appear in `aliases` and `ids`. The shapes this covers include:
+`models` lists canonical residents once each; aliases appear in `aliases` and `ids`. When the deployment spans more than one machine each model also carries `host`, and `hosts[]` describes the machines:
 
-- two independent services, each with one slot (paired Daytime + Nighttime);
+- A host that has not published, or whose catalog is invalid, contributes no models and reports `error`. Its absence is not a router failure: the other machines keep serving, `router.accepting_requests` stays true, and an unnamed request answers from the default host.
+- `available` is what a client acts on. It is false when the machine is drained or none of its models answer their health check.
+- `host` names a machine, not a service. A model that moves between machines keeps its `id`, its `service`, and its contract; nothing in this document asks a client to care. See [Multi-host deployments](MULTI_HOST.md).
+
+The shapes this covers include:
+
+- two independent services, each with one slot (paired Daytime + Nighttime), including one running on each of two machines;
 - one exclusive service on every GPU with one slot, or with two slots (`slots: 2`, each at the full `context_window`).
 
 `metadata` includes everything in [model discovery](MODEL_DISCOVERY.md), plus these resident fields:

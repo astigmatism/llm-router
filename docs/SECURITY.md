@@ -27,6 +27,12 @@ The Responses `prompt_cache_key` compatibility field is accepted only when it is
 
 `GET /v1/models` and `GET /v1/models/{alias}` use the same API-listener trust/authentication boundary as Responses. They expose one stable alias plus the current physical `upstream_model` already visible in router health. Discovery calls only Ollama `/api/ps` and `/api/show`; it does not enumerate `/api/tags`, generate, prewarm, load, pull, or manage models. Discovery warnings never include upstream response bodies, filesystem paths, credentials, prompts, or environment values.
 
+## Catalog publication
+
+A machine that runs models but not this router hands them over with `PUT /admin/api/hosts/<host>/catalog`, authenticated with `CATALOG_PUSH_TOKEN`. That token is a write credential for exactly one thing: the catalog of a declared host. It reads nothing — not requests, not prompts, not records — and it cannot change drain or maintenance state. Prefer it over `ADMIN_TOKEN` for a runtime so a compromised publisher cannot drive the router. With neither token configured the endpoint refuses with 503 rather than accepting an unauthenticated write.
+
+Because publication rides the admin listener, which is unauthenticated by design, a catalog can be pushed by anything that can reach that port: keep it on the trusted network, as above. Stored catalogs are `0640` under a `0750` directory. They are not secrets, but they are one machine's account of its hardware, and they are what a compromised publisher could use to point the router at a backend of its choosing — which is why the router never publishes a published `backend_url` back to clients.
+
 ## Prompt logging
 
 Default prompt behavior:

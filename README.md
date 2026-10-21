@@ -51,6 +51,7 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
 - Native Node HTTP transport with cancellation and progress-aware generation stall recovery; no total generation deadline.
 - Bounded request and activity/event JSONL logs: 500 records and 5 MiB each by default.
 - Automatic retention for closed generation archives: seven days or 1 GiB total, with active journals protected. See [persistence settings](docs/CONFIGURATION.md#persistence).
+- A deployment whose models run on several machines in the home network: each machine publishes its own catalog, names stay unique across them, one machine failing or being maintained leaves the rest serving. See [multi-host deployments](docs/MULTI_HOST.md).
 - Telemetry extraction from Ollama final response chunks and non-streaming responses.
 - Optional GPU telemetry through `nvidia-smi` when available.
 - No runtime npm dependencies; the application runs on Node.js 22 built-ins.
@@ -299,6 +300,7 @@ See `docs/DEPLOYMENT_HANDOFF.md` for the full phased migration plan.
 src/                 Router, policy, proxy, telemetry, metrics, storage
 public/              Admin portal UI served on the admin listener
 docs/                Architecture, deployment, API, test, and security notes
+docs/MULTI_HOST.md     Models published by several machines: catalog push, hosts, drain
 docs/source/         Original uploaded topology handoff
 runtime/             Active model marker location
 data/                Runtime JSONL logs, gitignored

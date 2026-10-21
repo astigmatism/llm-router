@@ -46,6 +46,31 @@ The test suite validates:
 - stateless, malformed-input, timeout, incomplete-stream, and cancellation behavior
 - regression coverage proving existing `/api/*`, streaming, policy, and admin behavior remains unchanged
 
+## Multi-host tests
+
+`test/multi-host.test.js` puts a second machine on the loopback and exercises what only exists across machines: publication and its validation, cross-host name conflicts, a broken host leaving the others serving, host-scoped drain and idle waiting, retirement, staleness and routability warnings, and the rule that a single-host deployment publishes no host distinction at all.
+
+```bash
+node --test test/multi-host.test.js
+```
+
+Manual checks against a real second machine:
+
+```bash
+curl -s $ROUTER/admin/api/hosts | jq '.hosts[] | {id, published, model_ids, error}'
+curl -s -X PUT $ROUTER/admin/api/hosts/rosalina/catalog \
+  -H "authorization: Bearer $CATALOG_PUSH_TOKEN" -H 'content-type: application/json' \
+  --data-binary @catalog.json | jq '{revision, models, warnings}'
+curl -s $ROUTER/v1/router/capabilities | jq '{schema_version, hosts: [.hosts[] | {id, available, draining}], models: [.models[] | {id, host, available}]}'
+curl -s $ROUTER/health | jq '{ok, degraded, hosts: [.hosts[] | {id, default, available}]}'
+curl -s -X POST $ROUTER/admin/api/runtime-drain -H 'content-type: application/json' \
+  -d '{"enabled":true,"host":"rosalina","reason":"test"}'; curl -s $ROUTER/v1/chat/completions \
+  -H 'content-type: application/json' -d '{"model":"nighttime","messages":[{"role":"user","content":"hi"}]}'
+curl -s -X POST $ROUTER/admin/api/runtime-drain -H 'content-type: application/json' -d '{"enabled":false,"host":"rosalina"}'
+```
+
+Expect: a model on the drained machine answers 503 `BACKEND_DRAINING` naming that machine while a model elsewhere answers normally; `/health` stays 200 with `degraded: true` while a machine is missing or drained; stopping the second machine entirely leaves its models `available: false` and every other model serving.
+
 ## Docker build test
 
 ```bash

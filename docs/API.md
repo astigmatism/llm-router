@@ -35,6 +35,64 @@ The deployed two-model API, status codes, output/reasoning policies and streamin
 
 See [Deployment capabilities and change events](CAPABILITIES.md) for the schema, sources, event timing and client pattern.
 
+## Hosts
+
+A router serves the models published by one or more machines. With a single host — every deployment that sets no `ROUTER_HOSTS` — there is nothing to report and these fields and endpoints read as if absent. See [Multi-host deployments](MULTI_HOST.md).
+
+### `GET /admin/api/hosts`
+
+```json
+{
+  "ok": true,
+  "default_host": "local",
+  "hosts": [
+    { "id": "local", "display_name": "local", "default": true, "resident": true,
+      "published": true, "model_ids": ["model-a:test"], "revision": null,
+      "accepted_at": "2026-10-21T14:02:11.000Z", "file": "/app/runtime/active-model.json",
+      "loaded_from": "file", "warnings": [], "error": null,
+      "draining": false, "drain_reason": null, "active": 0, "queued": 0 }
+  ]
+}
+```
+
+Each host's catalog revision is a digest of the bytes accepted, so a publisher can confirm that the copy being served is the copy it sent. `error` names why a host is contributing nothing (`HOST_CATALOG_UNPUBLISHED`, `HOST_CATALOG_INVALID`, `HOST_CATALOG_INCOMPATIBLE`).
+
+### `PUT /admin/api/hosts/<host>/catalog`
+
+Body is a schema-version-3 model catalog, exactly as a local runtime writes it, root projection included. `POST` is accepted as a synonym. Authenticate with `Authorization: Bearer <CATALOG_PUSH_TOKEN>`; `ADMIN_TOKEN` is accepted where a deployment has one credential. With neither configured the endpoint answers `503 CATALOG_PUSH_UNAVAILABLE`.
+
+The catalog is validated with the same reader that will later serve it, and against every other host's model names, before it is stored:
+
+| Status | Code | When |
+|---:|---|---|
+| 200 | — | Accepted. Response repeats `revision`, `accepted_at`, the models and offline services now published, and any `warnings` (a loopback `backend_url` under `ROUTER_EXPECT_ROUTABLE_BACKEND_URLS`, a catalog older than `CATALOG_MAX_AGE_MS`). |
+| 400 | `INVALID_MODEL_CATALOG` | The catalog breaks its own contract: schema version, context and slot budget, reasoning policy, or a root projection that disagrees with its entry. |
+| 400 | `HOST_CATALOG_INCOMPATIBLE` | A bare model marker was published instead of a catalog. |
+| 400 | `INVALID_CATALOG_BODY` | The body was not a JSON object. |
+| 401 | `CATALOG_PUBLISH_AUTH_REQUIRED` | No or wrong publisher token. |
+| 404 | `HOST_NOT_DECLARED` | The ID is not in `ROUTER_HOSTS`. |
+| 400 | `LOCAL_HOST_IS_FILE_BACKED` | `local` is published by its file, not by HTTP. |
+| 409 | `CATALOG_ID_CONFLICT` | Another host already publishes one of these names. Diagnostics list up to 25 clashes. |
+
+A refusal leaves the previously accepted catalog in place.
+
+### `DELETE /admin/api/hosts/<host>/catalog`
+
+Retires the catalog: the host stays declared, reports `published: false`, and its models leave every listing and selection. `{"ok":true,"removed":true}`; `removed` is false when nothing was published.
+
+### `GET /health` in a multi-host deployment
+
+Adds `degraded` and `hosts[]`, and answers from the default host alone:
+
+```json
+{ "ok": true, "backend_ready": true, "degraded": true,
+  "hosts": [
+    { "id": "local", "default": true, "published": true, "model_count": 1, "available": true, "draining": false, "drain_reason": null, "error": null },
+    { "id": "rosalina", "default": false, "published": true, "model_count": 1, "available": false, "draining": false, "drain_reason": null, "error": null } ] }
+```
+
+`ok` follows the default host, so a machine missing from the deployment never restarts the router. `degraded` reports it. Per-machine availability comes from the router's own background poll, never from a probe started by the health request. The response no longer repeats the marker's `backend_url`, model paths or GPU identity; the admin summary still shows them.
+
 ## Legacy single-marker Ollama API reference
 
 The remaining backend-specific pass-through and rewrite rules below describe the retained legacy mode unless explicitly stated otherwise. They do not override the primary contract above.
@@ -387,6 +445,16 @@ Body:
 ### `POST /admin/api/reload-config`
 
 Re-reads the active model marker and records an event.
+
+### `POST /admin/api/runtime-drain`
+
+Body:
+
+```json
+{"enabled":true,"reason":"gpu replacement","host":"rosalina"}
+```
+
+Admission control for a runtime transition. While draining, new generation requests receive `503 BACKEND_DRAINING`; accepted and queued work finishes. `host` scopes the drain to one machine — requests whose selected model runs elsewhere continue, and the refusal names the machine — and omitting it drains the whole router, which is what a router release pulls. The state is persisted in the router control file, survives a restart, and is reported by `GET /admin/api/runtime-state`, `/admin/api/hosts`, and the capabilities document. `POST /admin/api/runtime-state` reads it.
 
 ### `POST /admin/api/maintenance`
 

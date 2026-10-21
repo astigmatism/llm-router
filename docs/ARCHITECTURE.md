@@ -9,12 +9,16 @@ The deployed primary catalog uses unrestricted output, unrestricted thinking and
 LLM Router exposes OpenAI-compatible and Ollama-compatible APIs to clients. Production uses two resident llama.cpp servers; the legacy Ollama backend remains supported. The runtime controller owns model loading and catalog publication.
 
 ```text
-OpenWebUI -----------\
-ComfyUI -------------+--> llm-router --> llama.cpp (production)
-                    |              \-> Ollama (legacy)
-voice assistant -----/
+OpenWebUI -----------\                     machine A (GPUs)   llama.cpp ─┐
+ComfyUI -------------+--> llm-router  <──────────────────────────────┘    │
+                    |                       machine B (GPUs)   llama.cpp ─┤
+voice assistant -----/                                   legacy Ollama ─┘
 local AI apps -------/
 ```
+
+Clients address one router. The router selects among models that may be running on
+different machines; see [Multi-host deployments](MULTI_HOST.md) and the catalog
+source below.
 
 ## Legacy Ollama keep-alive policy
 
@@ -148,6 +152,31 @@ entire response must arrive within 55 seconds and 16 KiB; only status, latency,
 and token count are retained. Prompt text and generated content are never
 returned or written to the event log.
 
+## Catalog sources
+
+The deployment a router serves is the merge of one catalog per declared host.
+`src/catalog-source.js` reads them and `src/model-catalog.js` merges, validates
+and selects, so "where a model's description comes from" and "what the rules for
+a model description are" stay separate concerns.
+
+`local` — the machine the router process runs on — keeps the historical handoff:
+`ACTIVE_MODEL_FILE`, then the `ACTIVE_MODEL` fallback, and `POST
+/admin/api/reload-config` as the notification. Every other host's catalog arrives
+over `PUT /admin/api/hosts/<host>/catalog` and is stored under
+`CATALOG_STORE_DIR`, one file per host, written atomically. Validation lives with
+the reader, not with the writer: the publication endpoint runs the same parse a
+request would, so a catalog is never accepted at the door and then refused at
+request time.
+
+Merging is conservative. A host that cannot be read is reported and left out; the
+machines that did publish keep serving. Client-facing names are unique across the
+deployment — canonical IDs, aliases, and the names a machine declares as
+deliberately stopped — with the reserved compatibility alias excluded, since it
+names the deployment's active model rather than a service. The default host
+supplies the default model, the published runtime configuration, and what `/health`
+reports. When only one host is declared, none of this changes any response shape:
+`hosts` and `host` fields are absent and warning names carry no suffix.
+
 ## Deployment states
 
 ### Phase 1: API/admin split
@@ -161,3 +190,7 @@ Repoint OpenWebUI, ComfyUI, the voice assistant, and local apps to the router. C
 ### Phase 3: final cutover
 
 Raw Ollama loses LAN port exposure. The router remains the public compatibility endpoint at `192.168.1.4:11434`, and the no-token admin portal remains on `192.168.1.4:11435` for trusted local/LAN operators.
+
+### Phase 4: the router on its own instance
+
+The router moves to a machine of its own and its backends become remote. Two things follow. A runtime on another machine cannot write into this router's directory, so it publishes its catalog over HTTP with `CATALOG_PUSH_TOKEN` instead; and a backend URL that was correct on one machine has to be an address the router can actually reach, which is why published backends are bound to the LAN and loopback claims are reported. `ROUTER_HOSTS` declares the machines, `ROUTER_DEFAULT_HOST` says which one answers an unnamed request, and drain becomes per machine so one box can be maintained while the rest serve. See [Multi-host deployments](MULTI_HOST.md).

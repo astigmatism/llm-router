@@ -51,6 +51,8 @@ This exact-alias behavior is always active. `REWRITE_REQUESTED_MODEL_TO_ACTIVE=f
 
 The alias is served on the normal router API listener with the same authentication posture as `/v1/responses`. It is not served on the separate admin listener.
 
+In a deployment whose models are published by more than one machine, this alias is the one name every machine may declare and only one machine may publish. Each machine validates it against its own default entry — that is how a machine publishes the same contract alone and in company — but the merged listing publishes it for the default host only, because it names one model: the one an unnamed request receives. A model from another machine appears by its canonical ID and its service aliases, each of which must be unique across the deployment. See [multi-host deployments](MULTI_HOST.md).
+
 ## Endpoints
 
 `GET /v1/models` returns exactly one public entry:
