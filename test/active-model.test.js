@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { readActiveModel, writeActiveModelMarker } from '../src/active-model.js';
+import { markerWarnings } from '../src/model-discovery.js';
 
 test('reads active model JSON marker', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'router-marker-'));
@@ -139,4 +140,18 @@ test('reads and writes additive Flash reasoning policy metadata', async () => {
   });
   const info = await readActiveModel(loadConfig({ ACTIVE_MODEL_FILE: file, ADMIN_TOKEN: '' }));
   assert.deepEqual(info.reasoning_policy, reasoningPolicy);
+});
+
+// Completeness is `no warnings at all`, and a client refuses an incomplete model rather than guessing at
+// its limits — so a warning about a file a pushed catalog never needed is not cosmetic noise, it is the
+// household having no model to route. See docs/MULTI_HOST.md for what a push carries by itself.
+test('a catalog that arrived by push is not asked for a marker it cannot have', () => {
+  assert.deepEqual(markerWarnings({ loadedFrom: 'pushed', catalog_mode: true }), []);
+  assert.deepEqual(markerWarnings({ loadedFrom: 'file' }), []);
+});
+
+test('a router unsure of its own answer still reports the marker it is missing', () => {
+  assert.deepEqual(markerWarnings({ loadedFrom: 'env-fallback' }), ['ACTIVE_MODEL_MARKER_UNAVAILABLE']);
+  assert.deepEqual(markerWarnings({ loadedFrom: 'missing' }), ['ACTIVE_MODEL_MARKER_UNAVAILABLE']);
+  assert.deepEqual(markerWarnings({}), ['ACTIVE_MODEL_MARKER_UNAVAILABLE']);
 });

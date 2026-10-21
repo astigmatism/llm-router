@@ -324,6 +324,18 @@ export function ifNoneMatchMatches(header, etag) {
   });
 }
 
+/**
+ * The active-model marker is how a runtime on this machine says what is serving. A host whose catalog
+ * arrived by push said so itself, and a router installed on a machine with no models has no marker to
+ * read and never will: warning about its absence made every pushed catalog incomplete, and a client that
+ * refuses an incomplete model has no model at all. An env fallback and a missing marker are still
+ * reported, because those are this router being unsure of its own answer.
+ */
+export function markerWarnings(activeModel) {
+  if (activeModel?.loadedFrom === 'file' || activeModel?.loadedFrom === 'pushed') return [];
+  return ['ACTIVE_MODEL_MARKER_UNAVAILABLE'];
+}
+
 export class ActiveModelDiscovery {
   constructor(config, options = {}) {
     this.config = config;
@@ -391,7 +403,7 @@ export class ActiveModelDiscovery {
       typeof adapter?.props === 'function' ? adapter.props() : null
     ]);
     const warnings = [...(activeModel.metadata_warnings || [])];
-    if (activeModel.loadedFrom !== 'file') warnings.push('ACTIVE_MODEL_MARKER_UNAVAILABLE');
+    warnings.push(...markerWarnings(activeModel));
     const updatedAt = normalizeTimestamp(activeModel.updated_at);
     if (activeModel.updated_at && !updatedAt) warnings.push('INVALID_MARKER_UPDATED_AT');
     if (ps.warning) warnings.push(ps.warning);
