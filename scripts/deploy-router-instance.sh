@@ -10,6 +10,14 @@
 set -euo pipefail
 
 BIND_IP="${BIND_IP:-192.168.1.23}"
+# Recorded before the defaults below, because the copy of this script that is *running* is not always the
+# copy that gets deployed: when the checkout moves, this process re-execs the fresh script, and forwarding
+# an already-expanded variable would freeze the fleet the previous revision believed in. A machine added
+# to the defaults would then not exist for the deployment that shipped it, and its catalog would be refused
+# with HOST_NOT_DECLARED. Empty is passed through as empty, and `${ROUTER_HOSTS:-…}` in the fresh copy is
+# what fills it in.
+ROUTER_HOSTS_SET="${ROUTER_HOSTS:-}"
+DEFAULT_HOST_SET="${ROUTER_DEFAULT_HOST:-}"
 ROUTER_HOSTS="${ROUTER_HOSTS:-rosalina,daisy}"
 DEFAULT_HOST="${ROUTER_DEFAULT_HOST:-rosalina}"
 BASE="${BASE:-$HOME/deployments/llm-router}"
@@ -53,7 +61,7 @@ say "source  $(git -C "$SOURCE" rev-parse --short HEAD) $(git -C "$SOURCE" statu
 FRESH="$SOURCE/scripts/deploy-router-instance.sh"
 if [[ ${ROUTER_INSTANCE_SELF:-0} != 1 && -f $FRESH && $(sha256sum "$FRESH" | cut -d" " -f1) != "$STARTED_SHA256" ]]; then
   say "re-running the installer from the updated checkout at $(git -C "$SOURCE" rev-parse --short HEAD)"
-  ROUTER_INSTANCE_SELF=1 BIND_IP="$BIND_IP" ROUTER_HOSTS="$ROUTER_HOSTS" ROUTER_DEFAULT_HOST="$DEFAULT_HOST" \
+  ROUTER_INSTANCE_SELF=1 BIND_IP="$BIND_IP" ROUTER_HOSTS="$ROUTER_HOSTS_SET" ROUTER_DEFAULT_HOST="$DEFAULT_HOST_SET" \
   BASE="$BASE" ENV_FILE="$ENV_FILE" REPO_URL="$REPO_URL" REV="$REV" COMPOSE_FILE="$COMPOSE_FILE" \
     exec bash "$FRESH"
 fi
