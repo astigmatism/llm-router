@@ -219,6 +219,33 @@ test('a published host joins the deployment and serves its own models', async (t
   assert.equal(health.hosts.find((host) => host.id === 'rosalina').default, false);
 });
 
+// Two machines may describe the model they run in the same words. That is only
+// the router's business once a client has to pick one of them by name, which is
+// exactly what a model picker does: it renders one option per service and finds
+// the option again by its label.
+test('a two-machine roster tells two rows of one title apart', async (t) => {
+  const f = await fixture(t, { secondHost: 'rosalina' });
+  const backend = await fakeBackend(NIGHT, t, f.hits, catalogEntry(NIGHT, []).max_active_requests);
+  const TITLE = 'Daytime (160K)';
+  const catalog = Object.assign(
+    hostCatalog([Object.assign(catalogEntry(NIGHT, ['local-active', 'nighttime']), { backend_url: backend.url, display_name: TITLE })]),
+    { host: { id: 'rosalina', display_name: 'Rosalina' } });
+  assert.equal((await f.publish('rosalina', catalog)).status, 200);
+
+  const capabilities = await f.get('/v1/router/capabilities');
+  assert.equal(capabilities.schema_version, 2);
+  const rows = Object.fromEntries(capabilities.models.map((model) => [model.id, model]));
+  assert.deepEqual([rows[CODING].display_name, rows[NIGHT].display_name], [TITLE, TITLE],
+    'a published title is never rewritten, whatever else the deployment holds');
+  // Each row is still selectable by one exact label: the machine it runs on,
+  // named the way that machine published itself and by its ID when it did not.
+  assert.equal(rows[CODING].display_name_qualified, `${TITLE} (local)`);
+  assert.equal(rows[NIGHT].display_name_qualified, `${TITLE} (Rosalina)`);
+  const qualified = capabilities.models.map((model) => model.display_name_qualified);
+  assert.equal(new Set(qualified).size, qualified.length, JSON.stringify(qualified));
+  assert.deepEqual(capabilities.hosts.map((host) => [host.id, host.display_name]), [['local', 'local'], ['rosalina', 'Rosalina']]);
+});
+
 test('the default host selects the model an unnamed request answers with', async (t) => {
   const f = await fixture(t, { secondHost: 'daisy' });
   const backend = await fakeBackend(NIGHT, t, f.hits, catalogEntry(NIGHT, []).max_active_requests);

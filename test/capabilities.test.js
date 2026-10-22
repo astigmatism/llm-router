@@ -7,6 +7,7 @@ import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { createRouterServer } from '../src/server.js';
 import { formatParameterSize } from '../src/backend-adapters.js';
+import { qualifyDisplayNames } from '../src/capabilities.js';
 
 const template = JSON.parse(await fs.readFile(new URL('../runtime/primary-model-catalog.json', import.meta.url)));
 const CODING = template.models[0].model;
@@ -77,12 +78,19 @@ async function fixture(t, { env = {}, edit = () => {} } = {}) {
   const post = (url, body, signal) => fetch(base + url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal });
   const admin = (route, body = {}) => fetch(base + '/admin/api/' + route, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': 'test' }, body: JSON.stringify(body) });
   const capabilities = async (query = '') => (await fetch(base + '/v1/router/capabilities' + query)).json();
+  // Another machine handing its catalog to this router, as the runtime does:
+  // body-authenticated publication that states who is publishing.
+  const publish = (host, payload, { token = 'push-secret', method = 'PUT' } = {}) => fetch(`${base}/admin/api/hosts/${host}/catalog`, {
+    method,
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(payload)
+  });
   const rewrite = async (change) => {
     change(marker);
     Object.assign(marker, { ...marker.models[0], models: marker.models });
     await fs.writeFile(file, JSON.stringify(marker));
   };
-  return { ...router, base, config, file, marker, post, admin, capabilities, rewrite, backends };
+  return { ...router, base, config, file, marker, post, admin, capabilities, publish, rewrite, backends };
 }
 
 const chat = (model, content = 'hello') => ({ model, messages: [{ role: 'user', content }], reasoning_effort: 'none', max_tokens: 16, stream: false });
@@ -103,6 +111,26 @@ function exclusive(marker) {
   Object.assign(marker.models[0], { exclusive: true });
   marker.configuration = { id: 'flash-next-solo-128k', exclusive: true, runtime_revision: 'cc83b68', published_at: '2026-10-07T02:13:27.000Z' };
   marker.offline_services = [{ model: night.model, aliases: night.aliases, display_name: night.display_name, role: 'everyday', reason: 'exclusive_configuration' }];
+}
+
+// A second machine in the deployment. `local` keeps the default host, and the
+// other one hands its catalog over the push endpoint with the identity the
+// runtime states in the body itself.
+const TWO_HOSTS = { ROUTER_HOSTS: 'local,rosalina', ROUTER_DEFAULT_HOST: 'local', CATALOG_PUSH_TOKEN: 'push-secret' };
+
+function publishedEntry(model, aliases, { id = model, display_name, backend_url }) {
+  const entry = structuredClone(template.models.find((candidate) => candidate.model === model));
+  Object.assign(entry, { model: id, aliases, display_name, backend_url });
+  entry.runtime_output_policy = { verification: 'docker-inspect-argv', n_predict: -1, reasoning_budget: -1, reasoning_effort: 'default', container_id: `fake-${id}` };
+  return entry;
+}
+
+// One machine's published catalog: the entries it runs, the root projection the
+// marker contract has always required, and the label this machine publishes
+// itself under.
+function publishedCatalog(entries, host) {
+  const catalog = { schema_version: 3, default_model: entries[0].model, models: entries, host };
+  return Object.assign(catalog, { ...entries[0], models: entries });
 }
 
 // Reads text/event-stream frames from the router into an array.
@@ -176,7 +204,7 @@ test('capabilities document describes residents, configuration and live facts, a
 
   const [day, night] = doc.models;
   assert.deepEqual({ ...day, metadata: undefined }, {
-    id: CODING, service: 'daytime', display_name: 'Daytime (160K)', aliases: ['local-active', 'daytime'], available: true, slots: 1,
+    id: CODING, service: 'daytime', display_name: 'Daytime (160K)', display_name_qualified: 'Daytime (160K)', aliases: ['local-active', 'daytime'], available: true, slots: 1,
     context_window: 163840, input_modalities: ['text', 'image'], capabilities: ['completion', 'thinking', 'tools', 'vision'],
     nsfw: false, capability_score: 68.5, metadata: undefined
   });
@@ -542,4 +570,132 @@ test('the event stream marks the moment a service alias stops existing', async (
   assert.equal((await f.admin('reload-config')).status, 200);
   await until(() => stream.latest('capabilities').data.models[0].service === 'daytime', 3000);
   assert.notEqual(stream.latest('capabilities').id, stripped.id);
+});
+
+// A picker offers one option per service and identifies the option a person
+// chose by the label it was shown, so two rows titled alike cannot be chosen
+// apart. The published title is never rewritten: `display_name_qualified` is the
+// additive label a client may render instead.
+test('two machines publishing one title get qualified labels that name the machine', async (t) => {
+  const TITLE = 'Qwen3.8 Flash-Next (256K)';
+  let nightBackend = null;
+  const f = await fixture(t, {
+    env: TWO_HOSTS,
+    edit: (marker) => {
+      nightBackend = marker.models[1].backend_url;
+      Object.assign(marker.models[0], { display_name: TITLE });
+      marker.models = [marker.models[0]];
+    }
+  });
+  const published = await f.publish('rosalina', publishedCatalog(
+    [publishedEntry(EVERYDAY, ['local-active', 'nighttime'], { display_name: TITLE, backend_url: nightBackend })],
+    { id: 'rosalina', display_name: 'Rosalina' }
+  ));
+  assert.equal(published.status, 200, await published.text());
+
+  const doc = await f.capabilities();
+  assert.equal(doc.complete, true, JSON.stringify(doc.warnings));
+  const rows = Object.fromEntries(doc.models.map((model) => [model.id, model]));
+  // Both machines publish the same words for their model, and both keep them.
+  assert.deepEqual([rows[CODING].display_name, rows[EVERYDAY].display_name], [TITLE, TITLE]);
+  assert.equal(rows[CODING].display_name_qualified, `${TITLE} (local)`, 'a machine that published no label of its own is named by its ID');
+  assert.equal(rows[EVERYDAY].display_name_qualified, `${TITLE} (Rosalina)`, 'a machine that published one is named by it');
+  const qualified = doc.models.map((model) => model.display_name_qualified);
+  assert.equal(new Set(qualified).size, qualified.length, `every row answers to one exact label: ${JSON.stringify(qualified)}`);
+});
+
+test('two services of one machine under one title are told apart by the service ID', async (t) => {
+  const TITLE = 'Qwen3.8 Flash-Next (256K)';
+  let backends = [];
+  const f = await fixture(t, {
+    env: TWO_HOSTS,
+    edit: (marker) => { backends = marker.models.map((model) => model.backend_url); marker.models = [marker.models[0]]; }
+  });
+  const published = await f.publish('rosalina', publishedCatalog([
+    publishedEntry(EVERYDAY, ['nighttime'], { display_name: TITLE, backend_url: backends[1] }),
+    publishedEntry(CODING, ['evening'], { id: `${CODING}-b`, display_name: TITLE, backend_url: backends[0] })
+  ], { id: 'rosalina', display_name: 'Rosalina' }));
+  assert.equal(published.status, 200, await published.text());
+
+  const doc = await f.capabilities();
+  assert.equal(doc.complete, true, JSON.stringify(doc.warnings));
+  const rows = Object.fromEntries(doc.models.map((model) => [model.id, model]));
+  // Naming the machine would publish two rows that read alike all the same, so
+  // the service ID — unique across the whole deployment, because a name two
+  // machines both claim is refused at publication — qualifies them instead.
+  assert.equal(rows[EVERYDAY].display_name_qualified, `${TITLE} (nighttime)`);
+  assert.equal(rows[`${CODING}-b`].display_name_qualified, `${TITLE} (evening)`);
+  assert.equal(rows[CODING].display_name_qualified, rows[CODING].display_name, 'a row nobody competes with keeps its published title');
+  const qualified = doc.models.map((model) => model.display_name_qualified);
+  assert.equal(new Set(qualified).size, qualified.length, `every row answers to one exact label: ${JSON.stringify(qualified)}`);
+});
+
+test('one machine offering a service pair under one title still names them apart', async (t) => {
+  const f = await fixture(t, { edit: (marker) => { marker.models[1].display_name = marker.models[0].display_name; } });
+  const doc = await f.capabilities();
+  assert.equal(doc.hosts, undefined, 'one machine publishing is not a fact a label has to repeat');
+  assert.deepEqual(doc.models.map((model) => model.display_name_qualified), [
+    'Daytime (160K) (daytime)', 'Daytime (160K) (nighttime)'
+  ]);
+});
+
+test('nothing colliding publishes no parenthetical anywhere', async (t) => {
+  const f = await fixture(t, { edit: placeOnGpus });
+  const doc = await f.capabilities();
+  assert.ok(doc.models.length > 1);
+  for (const model of doc.models) {
+    assert.equal(model.display_name_qualified, model.display_name, `${model.id} is already unique and stays uncaptioned`);
+  }
+});
+
+test('composing the same roster twice yields the same document', async (t) => {
+  const TITLE = 'Qwen3.8 Flash-Next (256K)';
+  let backends = [];
+  const f = await fixture(t, {
+    env: TWO_HOSTS,
+    edit: (marker) => {
+      backends = marker.models.map((model) => model.backend_url);
+      Object.assign(marker.models[0], { display_name: TITLE });
+      marker.models = [marker.models[0]];
+    }
+  });
+  await f.publish('rosalina', publishedCatalog([
+    publishedEntry(EVERYDAY, ['nighttime'], { display_name: TITLE, backend_url: backends[1] }),
+    publishedEntry(CODING, ['evening'], { id: `${CODING}-b`, display_name: TITLE, backend_url: backends[0] })
+  ], { id: 'rosalina', display_name: 'Rosalina' }));
+
+  const first = await f.capabilities();
+  const second = await f.capabilities();
+  assert.equal(first.revision, second.revision);
+  assert.equal(JSON.stringify({ ...first, observed_at: null }), JSON.stringify({ ...second, observed_at: null }));
+});
+
+test('a qualified label comes from the rows, never from the order they were read in', () => {
+  const hosts = [{ id: 'rosalina', display_name: 'Rosalina' }, { id: 'daisy', display_name: 'Daisy' }];
+  const rows = [
+    { id: 'first', service: 'daytime', display_name: 'Flash-Next', host: 'rosalina' },
+    { id: 'second', service: 'nighttime', display_name: 'FLASH-NEXT', host: 'daisy' },
+    { id: 'third', service: 'trial', display_name: 'Flash-Next ', host: 'daisy' },
+    { id: 'own', service: 'evening', display_name: 'Something Else', host: 'daisy' },
+    // A model with no service ID is not a row a client may be offered, so it is
+    // not in the collision and keeps its title.
+    { id: 'unaddressable', service: 'unaddressable', display_name: 'Flash-Next', host: 'daisy' }
+  ];
+  const compose = (order) => {
+    const models = order.map((row) => ({ ...row, display_name_qualified: row.display_name }));
+    qualifyDisplayNames(models, hosts);
+    return Object.fromEntries(models.map((model) => [model.id, model.display_name_qualified]));
+  };
+  const labels = compose(rows);
+  // Case and spacing are the same title to a client that matches on what it
+  // renders. The machine separates two of these three, so all three are
+  // qualified the same way — by the ID their client sends.
+  assert.deepEqual(labels, {
+    first: 'Flash-Next (daytime)',
+    second: 'FLASH-NEXT (nighttime)',
+    third: 'Flash-Next  (trial)',
+    own: 'Something Else',
+    unaddressable: 'Flash-Next'
+  });
+  assert.deepEqual(compose([...rows].reverse()), labels, 'the same rows in the other order say the same thing');
 });

@@ -45,6 +45,7 @@ The response is always HTTP 200 with a truthful document, including when no mode
     "id": "qwen3.8-27b-ud-q6_k_xl-tensor-next",
     "service": "daytime",                // the stable ID to send for this model: its service alias, or its canonical ID when the catalog declares no alias for it
     "display_name": "Qwen3.8 27B Q6_K (160K)",
+    "display_name_qualified": "Qwen3.8 27B Q6_K (160K)",   // the label a client may render to pick this row unambiguously: the published title, plus "(host)" or "(service)" only where two rows would otherwise read alike
     "aliases": ["local-active", "daytime"],
     // metadata.alias_display_names titles every declared name: { "local-active": "local-active",
     // "daytime": "Daytime (160K, vision)" }. A client that offers one option per
@@ -89,6 +90,16 @@ The response is always HTTP 200 with a truthful document, including when no mode
 - A host that has not published, or whose catalog is invalid, contributes no models and reports `error`. Its absence is not a router failure: the other machines keep serving, `router.accepting_requests` stays true, and an unnamed request answers from the default host.
 - `available` is what a client acts on. It is false when the machine is drained or none of its models answer their health check.
 - `host` names a machine, not a service. A model that moves between machines keeps its `id`, its `service`, and its contract; nothing in this document asks a client to care. See [Multi-host deployments](MULTI_HOST.md).
+
+### Titles a client can pick by
+
+`display_name` is the publisher's title, stamped as published: two machines describing their model in the same words publish the same title, and a client that renders a list of services and then finds the chosen one by its label cannot tell those rows apart. `display_name_qualified` is the router's answer, present on every row:
+
+- equal to `display_name` wherever that title already names exactly one selectable row — a deployment with nothing colliding repeats every title unchanged, so caching a label costs nothing;
+- otherwise the title plus the machine in parentheses — `hosts[].display_name`, or the host ID when that machine published no label of its own;
+- and the service ID in parentheses instead, when the rows that collide are two services of one machine and naming the machine would publish the same label twice.
+
+It is a plain string, unique among the selectable rows of the document, and derived from the rows themselves rather than from the order they were read, so the same roster composes to the same bytes. It is additive: `display_name` never changes, a model that moves to another machine keeps the title its publisher chose, and only the qualified label may mention a machine. A row the catalog gives no service ID is not selectable under the contract, so it is never qualified and carries its published title in both fields. `offline_services[].display_name` has no qualified twin — a stopped service is not a row a client can select.
 
 The shapes this covers include:
 

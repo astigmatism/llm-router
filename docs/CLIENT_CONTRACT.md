@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1.4 · 2026-10-21.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing; version 1.4 states how an alias is titled in the model listings, so that several names for one model read as the several names they are. No client change is required; see [changes](#15-changes).
+**Version 1.5 · 2026-10-22.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing; version 1.4 states how an alias is titled in the model listings, so that several names for one model read as the several names they are; version 1.5 adds `display_name_qualified`, the one label per row a client may render and match on when two publishers chose the same words. No client change is required; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -84,7 +84,7 @@ The router distinguishes sharply between a name that means a service and a name 
 | `revision` | Content hash of everything below except load. If `revision` is unchanged, nothing relevant has changed. |
 | `router.accepting_requests` | False while the router drains for a configuration switch, or during maintenance. |
 | `configuration.id`, `configuration.exclusive` | The AI Runtime configuration, and whether it is solo. |
-| `models[]` | Each usable model: `service` (the ID to send), `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. In a deployment whose models live on more than one machine, each also carries `host`. |
+| `models[]` | Each usable model: `service` (the ID to send), `display_name`, `display_name_qualified`, `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. In a deployment whose models live on more than one machine, each also carries `host`. |
 | `hosts[]` | Only when the deployment spans more than one machine: each one's `id`, `display_name`, `default`, `published`, `available`, `draining`, `drain_reason`, `configuration`, and `model_ids`. See below. |
 | `offline_services[]` | Services this configuration deliberately stops: `model`, `aliases`, `display_name`, `reason`. |
 | `ids` | Every accepted ID → its current canonical model. |
@@ -107,6 +107,30 @@ it reads the capabilities document, which lists each model once. That document p
 Use it as the label of the option that sends that name: two service IDs whose canonical model is the same are then
 offered under two different labels, which is what the picker is for. `metadata.alias_display_names[name]` always exists
 for a name the model declares.
+
+**When two rows are titled alike, `display_name_qualified` is the label to render.** Two machines may
+describe the model they run in the same words, and one machine may offer two services under one title; the
+router publishes what each publisher chose, so the list a client builds from this document can hold two rows
+that read the same — and a client that finds the chosen option again by its exact label cannot state which one
+it meant. `display_name_qualified`, a plain string on every row, is what such a client renders and matches on:
+the published title, plus the machine in parentheses where two rows would otherwise collide
+(`hosts[].display_name`, or the machine's ID when it published no label of its own), and the service ID in
+parentheses instead when naming the machine would publish the same label twice. It is unique among the rows a
+client can select, and it is the published title byte for byte wherever nothing collides, so a quiet
+deployment repeats `display_name` exactly and a cached label never churns. Two rules follow:
+
+- The label qualifies a **row**, whose sendable ID is that row's `service`. A client that offers one option
+  per row uses this label; a client that offers one option per *name* a model answers to labels those options
+  from `metadata.alias_display_names` as above and needs nothing new. Either way a client MUST NOT construct
+  the qualified label itself, and MUST NOT assume it takes more than one machine for it to differ — one
+  machine offering two services under one title collides too.
+- `display_name` stays what the publisher called this model, and it is what a client records, logs and
+  compares across a configuration change: a model the runtime moves to another machine keeps its name, and
+  only the qualified label may mention a machine, and only where a real collision forced it. A router older
+  than this field omits it, and a client MUST then fall back to `display_name`. A client MAY keep matching on
+  `display_name` everywhere; what it MUST NOT do is de-duplicate or address rows by a title the router never
+  promised was unique. `offline_services[].display_name` has no qualified twin — a service the configuration
+  stops is not a row a client can select.
 
 The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
 
@@ -308,6 +332,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
+| 1.5 | §4: every capabilities row carries `display_name_qualified`, the label a client may render and match on when two publishers titled their model alike — the published title, qualified with the machine or, when one machine offers two services under one title, with the service ID. `display_name` is unchanged and still what a client records; where nothing collides the two strings are equal, so no client needs to change. `schema_version` stays 2: the field is additive and unknown fields are ignored. |
 | 1.4 | §4: an alias row in `/v1/models` and `/api/tags` is titled by the alias rather than by its model's title, unless the catalog states one, and the capabilities document publishes `metadata.alias_display_names` so a client that offers one option per service can label each name distinctly; clients identify rows by `id` and MUST NOT de-duplicate them by title. A client that sends service IDs needs no change: nothing it sends or reads by `id` moved, and the capabilities document still lists each model once, under its own title. |
 | 1.3 | §4: the capabilities document is `schema_version: 2`, adding `hosts[]` and a per-model `host` when a deployment serves models from more than one machine; a missing machine means those models are not `available`, and unnamed requests still answer. §7: a drain may scope to one machine. §11: schema note. Clients that send service IDs need no change; a client written against 1.2 keeps working untouched. |
 | 1.2 | §3: the `daytime` row states the guarantee a real published configuration actually provides; `trial` is added as an opt-in service ID; **Two kinds of names** distinguishes catalog service IDs from the reserved compatibility alias `local-active`; an omitted model is the active configuration's default, which is not necessarily `daytime`. §4 documents what `service` reports for a model the catalog gives no alias, and the `CATALOG_HAS_NO_SERVICE_ID` warning. §5, §10 and §13 follow. A client that sends service IDs and does not adopt `trial` needs no change: the added §13 lines record what §3 and §5 already required. |

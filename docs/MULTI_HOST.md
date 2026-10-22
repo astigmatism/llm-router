@@ -154,6 +154,24 @@ the same service whether the runtime moves it to another machine or keeps it
 where it is. That is what makes the split survivable: nothing a client caches has
 to survive it.
 
+The same rule holds for a model's *name*, and the split is what makes the
+collision possible: two machines may describe what they run in the same words, so
+the composed document can hold two rows both titled
+`Qwen3.8 Flash-Next (256K)`, and a client that offers one option per service and
+finds the chosen one by its exact label cannot state which it meant. The router
+does not rename anybody else's model — `display_name` stays what the publisher
+titled it, before and after a model moves between machines — and publishes
+`display_name_qualified` beside it: the same string where that title already
+identifies one row, and the title with the machine in parentheses where it does
+not, named by `hosts[].display_name` or by the host ID when the machine published
+no label of its own. Where one machine offers two services under one title,
+naming the machine would publish the same label twice, so the service ID qualifies
+instead. A client that needs one unambiguous label per row renders the qualified
+one; a client that records what a model is called uses the published one, and only
+the first may ever mention a machine, and only to break a real collision. Nothing
+about `schema_version: 2` moves: the field is additive, and clients that never
+read it are unaffected.
+
 ## 5. Machines fail apart
 
 Each host's catalog is read, validated and reported separately, and one host's

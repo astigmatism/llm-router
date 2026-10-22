@@ -23,6 +23,84 @@ const RECONNECT_RETRY_MS = 3000;
 
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('base64url');
 const errorCode = (error) => (typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'MODEL_DISCOVERY_FAILED');
+// Two titles are the same title when a client rendering them cannot tell them
+// apart: case and spacing are presentation, and a renderer collapses runs of
+// whitespace anyway. Comparison normalizes; the published title never does.
+const labelKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// What a client may render to pick one row out of `models[]` by its title.
+//
+// A picker offers one option per service and identifies the option a person
+// chose by the label it was given, so two rows titled alike cannot be chosen
+// apart: a strict name match resolves both and the client's own verification
+// fails. Service IDs are already unique across the deployment — a name two
+// machines both claim is refused at publication — but the *title* is whatever
+// each publisher chose, and two machines may describe the same model the same
+// way. That is a presentation collision, and it is fixed here rather than at
+// the door: the router does not get to rename somebody else's model.
+//
+// `display_name` is therefore never rewritten. A model's client-facing name must
+// not change because its runtime moved it to another machine (MULTI_HOST.md §4),
+// and every consumer that matches on the published title keeps working.
+// `display_name_qualified` is the additive answer: equal to `display_name`
+// wherever that title already names exactly one row, and carrying the machine or
+// the service ID in parentheses only on the rows that genuinely collide.
+//
+// Determinism: every label is derived from the rows themselves — the whole set
+// of rows sharing one title is decided together, and the qualifier comes from
+// that row's own host and service — so the result never depends on the order a
+// Map happened to yield, and composing the same roster twice gives the same
+// bytes.
+const DISPLAY_LABEL_QUALIFIERS = ['host', 'service'];
+
+export function qualifyDisplayNames(models, hosts) {
+  const hostLabels = new Map((hosts ?? []).map((host) => [host.id, host.display_name ?? host.id]));
+  // A row a client may select is one that answers to a service ID; the contract
+  // forbids offering the rest as a choice, so they can never be the duplicate in
+  // someone's picker and keep their published title untouched.
+  const selectable = (model) => model.service !== model.id;
+  const selectableRows = models.filter(selectable);
+  const groups = new Map();
+  for (const model of selectableRows) {
+    const key = labelKey(model.display_name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(model);
+  }
+  const qualify = (model, qualifier) => {
+    const detail = qualifier === 'host'
+      ? (model.host === undefined || model.host === null ? null : hostLabels.get(model.host) ?? String(model.host))
+      : model.service;
+    return typeof detail === 'string' && detail.trim() ? `${model.display_name} (${detail.trim()})` : null;
+  };
+  // One qualifier for a whole group, chosen by the first that separates all of
+  // its rows: the machine usually does it, and when one machine offers two
+  // services under one title the service ID has to.
+  const decided = new Map();
+  for (const [key, group] of groups) {
+    if (group.length < 2) continue;
+    for (const qualifier of DISPLAY_LABEL_QUALIFIERS) {
+      const labels = group.map((model) => qualify(model, qualifier));
+      if (labels.every((label) => label !== null) && new Set(labels.map(labelKey)).size === labels.length) {
+        decided.set(key, qualifier);
+        break;
+      }
+    }
+  }
+  const uniqueTitles = () => new Set(selectableRows.map((model) => labelKey(model.display_name_qualified))).size === selectableRows.length;
+  const apply = (qualifier) => {
+    for (const model of models) {
+      const kind = selectable(model) ? (qualifier ?? decided.get(labelKey(model.display_name)) ?? null) : null;
+      model.display_name_qualified = kind === null ? model.display_name : (qualify(model, kind) ?? model.display_name);
+    }
+  };
+  apply(null);
+  // Rare, and only from a publisher whose title is another row's title plus a
+  // parenthetical: a qualified label that lands on a title somebody published
+  // verbatim. Qualifying every selectable row with its service ID always ends
+  // the argument, because the deployment has no two rows sharing one.
+  if (!uniqueTitles()) apply('service');
+  return models;
+}
 
 function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHosts, host) {
   const meta = entry.x_ollama_router || {};
@@ -36,6 +114,9 @@ function modelSummary(entry, acceptingRequests, compatibilityAlias, drainingHost
     // (daytime, nighttime), not the compatibility alias or canonical ID.
     service: aliases.find((alias) => alias !== compatibilityAlias) ?? entry.id,
     display_name: meta.display_name ?? entry.id,
+    // Stamped below, once every row is known: the published title, plus a host or
+    // service qualifier where two rows would otherwise read alike.
+    display_name_qualified: meta.display_name ?? entry.id,
     aliases,
     // A listed model is usable only while its backend answers health checks
     // and the router is admitting new requests.
@@ -125,6 +206,9 @@ export class CapabilityPublisher {
         error: host.error ? { code: host.error.code, message: host.error.message } : null
       };
     }) : null;
+    // Titles are the last thing composed, because a title can only be known
+    // unique once every row and every machine that publishes one is.
+    qualifyDisplayNames(models, hosts);
     const ids = {};
     for (const model of models) {
       ids[model.id] = model.id;
