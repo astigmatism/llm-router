@@ -148,3 +148,15 @@ test('an interrupted journal still reads, and a missing one is not an error', as
   await assert.rejects(() => readJournalView({ dir, id: 'not-a-uuid' }), (error) => error.code === 'INVALID_RECORD_ID');
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('a Responses request whose input is a plain string still shows its prompt', async () => {
+  const { dir, id } = await write([
+    { at: '2026-10-22T18:00:00.000Z', type: 'request', request: { model: 'm', input: 'Reply with exactly: portal ok', instructions: 'Be terse.', stream: true } },
+    { at: '2026-10-22T18:00:01.000Z', type: 'terminal', status: 'completed' }
+  ]);
+  const view = await readJournalView({ dir, id });
+  assert.equal(view.prompt.shape, 'responses');
+  assert.deepEqual(view.prompt.items.map((item) => [item.role, item.text]),
+    [['system', 'Be terse.'], ['user', 'Reply with exactly: portal ok']]);
+  await fs.rm(dir, { recursive: true, force: true });
+});

@@ -154,8 +154,16 @@ function projectItems(source, budget) {
 
 function promptFrom(request, budget) {
   if (!request || typeof request !== 'object') return null;
-  const source = Array.isArray(request.input) ? request.input
-    : Array.isArray(request.messages) ? request.messages : [];
+  const typed = Array.isArray(request.input) ? request.input : Array.isArray(request.messages) ? request.messages : null;
+  // A Responses call may arrive with `input` as a plain string, and an Ollama
+  // generate call with `prompt`; both are one turn, and rendering them as no
+  // prompt at all would hide the only text the client sent.
+  const scalar = typeof request.input === 'string' ? [{ role: 'user', content: request.input }]
+    : typeof request.prompt === 'string' ? [{ role: 'user', content: request.prompt }] : [];
+  const instructions = typeof request.instructions === 'string' && request.instructions
+    ? [{ role: 'system', content: request.instructions }]
+    : Array.isArray(request.instructions) ? request.instructions.map((entry) => (typeof entry === 'string' ? { role: 'system', content: entry } : entry)) : [];
+  const source = typed ?? [...instructions, ...scalar];
   const projection = projectItems(request, budget);
   const totalBytes = bytes(request);
   let itemCount = 0;
@@ -175,7 +183,7 @@ function promptFrom(request, budget) {
   if (rest > 0) projection.items.push({ index: itemCount, kind: 'more_items', count: rest, elided: true, bytes: 0 });
   return {
     model: request.model ?? null,
-    shape: Array.isArray(request.input) ? 'responses' : 'chat',
+    shape: Array.isArray(request.input) || typeof request.input === 'string' ? 'responses' : 'chat',
     stream: request.stream ?? null,
     itemCount: source.length,
     bytes: totalBytes,
