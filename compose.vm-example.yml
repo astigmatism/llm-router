@@ -26,8 +26,29 @@ services:
   ai-router:
     build:
       context: .
+      args:
+        # Recorded as org.opencontainers.image.revision, which is how an update
+        # check knows what is actually running rather than what the checkout
+        # says should be. scripts/update-and-restart.sh exports it at build time;
+        # a hand-run build keeps the previous behaviour.
+        VCS_REF: "${SOURCE_REVISION:-unknown}"
     image: "${ROUTER_IMAGE:-llm-router:latest}"
     container_name: "${ROUTER_CONTAINER_NAME:-llm-router}"
+    labels:
+      # The Service Portal card links here. Port 11434 answers `Ollama is
+      # running` - that is the Ollama compatibility contract, and a link to it
+      # is a page with no meaning - so the card points at the portal listener,
+      # which is the page meant for a person.
+      io.service-portal.url: "${ROUTER_PORTAL_URL:-http://192.168.1.23:11435/}"
+      io.service-portal.lifecycle.services: "ai-router"
+      # "Update and restart": the portal runs scripts/update-and-restart.sh in a
+      # runner container built from Dockerfile.updater, mounting only this
+      # project directory and the socket. See docs/UPDATE_AND_RESTART.md.
+      io.service-portal.update.enabled: "true"
+      io.service-portal.update.script: "scripts/update-and-restart.sh"
+      io.service-portal.update.image: "${ROUTER_UPDATER_IMAGE:-service-portal:latest}"
+      io.service-portal.update.user: "1000:1000"
+      io.service-portal.update.check: "true"
     user: "1000:1000"
     init: true
     restart: unless-stopped

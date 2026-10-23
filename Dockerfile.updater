@@ -1,0 +1,40 @@
+# Runner image for the Service Portal "Update and restart" button.
+#
+# The router's own image is node:22-bookworm-slim and carries neither git nor
+# the Docker CLI, so it cannot be `io.service-portal.update.image`: the portal
+# runs the update script inside that image. This is the dedicated runner.
+#
+# service-portal:latest is the portal's own image and already carries git, the
+# Docker CLI, the Compose plugin, openssh-client, wget and the CA certificates
+# an HTTPS fetch of a public repository needs. It has no python3 and no curl,
+# which is why scripts/update-and-restart.sh is POSIX sh and uses wget. It also
+# has no Buildx, and a Compose build wants it: that is the one thing this image
+# adds.
+#
+# One-time prerequisite on the router host (see docs/UPDATE_AND_RESTART.md):
+#
+#   docker build -f Dockerfile.updater -t llm-router-updater:latest .
+#
+# It is built once from a checkout on that host and never pulled, and it has to
+# exist before the labels below are worth anything: the portal refuses an
+# update whose `io.service-portal.update.image` is not already in the local
+# image store. The compose default falls back to service-portal:latest, so an
+# update still works before this image has been built - without Buildx.
+FROM service-portal:latest
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends docker-buildx; \
+    rm -rf /var/lib/apt/lists/*
+
+# Fail the build here rather than at 3 a.m. inside a portal job: these are the
+# commands scripts/update-and-restart.sh and the deploy path it calls reach for
+# (`install` prepares the state directories, `stat` reads the socket group).
+RUN set -eux; \
+    for tool in sh bash git docker wget stat install; do \
+      command -v "$tool"; \
+    done; \
+    git --version; \
+    docker --version; \
+    docker compose version; \
+    docker buildx version
