@@ -1836,3 +1836,38 @@ test('a streamed upstream timeout fails coherently and client cancellation close
     await cancelFixture.cleanup();
   }
 });
+
+test('the record behind a Responses request carries what only the pipeline knows', async () => {
+  const fixture = await makeFixture();
+  try {
+    const streamed = await postResponses(fixture, { model: 'active:model', input: 'first', stream: true });
+    assert.equal(streamed.status, 200);
+    await streamed.text();
+    const plain = await postResponses(fixture, { model: 'active:model', input: 'second', stream: false });
+    assert.equal(plain.status, 200);
+    await plain.text();
+
+    const [streamedRecord, plainRecord] = fixture.context.store.recentRequests(2).reverse();
+    // Bytes on the wire: not recoverable from the translated body, and the
+    // difference between the two is the router's own overhead.
+    assert.ok(streamedRecord.requestBytes > 20, 'the request size the client sent');
+    assert.ok(plainRecord.requestBytes > 20);
+    // First content frame, and nothing earlier: the lifecycle frames go out
+    // before the backend has a worker, so a ttft measured from them is a lie.
+    assert.equal(typeof streamedRecord.ttftMs, 'number');
+    // A non-streamed response has no first token to measure; null says the
+    // router did not measure it, which 0 would contradict.
+    assert.equal(plainRecord.ttftMs, null);
+    // Admission bookkeeping is written on every admitted request, queued or not.
+    for (const record of [streamedRecord, plainRecord]) {
+      assert.equal(typeof record.admissionWaitMs, 'number');
+      assert.ok(record.queueWaitMs === null || typeof record.queueWaitMs === 'number');
+      // Named while the archive is certainly this request's, so the payload view
+      // can be reached from the row even when the generation never terminates.
+      assert.equal('generationRecordId' in record, true);
+      assert.ok(record.generationRecordId === null || /^[0-9a-f-]{36}$/.test(record.generationRecordId));
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});

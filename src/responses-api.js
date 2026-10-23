@@ -1160,7 +1160,14 @@ function outcomeBase(started, pathname, body, activeModel, translated, toolPolic
     unsupportedToolsPolicy: tools.unsupportedToolsPolicy,
     streaming: translated?.stream ?? body?.stream === true,
     bodySummary: summarizeBody(body, 'metadata'),
-    latencyMs: Date.now() - started
+    latencyMs: Date.now() - started,
+    // What the portal's own columns are built from. `null` means this router did
+    // not measure it, which is a different statement from 0.
+    requestBytes: translated?.requestBytes ?? null,
+    ttftMs: translated?.ttftMs ?? null,
+    queueWaitMs: translated?.queueWaitMs ?? null,
+    admissionWaitMs: translated?.admissionWaitMs ?? null,
+    generationRecordId: translated?.generationRecordId ?? null
   };
 }
 
@@ -1171,6 +1178,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
   let translated = null;
   let toolPolicy = emptyToolPolicy(null, context.config.unsupportedToolsPolicy);
   let abortState = null;
+  let requestBytes = null;
   let writer = null;
   let builder = null;
   let backend = null;
@@ -1185,6 +1193,9 @@ export async function handleResponsesRequest(request, response, pathname, contex
     let rawBody;
     try {
       rawBody = await readRequestBody(request, context.config.maxBodyBytes);
+      // The size the client actually sent, before any translation. Nothing else
+      // records it, and it cannot be reconstructed afterwards.
+      requestBytes = rawBody?.length ?? null;
       body = parseJsonBuffer(rawBody);
     } catch (error) {
       if (error instanceof SyntaxError) throw new ResponsesApiError(400, 'INVALID_JSON_BODY', 'Request body is not valid JSON.', null);
@@ -1240,6 +1251,11 @@ export async function handleResponsesRequest(request, response, pathname, contex
       activeModelInfo.catalog_mode ? activeModelInfo.aliases.includes(body?.model) : context.config.rewriteRequestedModelToActive,
       context.config.routerModelAlias
     );
+    translated.requestBytes = requestBytes;
+    translated.ttftMs = null;
+    translated.queueWaitMs = null;
+    translated.admissionWaitMs = null;
+    translated.generationRecordId = null;
     let thinkPolicy;
     try {
       thinkPolicy = backend.kind === 'ollama'
@@ -1281,6 +1297,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
       // Template application/tokenization is part of an accepted generation
       // request. Hold the lease across it so draining cannot interrupt a
       // request between admission and backend inference.
+      let queuedAt = null;
       lease = await context.requestGate.acquire({
         endpoint: pathname,
         clientIdentity: request.headers['x-client-name'] || request.socket.remoteAddress,
@@ -1288,9 +1305,17 @@ export async function handleResponsesRequest(request, response, pathname, contex
         backendKey: backend.admissionKey,
         model: activeModelInfo.model,
         signal: abortState.signal,
-        onQueued: () => { stopQueueHeartbeat = queueHeartbeat(response, translated.stream ? 'responses' : null); }
+        onQueued: () => {
+          queuedAt = Date.now();
+          stopQueueHeartbeat = queueHeartbeat(response, translated.stream ? 'responses' : null);
+        }
       });
       stopQueueHeartbeat();
+      // Admitted. Two different waits: how long the request sat in the queue,
+      // and how long from arrival to admission, which includes everything before
+      // the gate. Both are what the portal's Queue column shows.
+      translated.admissionWaitMs = Date.now() - started;
+      if (queuedAt !== null) translated.queueWaitMs = Date.now() - queuedAt;
       await backend.ensureAvailable(abortState.signal);
       backendRequest = backend.prepareResponses(translated);
       translated.temperatureForwarding = backendRequest.temperatureForwarding ?? null;
@@ -1313,6 +1338,10 @@ export async function handleResponsesRequest(request, response, pathname, contex
         });
       }
       if (backend.validateResponsesContext) await backend.validateResponsesContext(backendRequest, abortState.signal);
+      // The archive that this generation's payload is being written to. Named
+      // here, while it is certainly this request's, rather than read back from a
+      // terminal response that may never arrive.
+      translated.generationRecordId = backendRequest.journal?.id ?? null;
     } catch (error) {
       if (error instanceof BackendAdapterError || error instanceof RequestGateError) {
         if (error instanceof BackendAdapterError) throw backendErrorToResponsesError(error);
@@ -1340,6 +1369,15 @@ export async function handleResponsesRequest(request, response, pathname, contex
           : {})
       });
       writer = new SseWriter(response, abortState.signal);
+      // Time to first token as the client feels it: the first frame that carries
+      // something to show. response.created/in_progress are lifecycle frames and
+      // are sent before the backend has a worker, so counting them would report
+      // an instant first token for a request still queued.
+      const emitEvent = writer.event.bind(writer);
+      writer.event = (type, fields) => {
+        if (translated.ttftMs === null && /\.delta$/.test(type)) translated.ttftMs = Date.now() - started;
+        return emitEvent(type, fields);
+      };
       builder = new StreamingResponseBuilder(
         writer,
         translated.requestBody,

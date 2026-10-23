@@ -4,7 +4,7 @@
    are pushed by each machine and never polled, which is why the card explains
    where a machine comes from instead of implying discovery. */
 
-import { ago, bytes, clock, DOT, escapeHtml, ms, pct, shortId, text } from './format.js';
+import { ago, clock, DOT, escapeHtml, ms, pct, shortId, text } from './format.js';
 import { icon } from './icons.js';
 import { ROUTES } from './api.js';
 import { viewUrl } from './state.js';
