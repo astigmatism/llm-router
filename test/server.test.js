@@ -215,11 +215,16 @@ test('admin listener serves dashboard and summary without auth while API port st
     const adminRoot = await fetch(`http://127.0.0.1:${fixture.adminPort}/`);
     assert.equal(adminRoot.status, 200);
     assert.match(adminRoot.headers.get('content-type') || '', /text\/html/);
-    assert.match(await adminRoot.text(), /No login or token is required/);
+    // The page has to say what it is and say it out loud: this listener answers
+    // without a token, and a reader looking at archived prompt text needs to
+    // know that is the design rather than a missing login.
+    const dashboard = await adminRoot.text();
+    assert.match(dashboard, /<title>LLM Router/);
+    assert.match(dashboard, /unauthenticated on the admin port/i);
 
     const adminAlias = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin`);
     assert.equal(adminAlias.status, 200);
-    assert.match(await adminAlias.text(), /LLM Router Admin/);
+    assert.match(await adminAlias.text(), /<title>LLM Router/);
 
     const summaryResponse = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/summary`);
     assert.equal(summaryResponse.status, 200);
@@ -309,7 +314,7 @@ test('API chat preserves non-model parameters and forces keep_alive to -1', asyn
     });
     assert.equal(Object.hasOwn(chatRequest.body, 'seed'), false);
 
-    const requestsResponse = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/requests?limit=1`);
+    const requestsResponse = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/requests?limit=1&raw=1`);
     assert.equal(requestsResponse.status, 200);
     const history = await requestsResponse.json();
     assert.equal(history.requests[0].incomingKeepAlive, '5m');

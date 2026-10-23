@@ -19,8 +19,8 @@ async function rows(file) {
   return (await fs.readFile(file, 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
 }
 
-test('default count limits bound both disk logs and memory across concurrent appends and restart', async (t) => {
-  const { store, config } = await fixture(t);
+test('count limits bound both disk logs and memory across concurrent appends and restart', async (t) => {
+  const { store, config } = await fixture(t, { REQUEST_HISTORY_LIMIT: '500', EVENT_HISTORY_LIMIT: '500' });
   await store.init();
   await Promise.all(Array.from({ length: 700 }, (_, n) => Promise.all([
     store.appendRequest({ n }), store.appendEvent({ n, type: 'test' })
@@ -63,7 +63,7 @@ test('byte limits evict whole oldest records using UTF-8 byte sizes', async (t) 
 });
 
 test('startup compacts a 600 MB historical file without reading its entire contents', async (t) => {
-  const { config, store } = await fixture(t);
+  const { config, store } = await fixture(t, { REQUEST_HISTORY_LIMIT: '500' });
   const handle = await fs.open(config.requestLogPath, 'w');
   const recent = Array.from({ length: 600 }, (_, id) => JSON.stringify({ id, text: 'recent' })).join('\n') + '\n';
   await handle.write(Buffer.from('\n' + recent), 0, Buffer.byteLength('\n' + recent), 600_000_000);
@@ -173,4 +173,15 @@ test('appends during a replacement are serialized and concurrent appends are bat
   await Promise.all([first, ...rest]);
   assert.equal(writes, 2);
   assert.deepEqual(await rows(config.requestLogPath), [{ id: 2 }, { id: 3 }, { id: 4 }]);
+});
+
+test('the defaults leave a day of traffic readable for the portal', async (t) => {
+  // The dashboard pages through this ring, so its size is the observability
+  // window an operator can still investigate after an incident. A silent revert
+  // to the old 500-record window would make the portal lie about coverage.
+  const { config } = await fixture(t);
+  assert.equal(config.requestHistoryLimit, 5000);
+  assert.equal(config.eventHistoryLimit, 2000);
+  assert.equal(config.requestLogMaxBytes, 33554432);
+  assert.equal(config.portalJournalViewBytes, 4194304);
 });

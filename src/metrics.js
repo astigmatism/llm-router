@@ -30,6 +30,9 @@ export class Metrics {
     this.byClient = {};
     this.byStatus = {};
     this.latencyMsSamples = [];
+    this.ttftMsSamples = [];
+    this.queueWaitMsSamples = [];
+    this.tokenRateSamples = [];
     this.streamingDurationMsSamples = [];
     this.evalTokensPerSecondSamples = [];
     this.promptTokensPerSecondSamples = [];
@@ -52,6 +55,13 @@ export class Metrics {
     increment(this.byStatus, String(record.responseStatus || record.status || 'unknown'));
     if (Number.isFinite(record.latencyMs)) this.#pushSample(this.latencyMsSamples, record.latencyMs);
     if (record.streaming && Number.isFinite(record.latencyMs)) this.#pushSample(this.streamingDurationMsSamples, record.latencyMs);
+    if (Number.isFinite(record.ttftMs)) this.#pushSample(this.ttftMsSamples, record.ttftMs);
+    if (Number.isFinite(record.queueWaitMs) && record.queueWaitMs > 0) this.#pushSample(this.queueWaitMsSamples, record.queueWaitMs);
+    // The router's own generation rate: output tokens over the time the client
+    // actually waited for them. The backend reports no timing of its own here,
+    // so this is the only tokens/second figure this router can honestly show.
+    const rate = this.constructor.#outputRate(record);
+    if (rate !== null) this.#pushSample(this.tokenRateSamples, rate);
 
     const usage = record.usage;
     if (usage && typeof usage === 'object') {
@@ -111,6 +121,24 @@ export class Metrics {
         eval: this.evalDurationNs,
         promptEval: this.promptEvalDurationNs
       },
+      ttftMs: {
+        avg: average(this.ttftMsSamples),
+        p50: percentile(this.ttftMsSamples, 50),
+        p95: percentile(this.ttftMsSamples, 95),
+        samples: this.ttftMsSamples.length
+      },
+      queueWaitMs: {
+        avg: average(this.queueWaitMsSamples),
+        p95: percentile(this.queueWaitMsSamples, 95),
+        max: this.queueWaitMsSamples.length ? Math.max(...this.queueWaitMsSamples) : null,
+        samples: this.queueWaitMsSamples.length
+      },
+      tokensPerSecond: {
+        avg: average(this.tokenRateSamples),
+        p50: percentile(this.tokenRateSamples, 50),
+        p95: percentile(this.tokenRateSamples, 95),
+        samples: this.tokenRateSamples.length
+      },
       throughput: {
         evalTokensPerSecondAvg: average(this.evalTokensPerSecondSamples),
         promptTokensPerSecondAvg: average(this.promptTokensPerSecondSamples),
@@ -118,6 +146,16 @@ export class Metrics {
         promptSamples: this.promptTokensPerSecondSamples.length
       }
     };
+  }
+
+  // A rate is only meaningful once the first token has been delivered; before
+  // that the wait is prompt evaluation, not generation.
+  static #outputRate(record) {
+    const output = record.usage?.eval_count ?? record.usage?.completion_tokens ?? record.usage?.output_tokens;
+    if (!Number.isFinite(output) || output <= 0 || !Number.isFinite(record.latencyMs)) return null;
+    const generationMs = record.latencyMs - (Number.isFinite(record.ttftMs) ? record.ttftMs : 0);
+    if (generationMs < 250) return null;
+    return Number((output / (generationMs / 1000)).toFixed(2));
   }
 
   #pushSample(list, value) {

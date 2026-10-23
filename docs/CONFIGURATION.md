@@ -37,6 +37,14 @@ http://192.168.1.4:11435/admin
 
 The admin portal and its admin-port JSON APIs are intentionally unauthenticated. This is a local/LAN trust assumption; do not publish the admin port to untrusted networks.
 
+Since the portal was rebuilt around request-level observability, that assumption covers more than it
+used to: reading one request's prompt payload (`GET /admin/api/requests/:id/journal`) and operating
+the runtime (`runtime-drain`, `runtime-state`, `maintenance`) answer on the admin port **without**
+`ADMIN_TOKEN`, because a browser page cannot hold a secret and the drain has to work from the page
+that shows a release in progress. Archived prompt text is therefore readable by anything on the
+trusted network — the same thing `PROMPT_LOGGING=full` would put in a log file. On the API listener
+(`11434`) all of it still requires the token; nothing there got cheaper.
+
 ## Upstream Ollama
 
 | Variable | Default | Purpose |
@@ -153,9 +161,13 @@ The browser portal on `ADMIN_PORT` ignores this token and remains no-login by de
 |---|---:|---|
 | `DATA_DIR` | `/app/data` | JSONL log directory. |
 | `ROUTER_CONTROL_FILE` | `/app/runtime/router-control.json` | Drain state, per machine, as JSON. Written by the router and read at startup, so a release that drains before restarting resumes drained. |
-| `REQUEST_HISTORY_LIMIT` | `500` | Maximum request records in memory and on disk. |
-| `EVENT_HISTORY_LIMIT` | `500` | Maximum event records in memory and on disk. |
-| `REQUEST_LOG_MAX_BYTES` | `5242880` | Maximum persisted request log size (5 MiB); oldest whole records are removed first. |
+| `REQUEST_HISTORY_LIMIT` | `5000` | Maximum request records in memory and on disk. The portal's statistics window is only as long as this ring, so 500 covered about twenty minutes of a busy router. |
+| `EVENT_HISTORY_LIMIT` | `2000` | Maximum event records in memory and on disk. |
+| `REQUEST_LOG_MAX_BYTES` | `33554432` | Maximum persisted request log size (32 MiB); oldest whole records are removed first. |
+| `GENERATION_JOURNAL_VIEW_BYTES` | `4194304` | How much of one generation archive a portal read parses (4 MiB). A 40 MB archive still reads instantly and answers `truncated: true`; the full file remains available through `/admin/api/generation-record`. |
+| `PORTAL_PROMPT_VIEW_BYTES` | `24576` | How much prompt text one portal response returns for a payload view. Elided bytes are reported as counts, never as text. |
+
+The two view bounds exist because the observability page reads payloads written by a runtime that has no reason to keep them small: a single agent request archives 40 MB of tool schemas and past turns.
 | `EVENT_LOG_MAX_BYTES` | `5242880` | Maximum persisted event log size (5 MiB); oldest whole records are removed first. |
 | `GENERATION_RETENTION_DAYS` | `7` | Closed generation archive age limit, measured from last modification. |
 | `GENERATION_MAX_BYTES` | `1073741824` | Total closed generation archive budget (1 GiB); oldest archives are evicted first. |

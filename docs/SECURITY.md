@@ -6,7 +6,7 @@ Primary generation archives always retain full request/output content, including
 
 ## Network boundary
 
-This router is intended for a trusted local network. The human admin portal is intentionally unauthenticated and listens on a separate port, defaulting to `11435`. Anyone who can reach that port can view runtime state and trigger admin actions such as prewarm, test chat, active-marker reload, and maintenance-mode toggle.
+This router is intended for a trusted local network. The human admin portal is intentionally unauthenticated and listens on a separate port, defaulting to `11435`. Anyone who can reach that port can view runtime state, read the archived prompt payload of any request the router has served, and trigger admin actions such as prewarm, test chat, active-marker reload, runtime drain, and maintenance-mode toggle. Payload reads and runtime control answer without a token on `11435` because the page that shows a release in progress has to be able to drain the router; on the API listener the same routes still require `ADMIN_TOKEN`. Treat the payload view as what it is: prompt text, tool arguments and outputs, kept for `GENERATION_RETENTION_DAYS`, readable by anyone on the trusted network.
 
 Keep the admin port bound only to trusted local/LAN interfaces. Do not publish it to the public internet, a shared VPN, or an untrusted reverse proxy.
 
@@ -57,7 +57,7 @@ PROMPT_LOGGING=full
 
 Full prompt logging will persist prompts to `data/requests.jsonl`.
 
-Request and event metadata logs retain at most 500 records and 5 MiB each by default, using private atomic snapshots. Independently of `PROMPT_LOGGING`, catalog generation journals contain full conversation content and outputs. Closed journals are automatically removed after seven days or earlier to meet a 1 GiB budget; active journals are protected. These archives are available only through the authenticated generation-record endpoint while retained. See [persistence settings](CONFIGURATION.md#persistence) for limits, startup cleanup and operator-backup exclusions.
+Request and event metadata logs retain at most 5000 request records (32 MiB) and 2000 event records (5 MiB) by default, using private atomic snapshots. Independently of `PROMPT_LOGGING`, catalog generation journals contain full conversation content and outputs. Closed journals are automatically removed after seven days or earlier to meet a 1 GiB budget; active journals are protected. While retained they are readable through the generation-record endpoint (token on the API listener, none on the admin listener) and through the portal payload view, which parses a bounded prefix rather than the whole file. See [persistence settings](CONFIGURATION.md#persistence) for limits, startup cleanup and operator-backup exclusions.
 
 ## Model-management endpoints
 

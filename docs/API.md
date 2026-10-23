@@ -401,6 +401,8 @@ Common codes:
 ## Admin portal JSON API on `11435`
 
 These routes are used by the browser dashboard and do not require a token on the admin listener.
+[PORTAL_API.md](PORTAL_API.md) is the field-level contract for the observability endpoints below;
+this section says what exists and what changed.
 
 ### `GET /admin/api/summary`
 
@@ -410,15 +412,35 @@ Returns router config summary, active model marker, upstream health, `/api/ps`, 
 
 ### `GET /admin/api/generation-record?id=<UUID>`
 
-Requires the configured admin token on either listener. Returns a retained generation journal as `application/x-ndjson`. Missing or pruned records return 404 with `RECORD_NOT_FOUND`. Retention does not interrupt a download whose file is already open. Closed journals are retained for at most seven days by default and may be evicted earlier under the 1 GiB budget; active journals are protected.
+Returns a retained generation journal as `application/x-ndjson`. Missing or pruned records return 404 with `RECORD_NOT_FOUND`. Requires the configured admin token on the API listener; on the admin listener it answers without one, like the rest of the portal. Retention does not interrupt a download whose file is already open. Closed journals are retained for at most seven days by default and may be evicted earlier under the 1 GiB budget; active journals are protected.
 
-### `GET /admin/api/requests?limit=100`
+### `GET /admin/api/requests`
 
-Returns retained request records, newest first, bounded by `REQUEST_HISTORY_LIMIT` and `REQUEST_LOG_MAX_BYTES` (500 records and 5 MiB by default).
+Retained request records, newest first, bounded by `REQUEST_HISTORY_LIMIT` and `REQUEST_LOG_MAX_BYTES` (5000 records and 32 MiB by default). Rows are normalized (schema 2): they carry `protocol`, `outcome`, `host`, `client`, `ttftMs`, `queueWaitMs`, `tokens`, `tokensPerSecond` and `journal`, derived once on the server so every surface agrees. `page` reports `{limit, offset, returned, total, hasMore}` and the filters accepted are `since`, `until`, `model`, `host`, `client`, `outcome`, `status`, `error_code`, `protocol`, `streaming`, `has_journal`, `q`, `sort` and `dir`. Add `raw=1` for the stored records under their internal field names, the pre-portal shape.
+
+### `GET /admin/api/requests/:id` and `GET /admin/api/requests/:id/journal`
+
+One request with its correlated lifecycle events, and its payload archive turned into phases, prompt text and aggregated backend events. A payload that was never written, or one retention has taken, answers 404 with the reason (`JOURNAL_NEVER_OPENED`, `JOURNAL_EXPIRED`, `JOURNAL_NOT_FOUND`) rather than an empty object.
+
+### `GET /admin/api/portal/state?window=1h`
+
+One document for the header, the state strip, the machine cards and the model table: admission and in-flight counts, listeners, retention, fleet warnings, per-machine and per-model statistics for the window, and the metrics snapshot.
+
+### `GET /admin/api/stats?window=1h&bucket=1m`
+
+Window aggregates computed from the same records `/admin/api/requests` serves, so a number and a filtered list cannot disagree. Buckets are emitted for every interval including empty ones; the interval widens (and says so) before the series exceeds 600 points.
 
 ### `GET /admin/api/events?limit=50`
 
-Returns retained operational events, newest first, bounded by `EVENT_HISTORY_LIMIT` and `EVENT_LOG_MAX_BYTES` (500 records and 5 MiB by default).
+Retained operational events, newest first, bounded by `EVENT_HISTORY_LIMIT` and `EVENT_LOG_MAX_BYTES` (2000 records and 5 MiB by default), filterable by `type`, `q`, `since`, `until`, `offset`.
+
+### `GET /admin/api/capabilities`
+
+The capabilities document (`/v1/router/capabilities` on the API listener, which does require the token), so the portal can show what a machine advertises without a cross-origin call.
+
+### `GET /admin/api/stream`
+
+Server-Sent Events: `hello`, then `capabilities`, `request`, `event` and `drain` frames, with a comment heartbeat. `request` frames carry the normalized record; there is no polling and no re-fetch on focus.
 
 ### `GET /admin/api/metrics`
 

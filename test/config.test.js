@@ -4,7 +4,7 @@ import { loadConfig, publicConfig } from '../src/config.js';
 
 test('retention defaults, overrides and public settings use strictly positive safe integers', () => {
   const settings = [
-    ['REQUEST_LOG_MAX_BYTES', 'requestLogMaxBytes', 5242880],
+    ['REQUEST_LOG_MAX_BYTES', 'requestLogMaxBytes', 33554432],
     ['EVENT_LOG_MAX_BYTES', 'eventLogMaxBytes', 5242880],
     ['GENERATION_RETENTION_DAYS', 'generationRetentionDays', 7],
     ['GENERATION_MAX_BYTES', 'generationMaxBytes', 1073741824]

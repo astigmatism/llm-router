@@ -51,7 +51,7 @@ Open WebUI, ComfyUI, apps, and voice assistants connect to the router while the 
 - Cross-protocol thinking composition with request, active-model, and optional global defaults.
 - Streaming and non-streaming pass-through.
 - Native Node HTTP transport with cancellation and progress-aware generation stall recovery; no total generation deadline.
-- Bounded request and activity/event JSONL logs: 500 records and 5 MiB each by default.
+- Bounded request and activity/event JSONL logs: 5000 request records over 32 MiB and 2000 events over 5 MiB by default, which is what the observability page reads as its history.
 - Automatic retention for closed generation archives: seven days or 1 GiB total, with active journals protected. See [persistence settings](docs/CONFIGURATION.md#persistence).
 - A deployment whose models run on several machines in the home network: each machine publishes its own catalog, names stay unique across them, one machine failing or being maintained leaves the rest serving. See [multi-host deployments](docs/MULTI_HOST.md).
 - Telemetry extraction from Ollama final response chunks and non-streaming responses.
@@ -96,11 +96,23 @@ Open the admin portal in a browser:
 http://192.168.1.4:11435/
 ```
 
-The same dashboard is also available at:
+The same dashboard is also available at `http://192.168.1.4:11435/admin`.
 
-```text
-http://192.168.1.4:11435/admin
-```
+It is an observability page, not a status light. It answers, in order: which configurations are
+actually published and serving (one card per machine, with the fleet advisories that apply to it),
+what every selectable model costs right now (slots, context, capability score, and this router's own
+p50/p95, tokens/s and last-request measurements for the selected window), and what happened to each
+request the router handled — destination, outcome, latency, first token, queue wait, tokens, and the
+payload state. A row opens a detail view with the full breakdown: the routing decision, the four
+timings measured separately, the control negotiation, and the archived prompt itself, item by item,
+from the generation journal. Every number on it comes from `/admin/api/portal/state`,
+`/admin/api/requests`, `/admin/api/stats` and the `/admin/api/stream` subscription; anything the
+router does not know prints as unknown rather than as zero. See
+[docs/PORTAL_API.md](docs/PORTAL_API.md) for the contract.
+
+The API listener's root path stays exactly `Ollama is running` for Ollama clients. It is not a
+landing page and nothing should link to it: point a dashboard link, bookmark or Service Portal card at
+`11435`.
 
 ## Active model source of truth
 
@@ -257,7 +269,7 @@ Control actions are available directly from the portal without a token:
 - reload active marker
 - toggle maintenance mode
 
-Because the portal is unauthenticated by design, expose `11435` only on trusted local/LAN interfaces. Do not publish it to the public internet.
+Because the portal is unauthenticated by design, expose `11435` only on trusted local/LAN interfaces. Do not publish it to the public internet. That listener also serves request payloads and runtime control without a token — prompt text from the generation archives, and the drain/maintenance switches — so treat it as read-mostly-root access to this machine's traffic.
 
 ## Smoke test
 

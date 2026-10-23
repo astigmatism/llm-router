@@ -40,6 +40,9 @@ import {
   isLlamaWireKind
 } from './backend-adapters.js';
 import { RequestGate, RequestGateError } from './request-gate.js';
+import { PortalBus } from './portal-bus.js';
+import { normalizeRecord, queryEvents } from './portal-records.js';
+import { handlePortalRoute } from './portal-routes.js';
 import { CapabilityPublisher } from './capabilities.js';
 import { queueHeartbeat, endQueuedError, connectionAbort } from './queue-response.js';
 import {
@@ -105,18 +108,39 @@ function createBaseRecord(request, pathname) {
   };
 }
 
-async function persistRequest(store, metrics, record) {
-  metrics.recordRequest(record);
+async function persistRequest(context, record) {
+  context.metrics.recordRequest(record);
   try {
-    await store.appendRequest(record);
+    await context.store.appendRequest(record);
   } catch (error) {
     console.error('failed to persist request record', error);
+    return;
   }
+  // Live view of the table below: the dashboard subscribes and prepends, so a
+  // request appears the moment it is durable rather than on the next poll.
+  context.portalBus?.publish('request', normalizeRecord(record, portalView(context)));
 }
 
-async function persistEvent(store, event) {
+// What a stored record means to a reader: which machine served it (the host of
+// the model it was served by, falling back to the default), and which payload
+// archives still exist. Derived per read, never persisted, so a record written
+// before a field existed still renders completely.
+function portalView(context) {
+  return {
+    defaultHost: context.config.defaultHost,
+    hostOf: (model) => (model ? context.modelHosts?.get(model) ?? null : null),
+    upstreamOf: (host) => (host === context.config.defaultHost ? context.config.upstreamUrl : null),
+    journals: context.journals
+  };
+}
+
+async function persistEvent(target, event, bus) {
+  const store = target?.store ?? target;
+  const publisher = bus ?? target?.portalBus ?? null;
   try {
-    return await store.appendEvent(event);
+    const persisted = await store.appendEvent(event);
+    publisher?.publish('event', persisted);
+    return persisted;
   } catch (error) {
     console.error('failed to persist event record', error);
     return null;
@@ -264,7 +288,7 @@ async function recordDiscoveryFailure(context, code, warnings = [], upstreamMode
   const signature = JSON.stringify({ code, warnings, upstreamModel });
   if (context.state.lastDiscoveryFailureSignature === signature) return;
   context.state.lastDiscoveryFailureSignature = signature;
-  await persistEvent(context.store, {
+  await persistEvent(context, {
     type: 'model_discovery_failed',
     code,
     warnings,
@@ -485,7 +509,8 @@ async function handleCatalogPublish(request, response, host, context) {
   const stored = await writeHostCatalog(config, host, JSON.stringify(payload, null, 2));
   context.modelDiscovery.invalidate();
   notifyCapabilities(context);
-  await persistEvent(context.store, {
+  await refreshModelHosts(context);
+  await persistEvent(context, {
     type: 'model_catalog_published',
     host,
     revision: stored.revision.slice(0, 12),
@@ -520,7 +545,7 @@ async function handleCatalogRetire(request, response, host, context) {
   const result = await removeHostCatalog(config, host);
   context.modelDiscovery.invalidate();
   notifyCapabilities(context);
-  await persistEvent(context.store, { type: 'model_catalog_retired', host, removed: result.removed });
+  await persistEvent(context, { type: 'model_catalog_retired', host, removed: result.removed });
   sendJson(response, 200, { ok: true, host, removed: result.removed, file: result.file });
 }
 
@@ -557,6 +582,36 @@ async function handleHostsList(response, context) {
   sendJson(response, 200, { ok: true, default_host: context.config.defaultHost, hosts, ...(error ? { error } : {}) });
 }
 
+// Which machine serves a model, as published. Rebuilt when a catalog is
+// published or retired: the attribution in the request table has to follow the
+// catalogs the router actually accepted, not a snapshot from boot.
+async function refreshModelHosts(context) {
+  const map = new Map();
+  try {
+    const catalog = await readModelCatalog(context.config);
+    for (const entry of catalog.models ?? []) {
+      if (!entry?.model || !entry.host) continue;
+      map.set(entry.model, entry.host);
+      for (const alias of entry.aliases ?? []) map.set(alias, entry.host);
+    }
+  } catch (error) {
+    // A catalog the router cannot resolve is already reported by the catalog
+    // endpoints; here it only means a row shows the default host.
+    context.modelHostsError = error.message;
+  }
+  context.modelHosts = map;
+  return map;
+}
+
+function portalDeps(context) {
+  return {
+    deploymentHosts: (ctx) => deploymentHosts(ctx),
+    summaryModels: (ctx) => summaryModels(ctx),
+    handleCapabilities: (request, response, url, ctx) => handleCapabilities(request, response, url, ctx),
+    readDeploymentActiveModel
+  };
+}
+
 async function handleAdminApi(request, response, pathname, context, { requireAuth = true } = {}) {
   // Catalog publication carries its own publisher credential and is admitted on
   // either listener: the portal port is unauthenticated by design, and an operator
@@ -580,7 +635,13 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
 
   if (requireAuth && !requireAdmin(request, response, context.config)) return;
 
-  if (['/admin/api/runtime-state', '/admin/api/runtime-drain', '/admin/api/generation-record'].includes(pathname)) {
+  // These three read or move the running inference state, so on the API port
+  // they demand the admin token as always. On the admin portal port they do
+  // not: the portal is unauthenticated by design, and a dashboard that cannot
+  // reach them can neither show a payload nor drain a machine. That is the
+  // trade this deployment makes - reach 11435 and you can read archived prompt
+  // text - so the port stays bound to the LAN.
+  if (requireAuth && ['/admin/api/runtime-state', '/admin/api/runtime-drain', '/admin/api/generation-record'].includes(pathname)) {
     if (!context.config.adminToken) {
       sendJson(response, 503, errorPayload('RUNTIME_CONTROL_UNAVAILABLE', 'Runtime control requires a configured admin token.'));
       return;
@@ -663,7 +724,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     const activeModel = await readDeploymentActiveModel(context.config);
     const runtime = await context.requestGate.setDraining(body.enabled, body.reason, host);
     notifyCapabilities(context);
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'runtime_drain_changed',
       enabled: body.enabled,
       host,
@@ -688,17 +749,15 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     return;
   }
 
-  if (request.method === 'GET' && pathname === '/admin/api/requests') {
-    sendJson(response, 200, {
-      requests: context.store.recentRequests(Number(new URL(request.url, 'http://router.local').searchParams.get('limit')) || context.config.requestHistoryLimit)
-    });
-    return;
-  }
+  // The redesigned portal reads these; see docs/PORTAL_API.md. They live behind
+  // the same auth as the rest of this function, which on the admin listener is
+  // none by design and on the API listener is the admin token.
+  if (await handlePortalRoute(request, response, pathname, context, portalDeps(context))) return;
 
   if (request.method === 'GET' && pathname === '/admin/api/events') {
-    sendJson(response, 200, {
-      events: context.store.recentEvents(Number(new URL(request.url, 'http://router.local').searchParams.get('limit')) || context.config.eventHistoryLimit)
-    });
+    const params = Object.fromEntries(new URL(request.url, 'http://router.local').searchParams);
+    const result = queryEvents(context.store.recentEvents(context.config.eventHistoryLimit), params);
+    sendJson(response, 200, Object.keys(params).some((key) => key !== 'limit') ? result : { events: result.events });
     return;
   }
 
@@ -716,7 +775,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     const activeModel = await readActiveModel(context.config);
     context.modelDiscovery.invalidate();
     notifyCapabilities(context);
-    await persistEvent(context.store, { type: 'active_model_marker_reloaded', activeModel });
+    await persistEvent(context, { type: 'active_model_marker_reloaded', activeModel });
     sendJson(response, 200, { ok: true, activeModel });
     return;
   }
@@ -732,7 +791,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     }
     context.state.maintenanceMode = Boolean(body.enabled);
     notifyCapabilities(context);
-    await persistEvent(context.store, { type: 'maintenance_mode_changed', enabled: context.state.maintenanceMode });
+    await persistEvent(context, { type: 'maintenance_mode_changed', enabled: context.state.maintenanceMode });
     sendJson(response, 200, { ok: true, maintenanceMode: context.state.maintenanceMode });
     return;
   }
@@ -753,7 +812,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       adminLease = await context.requestGate.acquire({ endpoint: pathname, clientIdentity: 'admin', limit: backend.maxActiveRequests, backendKey: backend.admissionKey, model: activeModel.model, host: activeModel.host ?? null, signal: adminAbort.signal });
       const started = Date.now();
       if (Buffer.byteLength(activeModel.model, 'utf8') > LLAMA_PREWARM_MAX_MODEL_BYTES) {
-        await persistEvent(context.store, {
+        await persistEvent(context, {
           type: 'prewarm_failed',
           model: null,
           backendKind: backend.kind,
@@ -770,7 +829,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
       }
       const health = await backend.health();
       if (!health.ok) {
-        await persistEvent(context.store, {
+        await persistEvent(context, {
           type: 'prewarm_failed',
           model: activeModel.model,
           backendKind: backend.kind,
@@ -817,7 +876,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
           && generatedTokens > 0
           && generatedTokens <= LLAMA_PREWARM_MAX_TOKENS;
         const latencyMs = Date.now() - started;
-        await persistEvent(context.store, {
+        await persistEvent(context, {
           type: completed ? 'prewarm_triggered' : 'prewarm_failed',
           model: activeModel.model,
           backendKind: backend.kind,
@@ -847,7 +906,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
         const code = error.code === 'UPSTREAM_TIMEOUT'
           ? 'PREWARM_TIMEOUT'
           : (error.code === 'UPSTREAM_RESPONSE_TOO_LARGE' ? 'PREWARM_RESPONSE_TOO_LARGE' : 'PREWARM_UPSTREAM_ERROR');
-        await persistEvent(context.store, {
+        await persistEvent(context, {
           type: 'prewarm_failed',
           model: activeModel.model,
           backendKind: backend.kind,
@@ -875,7 +934,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
     const started = Date.now();
     try {
       const result = await upstreamJson(backend.upstreamConfig, '/api/generate', { method: 'POST', body: warmBody, timeoutMs: context.config.upstreamTimeoutMs });
-      await persistEvent(context.store, {
+      await persistEvent(context, {
         type: 'prewarm_triggered',
         model: activeModel.model,
         status: result.status,
@@ -889,7 +948,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
         upstream: result.body
       });
     } catch (error) {
-      await persistEvent(context.store, { type: 'prewarm_failed', model: activeModel.model, error: error.message });
+      await persistEvent(context, { type: 'prewarm_failed', model: activeModel.model, error: error.message });
       sendJson(response, 502, errorPayload('UPSTREAM_ERROR', error.message));
     }
     return;
@@ -946,7 +1005,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
           }
         });
       }
-      await persistEvent(context.store, {
+      await persistEvent(context, {
         type: 'admin_test_chat',
         model: activeModel.model,
         status: result.status,
@@ -961,7 +1020,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
         usage: result.usage
       });
     } catch (error) {
-      await persistEvent(context.store, { type: 'admin_test_chat_failed', model: activeModel.model, error: error.message });
+      await persistEvent(context, { type: 'admin_test_chat_failed', model: activeModel.model, error: error.message });
       sendJson(response, 502, errorPayload('UPSTREAM_ERROR', error.message));
     } finally {
       adminAbort.cleanup();
@@ -974,7 +1033,15 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
 }
 
 async function rejectProxyRequest(response, context, record, status, code, message, extra = {}, openAiError = null) {
+  // What the caller was actually told. The code and summary are the index, but
+  // the reason an operator reads at 3 a.m. is the body: the offending field,
+  // the limit that was hit. Clipped because a schema rejection can echo a
+  // whole tool definition.
+  const errorBody = openAiError
+    ? { error: { message, type: openAiError.type, param: openAiError.param ?? null, code } }
+    : errorPayload(code, message, extra.details);
   const finalRecord = {
+    errorBodyExcerpt: JSON.stringify(errorBody).slice(0, 4096),
     ...record,
     ...extra,
     allowed: false,
@@ -985,8 +1052,8 @@ async function rejectProxyRequest(response, context, record, status, code, messa
     errorSummary: message,
     latencyMs: Date.now() - record.startedEpochMs
   };
-  await persistRequest(context.store, context.metrics, finalRecord);
-  await persistEvent(context.store, {
+  await persistRequest(context, finalRecord);
+  await persistEvent(context, {
     type: 'request_rejected',
     code,
     message,
@@ -1049,6 +1116,9 @@ async function handleProxy(request, response, url, context) {
     try {
       rawBody = await readRequestBody(request, context.config.maxBodyBytes);
       incomingBody = parseJsonBuffer(rawBody);
+      // The size the client actually sent, before any translation. With
+      // PROMPT_LOGGING=metadata this is the only measure of request volume.
+      recordBase.requestBytes = rawBody?.length ?? null;
     } catch (error) {
       await rejectProxyRequest(response, context, recordBase, error.statusCode || 400, 'INVALID_JSON_BODY', error.message);
       return;
@@ -1265,7 +1335,7 @@ async function handleProxy(request, response, url, context) {
   }
 
   if (policy.modelRewritten) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'model_rewritten_to_active',
       endpoint: pathname,
       method: request.method,
@@ -1278,7 +1348,7 @@ async function handleProxy(request, response, url, context) {
   }
 
   if (policy.keepAliveNormalized) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'keep_alive_normalized',
       endpoint: pathname,
       method: request.method,
@@ -1293,7 +1363,7 @@ async function handleProxy(request, response, url, context) {
   }
 
   if (thinkPolicy.thinkDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'unsupported_thinking_dropped',
       endpoint: pathname,
       method: request.method,
@@ -1305,7 +1375,7 @@ async function handleProxy(request, response, url, context) {
   }
 
   if (thinkPolicy.thinkMapped && !thinkPolicy.thinkDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'think_level_mapped',
       endpoint: pathname,
       method: request.method,
@@ -1319,7 +1389,7 @@ async function handleProxy(request, response, url, context) {
   }
 
   if (toolPolicy.toolsDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'unsupported_tools_dropped',
       endpoint: pathname,
       method: request.method,
@@ -1345,6 +1415,7 @@ async function handleProxy(request, response, url, context) {
   let responseBytes = 0;
   let parseErrors = 0;
   let requestPersisted = false;
+  let queuedAt = null;
   const clientController = new AbortController();
   let stopQueueHeartbeat = () => {};
   const abortForClient = () => {
@@ -1369,11 +1440,17 @@ async function handleProxy(request, response, url, context) {
           host: activeModel.host ?? null,
           signal: clientController.signal,
           onQueued: () => {
+            // Two waits that are usually conflated and never equal: how long the
+            // request sat behind another generation, and how long from arrival to
+            // admission, which also covers reading and validating the body.
+            queuedAt = Date.now();
             stopQueueHeartbeat = queueHeartbeat(response, commonRecord.streaming
               ? (pathname === '/v1/chat/completions' ? 'chat' : 'native') : null, { model: activeModel.model });
           }
         });
         stopQueueHeartbeat();
+        if (queuedAt !== null) commonRecord.queueWaitMs = Date.now() - queuedAt;
+        commonRecord.admissionWaitMs = Date.now() - recordBase.startedEpochMs;
       } catch (error) {
         if (error instanceof RequestGateError) {
           await rejectProxyRequest(response, context, commonRecord, error.statusCode, error.code, error.message, commonRecord);
@@ -1393,6 +1470,10 @@ async function handleProxy(request, response, url, context) {
           method: request.method, pathname, body: sanitizedBody,
           query: url.search || '', signal: clientController.signal
         });
+      // Recorded as soon as the archive opens: a generation that is killed
+      // mid-stream, or whose client disappears, is exactly the one a reader
+      // comes looking for, and it never reaches the terminal write.
+      if (prepared?.journal?.id) commonRecord.generationRecordId = prepared.journal.id;
       if (isLlamaWireKind(backend.kind) && prepared.reasoning) {
         Object.assign(commonRecord, {
           reasoningEffort: prepared.reasoning.level,
@@ -1419,7 +1500,7 @@ async function handleProxy(request, response, url, context) {
           });
         }
         if (prepared.reasoning.outputLimitCapped) {
-          await persistEvent(context.store, {
+          await persistEvent(context, {
             type: 'output_limit_capped',
             endpoint: pathname,
             method: request.method,
@@ -1460,7 +1541,7 @@ async function handleProxy(request, response, url, context) {
       const payload = prepared.localResponse.body;
       responseBytes = Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`);
       sendJson(response, finalStatus, payload, { 'x-ollama-router': 'llm-router' });
-      await persistRequest(context.store, context.metrics, {
+      await persistRequest(context, {
         ...commonRecord,
         allowed: true,
         rejected: false,
@@ -1538,6 +1619,9 @@ async function handleProxy(request, response, url, context) {
         const { done, value } = await reader.read();
         if (done) break;
         const buffer = Buffer.from(value);
+        if (commonRecord.ttftMs === undefined && isGenerationPath(pathname) && buffer.length) {
+          commonRecord.ttftMs = Date.now() - recordBase.startedEpochMs;
+        }
         responseBytes += buffer.length;
         collector?.observe(buffer);
         if (!response.write(buffer)) await once(response, 'drain', { signal: clientController.signal });
@@ -1592,7 +1676,7 @@ async function handleProxy(request, response, url, context) {
     commonRecord.generationRecordId = prepared?.journal?.id;
     const timedOut = error?.name === 'TimeoutError';
     finalStatus = clientClosed ? 499 : (timedOut || error?.name === 'AbortError' ? 504 : 502);
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: clientClosed ? 'client_cancelled' : 'upstream_request_failed',
       endpoint: pathname,
       backendKind: backend.kind,
@@ -1623,7 +1707,7 @@ async function handleProxy(request, response, url, context) {
       finally { await prepared.journal.close(); }
     }
     if (!requestPersisted) {
-      await persistRequest(context.store, context.metrics, {
+      await persistRequest(context, {
         ...commonRecord,
         allowed: true,
         rejected: false,
@@ -1653,10 +1737,10 @@ async function handleResponses(request, response, url, context) {
     ...outcome,
     latencyMs: Date.now() - recordBase.startedEpochMs
   };
-  await persistRequest(context.store, context.metrics, record);
+  await persistRequest(context, record);
 
   if (outcome.rejected) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'responses_request_rejected',
       code: outcome.errorCode,
       message: outcome.errorSummary,
@@ -1674,7 +1758,7 @@ async function handleResponses(request, response, url, context) {
       sourceIp: record.sourceIp
     });
   } else if (outcome.incomplete) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'responses_incomplete',
       reason: outcome.incompleteReason,
       ...(outcome.incompleteDiagnostics ? { diagnostics: outcome.incompleteDiagnostics } : {}),
@@ -1684,7 +1768,7 @@ async function handleResponses(request, response, url, context) {
       sourceIp: record.sourceIp
     });
   } else if (outcome.upstreamError) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'responses_upstream_failed',
       code: outcome.errorCode,
       message: outcome.errorSummary,
@@ -1697,7 +1781,7 @@ async function handleResponses(request, response, url, context) {
   }
 
   if (outcome.modelRewritten) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'model_rewritten_to_active',
       endpoint: url.pathname,
       method: request.method,
@@ -1710,7 +1794,7 @@ async function handleResponses(request, response, url, context) {
   }
 
   if (outcome.thinkDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'unsupported_thinking_dropped',
       endpoint: url.pathname,
       method: request.method,
@@ -1722,7 +1806,7 @@ async function handleResponses(request, response, url, context) {
   }
 
   if (outcome.thinkMapped && !outcome.thinkDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'think_level_mapped',
       endpoint: url.pathname,
       method: request.method,
@@ -1736,7 +1820,7 @@ async function handleResponses(request, response, url, context) {
   }
 
   if (outcome.outputLimitCapped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'output_limit_capped',
       endpoint: url.pathname,
       method: request.method,
@@ -1750,7 +1834,7 @@ async function handleResponses(request, response, url, context) {
   }
 
   if (outcome.toolsDropped) {
-    await persistEvent(context.store, {
+    await persistEvent(context, {
       type: 'unsupported_tools_dropped',
       endpoint: url.pathname,
       method: request.method,
@@ -1786,6 +1870,8 @@ function hostnameFromRequest(request, fallbackHost = '127.0.0.1') {
   return hostHeader.split(':')[0] || fallbackHost;
 }
 
+const ASSET_ROUTE = /^\/[-\w.]+(?:\/[-\w.]+)*\.(?:css|js|map|svg|png|ico|woff2?)$/;
+
 function adminRedirectLocation(request, url, config) {
   const host = hostnameFromRequest(request, config.adminBindHost || config.host || '127.0.0.1');
   return `http://${host}:${config.adminPort}${url.pathname}${url.search || ''}`;
@@ -1815,6 +1901,16 @@ async function handleAdminRequest(request, response, context) {
 
     if (request.method === 'GET' && (pathname === '/' || pathname === '/admin' || pathname.startsWith('/admin/'))) {
       await serveAdminDashboardAsset(response, pathname);
+      return;
+    }
+
+    // The page is written with root-relative assets, so it works identically at
+    // `/` and at `/admin`: an absolute `href="/style.css"` from `/admin` would
+    // otherwise ask the server for a path the page can only guess at. The admin
+    // listener serves no Ollama API, so the only collision left is /health,
+    // which is answered above.
+    if (request.method === 'GET' && ASSET_ROUTE.test(pathname)) {
+      await serveStaticFile(response, PUBLIC_ROOT, pathname.slice(1));
       return;
     }
 
@@ -1914,6 +2010,8 @@ export async function createRouterServer(config = loadConfig()) {
   const context = {
     config,
     store,
+    modelHosts: new Map(),
+    journals: new Set(),
     generationRetention: generationRetention(config),
     metrics,
     requestGate,
@@ -1925,6 +2023,21 @@ export async function createRouterServer(config = loadConfig()) {
     }
   };
   context.capabilities = new CapabilityPublisher(context);
+  context.portalView = {
+    defaultHost: config.defaultHost,
+    hostOf: (model) => (model ? context.modelHosts.get(model) ?? null : null),
+    upstreamOf: (host) => (host === config.defaultHost ? config.upstreamUrl : null),
+    journals: context.journals
+  };
+  context.portalBus = new PortalBus({
+    heartbeatMs: config.eventsHeartbeatMs,
+    heartbeat: () => ({
+      at: nowIso(),
+      active: context.requestGate.snapshot().active_count,
+      queued: context.requestGate.snapshot().queued_count
+    })
+  });
+  await refreshModelHosts(context);
   requestGate.onChange = () => context.capabilities.loadChanged();
 
   await persistEvent(store, {
@@ -1963,7 +2076,10 @@ export async function createRouterServer(config = loadConfig()) {
     if (--listeners === 0) context.generationRetention.stop();
   };
   server.once('close', releaseRetention);
-  server.once('close', () => context.capabilities.close());
+  server.once('close', () => {
+    context.capabilities.close();
+    context.portalBus?.close();
+  });
   adminServer?.once('close', releaseRetention);
   return { server, adminServer, context, waitForIdle };
 }

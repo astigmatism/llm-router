@@ -844,7 +844,7 @@ test('admin summary exposes retention limits and cleanup failures without failin
   await f.waitForIdle();
   const summary = await (await fetch(f.base + '/admin/api/summary', { headers: { authorization: 'Bearer test' } })).json();
   assert.equal(summary.config.generationMaxBytes, 1);
-  assert.equal(summary.config.requestLogMaxBytes, 5242880);
+  assert.equal(summary.config.requestLogMaxBytes, 33554432);
   assert.equal(summary.logs.generationRetention.lastError.code, 'EACCES');
   mocked.mock.restore();
   await f.context.generationRetention.sweep();

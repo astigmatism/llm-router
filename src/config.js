@@ -139,10 +139,15 @@ export function loadConfig(env = process.env) {
     dataDir,
     requestLogPath: path.join(dataDir, 'requests.jsonl'),
     eventLogPath: path.join(dataDir, 'events.jsonl'),
-    requestHistoryLimit: envInt(env, 'REQUEST_HISTORY_LIMIT', 500, 1),
-    eventHistoryLimit: envInt(env, 'EVENT_HISTORY_LIMIT', 500, 1),
-    requestLogMaxBytes: envPositiveInt(env, 'REQUEST_LOG_MAX_BYTES', 5242880),
+    // The portal paginates this ring instead of streaming it, so a wider
+    // window costs memory rather than bandwidth: 5000 records is roughly a day
+    // of a busy router, and the on-disk snapshot stays bounded by maxBytes.
+    requestHistoryLimit: envInt(env, 'REQUEST_HISTORY_LIMIT', 5000, 1),
+    eventHistoryLimit: envInt(env, 'EVENT_HISTORY_LIMIT', 2000, 1),
+    requestLogMaxBytes: envPositiveInt(env, 'REQUEST_LOG_MAX_BYTES', 33554432),
     eventLogMaxBytes: envPositiveInt(env, 'EVENT_LOG_MAX_BYTES', 5242880),
+    portalJournalViewBytes: envPositiveInt(env, 'GENERATION_JOURNAL_VIEW_BYTES', 4194304),
+    portalPromptViewBytes: envPositiveInt(env, 'PORTAL_PROMPT_VIEW_BYTES', 24576),
     generationRetentionDays: envPositiveInt(env, 'GENERATION_RETENTION_DAYS', 7),
     generationMaxBytes: envPositiveInt(env, 'GENERATION_MAX_BYTES', 1073741824),
     maxBodyBytes: envInt(env, 'MAX_BODY_BYTES', 0, 0),

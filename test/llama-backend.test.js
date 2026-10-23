@@ -1455,8 +1455,14 @@ test('llama.cpp vision is marker-driven across native chat, Chat Completions, Re
 test('authenticated draining, two-active limit, backend error, and cancellation clean up accounting', async () => {
   const fixture = await makeFixture();
   try {
-    const unauthenticated = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/runtime-state`);
-    assert.equal(unauthenticated.status, 401);
+    // The two listeners have deliberately different postures. The portal port is
+    // unauthenticated by design, and a dashboard that needs a token it cannot
+    // hold can neither show a payload nor drain a machine; the API port keeps
+    // demanding the admin token for anything that moves the running backend.
+    const portalRead = await fetch(`http://127.0.0.1:${fixture.adminPort}/admin/api/runtime-state`);
+    assert.equal(portalRead.status, 200);
+    const apiRead = await fetch(`http://127.0.0.1:${fixture.apiPort}/admin/api/runtime-state`);
+    assert.equal(apiRead.status, 401);
     const initialState = await runtimeState(fixture);
     assert.equal(initialState.active_model.prompt_cache_mode, 'volatile_slot_lcp');
     assert.equal(initialState.active_model.prompt_cache_volatile, true);
