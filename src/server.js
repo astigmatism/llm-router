@@ -1473,7 +1473,9 @@ async function handleProxy(request, response, url, context) {
       // Recorded as soon as the archive opens: a generation that is killed
       // mid-stream, or whose client disappears, is exactly the one a reader
       // comes looking for, and it never reaches the terminal write.
-      if (prepared?.journal?.id) commonRecord.generationRecordId = prepared.journal.id;
+      // Recorded either way: `null` means this build knows there is no archive,
+      // which is not the same statement as an older record that never said.
+      commonRecord.generationRecordId = prepared?.journal?.id ?? null;
       if (isLlamaWireKind(backend.kind) && prepared.reasoning) {
         Object.assign(commonRecord, {
           reasoningEffort: prepared.reasoning.level,
@@ -1591,7 +1593,7 @@ async function handleProxy(request, response, url, context) {
         streamingBody = normalizeOpenAiSseModel(upstreamResponse.body, activeModel.model, (payload) => {
           if (payload.usage) usage = payload.usage;
           if (payload.choices?.[0]?.finish_reason) commonRecord.finishReason = payload.choices[0].finish_reason;
-          if (payload.x_router) Object.assign(commonRecord, { completionState: payload.x_router.status, generationRecordId: payload.x_router.record_id, stopReason: payload.x_router.stop_reason });
+          if (payload.x_router) Object.assign(commonRecord, { completionState: payload.x_router.status, generationRecordId: payload.x_router.record_id ?? commonRecord.generationRecordId ?? null, stopReason: payload.x_router.stop_reason });
         });
         contentType = 'text/event-stream; charset=utf-8';
       } else {
@@ -1631,7 +1633,7 @@ async function handleProxy(request, response, url, context) {
         usage = collected.usage;
         parseErrors = collected.parseErrors;
         commonRecord.finishReason = collected.lastObject?.done_reason;
-        if (collected.lastObject?.x_router) Object.assign(commonRecord, { completionState: collected.lastObject.x_router.status, generationRecordId: collected.lastObject.x_router.record_id, stopReason: collected.lastObject.x_router.stop_reason });
+        if (collected.lastObject?.x_router) Object.assign(commonRecord, { completionState: collected.lastObject.x_router.status, generationRecordId: collected.lastObject.x_router.record_id ?? commonRecord.generationRecordId ?? null, stopReason: collected.lastObject.x_router.stop_reason });
       }
       response.end();
     } else {
@@ -1642,7 +1644,7 @@ async function handleProxy(request, response, url, context) {
           ? openAiNonstreamForPublic(payload, activeModel.model)
           : openAiCompletionToOllama(payload, { kind: prepared.responseKind, model: activeModel.model });
         commonRecord.finishReason = payload.choices?.[0]?.finish_reason;
-        if (payload.x_router) Object.assign(commonRecord, { completionState: payload.x_router.status, generationRecordId: payload.x_router.record_id, stopReason: payload.x_router.stop_reason });
+        if (payload.x_router) Object.assign(commonRecord, { completionState: payload.x_router.status, generationRecordId: payload.x_router.record_id ?? commonRecord.generationRecordId ?? null, stopReason: payload.x_router.stop_reason });
         usage = prepared.responseKind === 'openai-chat'
           ? payload.usage || null
           : extractUsageFromOllamaObject(normalized);
@@ -1673,7 +1675,7 @@ async function handleProxy(request, response, url, context) {
   } catch (error) {
     const clientClosed = clientController.signal.aborted;
     commonRecord.completionState = clientClosed ? 'cancelled' : 'incomplete';
-    commonRecord.generationRecordId = prepared?.journal?.id;
+    commonRecord.generationRecordId = prepared?.journal?.id ?? null;
     const timedOut = error?.name === 'TimeoutError';
     finalStatus = clientClosed ? 499 : (timedOut || error?.name === 'AbortError' ? 504 : 502);
     await persistEvent(context, {

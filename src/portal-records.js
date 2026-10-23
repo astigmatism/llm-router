@@ -113,6 +113,13 @@ function journalOf(record, journals) {
   }
   if (preAdmission) return { id: null, available: false, state: 'pre_admission' };
   if (protocolOf(record.endpoint).kind !== 'prompt') return { id: null, available: false, state: 'not_applicable' };
+  if (record.generationRecordId === undefined && record.requestBytes === undefined) {
+    // Written before the runtime linked a request to its archive: no amount of
+    // looking can say whether a payload was kept, so the portal says that
+    // instead of claiming nothing was journaled.
+    return { id: null, available: false, state: 'not_archived',
+      note: 'written by a router build that did not record which archive belonged to the request' };
+  }
   return { id: null, available: false, state: 'not_archived' };
 }
 

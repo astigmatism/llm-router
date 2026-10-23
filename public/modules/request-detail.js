@@ -4,7 +4,7 @@
    the endpoint its data came from. The open request is a URL (?request=<id>),
    so Back closes it and Copy link shares exactly this view. */
 
-import { ago, bytes, clock, dash, DOT, escapeHtml, exactNumber, ms, num, stamp, statusClass, text } from './format.js';
+import { ago, bytes, dash, DOT, escapeHtml, exactNumber, ms, num, stamp, statusClass, text } from './format.js';
 import { icon } from './icons.js';
 import { absoluteUrl, load, ROUTES } from './api.js';
 import { recordIds, requestUrl, setView } from './state.js';
@@ -85,7 +85,7 @@ function journalChip(record) {
     return '<span class="chip mut">no archive ' + DOT + ' refused before admission</span>';
   }
   if (journal.state === 'not_archived') {
-    return '<span class="chip warn">no archive ' + DOT + ' accepted, nothing journaled</span>';
+    return `<span class="chip warn">no archive ${DOT} ${text(journal.note || 'accepted, and this backend writes no generation archive')}</span>`;
   }
   return '<span class="chip mut">journal state not reported</span>';
 }
@@ -341,13 +341,32 @@ function renderModal() {
     }
     return;
   }
+  // A repaint throws away whatever was focused inside the modal: a record
+  // landing, a tab change, anything. Remember it by its data attribute and put
+  // it back, or the keyboard loses its place in the middle of a click.
+  const held = focusKey(root);
   root.innerHTML = modalMarkup(current.record, current.journal, current.tab);
   q('#main')?.setAttribute('aria-hidden', 'true');
-  if (!renderModal.focusPlaced) {
-    const target = root.querySelector('[data-close]') || root.querySelector('.modal');
-    target?.focus?.();
+  const target = held ? root.querySelector(held) : null;
+  if (target) {
+    target.focus();
+  } else if (!renderModal.focusPlaced) {
+    (root.querySelector('[data-close]') || root.querySelector('.modal'))?.focus?.();
     renderModal.focusPlaced = true;
   }
+}
+
+/* Where the keyboard is inside the modal, as a selector that survives a
+   repaint. */
+function focusKey(root) {
+  const active = document.activeElement;
+  if (!active || !root.contains(active)) return null;
+  for (const attribute of ['data-tab', 'data-step', 'data-close', 'data-copy']) {
+    if (!active.hasAttribute?.(attribute)) continue;
+    const value = active.getAttribute(attribute);
+    return value === '' || value === null ? `[${attribute}]` : `[${attribute}="${CSS.escape(value)}"]`;
+  }
+  return null;
 }
 
 function setTab(tab) {

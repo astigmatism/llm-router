@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { createRouterServer } from '../src/server.js';
+import { normalizeRecord } from '../src/portal-records.js';
 
 // The portal reads one contract (docs/PORTAL_API.md) from two listeners with
 // two different auth postures. These tests drive a real router against a fake
@@ -264,6 +265,14 @@ test('an accepted request says whether its payload was archived, in words', asyn
     // of the two it is looking at rather than showing an empty payload view.
     assert.equal(record.journal.state, 'not_archived');
     assert.equal(record.journal.id, null);
+    // A record written by this build says so: the absence of an archive is a
+    // statement the router is entitled to make, unlike a record that predates
+    // the linkage and cannot know.
+    assert.equal(record.journal.note, undefined);
+    const legacy = normalizeRecord({ id: 'x', ts: new Date().toISOString(), endpoint: '/api/chat', method: 'POST',
+      responseStatus: 200, allowed: true, durationMs: 10 }, {});
+    assert.equal(legacy.journal.state, 'not_archived');
+    assert.match(legacy.journal.note, /did not record which archive/);
     // Measured on the bytes the client was given, not reported by the backend.
     assert.equal(typeof record.ttftMs, 'number');
     assert.ok(record.requestBytes > 0);

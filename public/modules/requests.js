@@ -108,7 +108,10 @@ function journalCell(record) {
     return '<span class="chip mut" title="refused before admission, so no journal was ever opened and none can exist">no journal ' + DOT + ' refused before admission</span>';
   }
   if (journal.state === 'not_archived') {
-    return '<span class="chip warn" title="accepted, but no generation journal survived for it (prompt logging off, pruned, or an older build)">no archive</span>';
+    // The server knows which kind of "no archive" this is; say that rather than
+    // listing possibilities a reader has to triage themselves.
+    const why = journal.note || 'accepted, but this backend writes no generation archive';
+    return `<span class="chip warn" title="${escapeHtml(why)}">no archive</span>`;
   }
   return '<span class="chip mut" title="this router does not report a journal state for the record">payload state unknown</span>';
 }
