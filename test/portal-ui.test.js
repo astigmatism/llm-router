@@ -130,3 +130,14 @@ test('nothing depends on a glyph the deployment image cannot render', () => {
   }
   assert.deepEqual(offenders, [], 'non-ASCII glyphs outside the allow-list will render as boxes on the router host');
 });
+
+test('the payload notice waits for the payload, and does not guess', () => {
+  // The modal paints the record and its journal as two results arrive. Rendering
+  // the "no payload archive" banner from the first of them tells the reader the
+  // archive does not exist while it is still being fetched, which is the one
+  // thing they opened the modal to learn.
+  const source = read(path.join(PUBLIC, 'modules/request-detail.js'));
+  const call = source.match(/^\s*\$\{[^}]*noticeMarkup\(journal\)[^}]*\}/m);
+  assert.ok(call, 'the payload notice is rendered from one place');
+  assert.match(call[0], /current\.loading/, 'and only once the request has finished loading');
+});

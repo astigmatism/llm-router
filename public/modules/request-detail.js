@@ -319,7 +319,7 @@ function modalMarkup(record, journal, tab) {
       <div class="m-body" id="panel" role="tabpanel" aria-labelledby="tab-${tab}" tabindex="0">
         ${current.error ? `<div class="notice warn">${icon('warn')}<span><b>${escapeHtml(current.error.code)}</b> ${escapeHtml(current.error.message)}</span></div>` : ''}
         ${current.loading ? '<p class="section-note">Loading this request from the router.</p>' : ''}
-        ${record ? noticeMarkup(journal) : ''}
+        ${record && !current.loading ? noticeMarkup(journal) : ''}
         <div class="m-grid">${body}</div>
       </div>
       <div class="m-foot">
