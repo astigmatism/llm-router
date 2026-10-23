@@ -79,11 +79,16 @@ function withRouterContext(context, stats) {
 
 async function handleJournal(response, id, context) {
   await knownJournals(context);
+  // A row links to the archive by its own id; the file is named after the
+  // generation. Resolve one to the other here, or every request-detail read
+  // would answer "expired" for an archive sitting on disk.
+  const linked = context.store.requests.find((entry) => entry.id === id || entry.generationRecordId === id);
+  const journalId = linked?.generationRecordId ?? id;
   let view;
   try {
     view = await readJournalView({
       dir: path.join(context.config.dataDir, 'generations'),
-      id,
+      id: journalId,
       maxBytes: context.config.portalJournalViewBytes,
       promptBytes: context.config.portalPromptViewBytes
     });
@@ -95,30 +100,28 @@ async function handleJournal(response, id, context) {
     throw error;
   }
   if (!view) {
-    const record = context.store.requests.find((entry) => entry.generationRecordId === id || entry.id === id);
-    const details = { recordId: id, retentionDays: context.config.generationRetentionDays };
-    if (!record) {
+    const details = { recordId: linked?.id ?? id, journalId, retentionDays: context.config.generationRetentionDays };
+    if (!linked) {
       sendJson(response, 404, errorPayload('JOURNAL_NOT_FOUND',
         'No generation archive with that id, and no request in the retained window refers to one.', details));
       return;
     }
-    if (!record.generationRecordId) {
+    if (!linked.generationRecordId) {
       // The distinction an operator needs: expired means "too late", this means
       // "this backend never wrote one" (only catalog-backed runtimes archive).
       sendJson(response, 404, errorPayload('JOURNAL_NEVER_OPENED',
         'That request has no generation archive. Requests refused before admission never open one, and a backend serving an active-model marker instead of a published catalog does not write them.',
-        { ...details, outcome: record.outcome, errorCode: record.errorCode ?? null }));
+        { ...details, outcome: linked.outcome, errorCode: linked.errorCode ?? null }));
       return;
     }
     sendJson(response, 404, errorPayload('JOURNAL_EXPIRED',
       'That generation archive is gone: retention has removed it, or it is still being written.', details));
     return;
   }
-  const record = context.store.requests.find((entry) => entry.id === id || entry.generationRecordId === id);
   sendJson(response, 200, {
     ...view,
-    recordId: record?.id ?? id,
-    record: record ? normalizeRecord(record, context.portalView) : null
+    recordId: linked?.id ?? id,
+    record: linked ? normalizeRecord(linked, context.portalView) : null
   });
 }
 
