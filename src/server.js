@@ -116,6 +116,9 @@ async function persistRequest(context, record) {
     console.error('failed to persist request record', error);
     return;
   }
+  // This router just wrote that archive; the cached directory listing does not
+  // have to catch up for the row to know it exists.
+  if (record.generationRecordId) context.journals?.add(record.generationRecordId);
   // Live view of the table below: the dashboard subscribes and prepends, so a
   // request appears the moment it is durable rather than on the next poll.
   context.portalBus?.publish('request', normalizeRecord(record, portalView(context)));

@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { createRouterServer } from '../src/server.js';
+import { randomUUID } from 'node:crypto';
 import { normalizeRecord } from '../src/portal-records.js';
+import { ensureJournals } from '../src/portal-routes.js';
 
 // The portal reads one contract (docs/PORTAL_API.md) from two listeners with
 // two different auth postures. These tests drive a real router against a fake
@@ -388,4 +390,18 @@ test('the portal stream announces itself, then carries persisted requests', asyn
     controller.abort();
     await fixture.cleanup();
   }
+});
+
+test('a payload written a moment ago is not labelled from a stale listing', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'router-ensure-'));
+  await fs.mkdir(path.join(dir, 'generations'));
+  const present = randomUUID();
+  await fs.writeFile(path.join(dir, 'generations', `${present}.jsonl`), '{}\n', 'utf8');
+  // A listing taken before the file existed, still being served from cache.
+  const context = { journals: new Set(), journalsAt: Number.MAX_SAFE_INTEGER, config: { dataDir: dir } };
+  const gone = randomUUID();
+  const set = await ensureJournals(context, [present, gone, present, null]);
+  assert.equal(set.has(present), true, 'the file is there; the listing was just behind it');
+  assert.equal(set.has(gone), false, 'and one that is genuinely gone still reads as gone');
+  await fs.rm(dir, { recursive: true, force: true });
 });

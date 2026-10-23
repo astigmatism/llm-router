@@ -8,7 +8,7 @@
 // this router done, and what is it doing right now" - so they live together.
 
 import path from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { sendJson } from './http-utils.js';
 import { normalizeRecord, queryRequests, resolveWindow } from './portal-records.js';
 import { buildStats } from './portal-stats.js';
@@ -31,6 +31,26 @@ function errorPayload(code, message, details = undefined) {
  * for a file that is gone - but re-reading the directory for every row of a
  * page would cost more than the page is worth.
  */
+/**
+ * Confirm the archives a page is about to label, one stat each, for ids the
+ * cached directory listing does not know. Without this the newest rows — the
+ * ones an operator opens — are labelled from a listing up to
+ * `JOURNAL_TTL_MS` old, and a payload written two seconds ago reads as expired.
+ */
+export async function ensureJournals(context, ids) {
+  const set = context.journals ?? await knownJournals(context);
+  const missing = [...new Set(ids.filter((id) => id && !set.has(id)))];
+  await Promise.all(missing.map(async (id) => {
+    try {
+      const info = await stat(path.join(context.config.dataDir, 'generations', `${id}.jsonl`));
+      if (info.isFile()) set.add(id);
+    } catch {
+      /* absent is the answer the listing already gave */
+    }
+  }));
+  return set;
+}
+
 export async function knownJournals(context) {
   const now = Date.now();
   if (!context.journals || now - (context.journalsAt ?? 0) > JOURNAL_TTL_MS) {
@@ -224,6 +244,14 @@ export async function handlePortalRoute(request, response, pathname, context, de
   if (request.method === 'GET' && pathname === '/admin/api/requests') {
     const query = Object.fromEntries(params);
     const result = queryRequests(context.store.requests, query, context.portalView);
+    // The cached listing is a snapshot; confirm the ids this page actually shows
+    // so a payload written seconds ago is not labelled from stale information.
+    await ensureJournals(context, result.requests.map((row) => row.journal.id));
+    for (const row of result.requests) {
+      if (row.journal.id && context.journals.has(row.journal.id) && row.journal.state !== 'archived') {
+        row.journal = { id: row.journal.id, available: true, state: 'archived' };
+      }
+    }
     // A bare ?limit= keeps the historical shape; any other parameter implies a
     // paged reader that needs the total to print a page count.
     if (query.raw === '1') {
