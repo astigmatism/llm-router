@@ -7,7 +7,7 @@ import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { createRouterServer } from '../src/server.js';
 import { randomUUID } from 'node:crypto';
-import { normalizeRecord } from '../src/portal-records.js';
+import { normalizeRecord, queryRequests } from '../src/portal-records.js';
 import { ensureJournals } from '../src/portal-routes.js';
 
 // The portal reads one contract (docs/PORTAL_API.md) from two listeners with
@@ -404,4 +404,19 @@ test('a payload written a moment ago is not labelled from a stale listing', asyn
   assert.equal(set.has(present), true, 'the file is there; the listing was just behind it');
   assert.equal(set.has(gone), false, 'and one that is genuinely gone still reads as gone');
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('"has a payload" filters on what the router recorded, not on a listing', () => {
+  const archived = {
+    id: 'a-1', ts: '2026-10-22T18:00:00.000Z', endpoint: '/v1/responses', method: 'POST',
+    responseStatus: 200, allowed: true, durationMs: 900, generationRecordId: '9d1a1c3e-0000-4000-8000-000000000001'
+  };
+  const bare = { id: 'b-1', ts: '2026-10-22T18:00:01.000Z', endpoint: '/api/chat', method: 'POST', responseStatus: 200, allowed: true, durationMs: 10 };
+  const view = { hosts: [], models: [], journals: new Set() };
+  // The journal file is not in the cached listing — a request written a moment
+  // ago. It must still be returned, or the filter hides the newest traffic.
+  const withArchive = queryRequests([archived, bare], { has_journal: 'true' }, view);
+  assert.deepEqual(withArchive.requests.map((row) => row.id), ['a-1']);
+  const without = queryRequests([archived, bare], { has_journal: 'false' }, view);
+  assert.deepEqual(without.requests.map((row) => row.id), ['b-1']);
 });

@@ -287,7 +287,12 @@ export function queryRequests(records, params = {}, view = {}) {
     if (params.outcome && record.outcome !== params.outcome) return false;
     if (params.protocol && record.protocol !== params.protocol) return false;
     if (filters.streaming !== null && Boolean(record.streaming) !== filters.streaming) return false;
-    if (filters.has_journal !== null && (record.journal.state === 'archived') !== filters.has_journal) return false;
+    // "Has a payload" is what the router recorded, not what a directory listing
+    // happened to say a few seconds ago: the newest row is the one whose file the
+    // cache has not caught up with, and filtering on the cache hides exactly the
+    // requests someone filters for. Whether the archive is still readable is the
+    // row's payload state, shown on the result.
+    if (filters.has_journal !== null && (record.journal.id !== null) !== filters.has_journal) return false;
     if (client && !(`${record.client.identity} ${record.client.ip}`.toLowerCase().includes(client))) return false;
     if (filters.q && !matchesQuery(record, filters.q)) return false;
     return true;

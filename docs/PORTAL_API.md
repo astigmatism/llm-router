@@ -93,7 +93,7 @@ consumer that parses stored records.
 | `status` | exact status code, or a class (`2xx`, `4xx`, `5xx`) |
 | `protocol` | `responses` \| `chat` \| `ollama-chat` \| `ollama-generate` \| `discovery` \| `other` |
 | `streaming` | `true` \| `false` |
-| `has_journal` | `true` \| `false` |
+| `has_journal` | `true` \| `false` — requests the router recorded a payload archive for. This is the recorded linkage, not a directory listing: a payload written seconds ago matches, and a row whose archive retention has since removed still matches, with `journal.state` saying `expired`. |
 | `error_code` | exact error code, e.g. `CLIENT_CLOSED_REQUEST` |
 | `q` | free text over id, client, model, endpoint, error code/message |
 
