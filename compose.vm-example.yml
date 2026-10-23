@@ -105,9 +105,12 @@ services:
       ALLOW_MODEL_MANAGEMENT: "false"
 
       DATA_DIR: "/app/data"
-      REQUEST_HISTORY_LIMIT: "${REQUEST_HISTORY_LIMIT:-2500}"
+      # Kept equal to the defaults in src/config.js. The observability page reads exactly this
+      # history, so a Compose file that quietly lowers it decides how far back an operator can
+      # look; lower it here to trade history for disk deliberately, not by inheritance.
+      REQUEST_HISTORY_LIMIT: "${REQUEST_HISTORY_LIMIT:-5000}"
       EVENT_HISTORY_LIMIT: "${EVENT_HISTORY_LIMIT:-2000}"
-      REQUEST_LOG_MAX_BYTES: "${REQUEST_LOG_MAX_BYTES:-5242880}"
+      REQUEST_LOG_MAX_BYTES: "${REQUEST_LOG_MAX_BYTES:-33554432}"
       EVENT_LOG_MAX_BYTES: "${EVENT_LOG_MAX_BYTES:-5242880}"
       GENERATION_RETENTION_DAYS: "${GENERATION_RETENTION_DAYS:-7}"
       GENERATION_MAX_BYTES: "${GENERATION_MAX_BYTES:-1073741824}"
