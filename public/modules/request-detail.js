@@ -25,9 +25,13 @@ let trapRestore = null;
    out of the table, so the fallback is the newest row rather than the body. */
 function returnFocus(id) {
   const exact = q(`#requests tr[data-id="${CSS.escape(id)}"]`);
-  const candidate = exact || q('#requests tbody tr[data-id]');
-  if (trapRestore?.isConnected && !exact) trapRestore.focus();
-  else candidate?.focus?.();
+  // A live page may have already scrolled that row off the table, and the
+  // element that launched the modal can be a bare <body>; neither is a place to
+  // put the keyboard back, so the newest row is the fallback.
+  const candidate = exact
+    || (trapRestore?.isConnected && trapRestore !== document.body && trapRestore.tagName !== 'HTML' ? trapRestore : null)
+    || q('#requests tbody tr[data-id]');
+  candidate?.focus?.();
 }
 
 function announce(message) {

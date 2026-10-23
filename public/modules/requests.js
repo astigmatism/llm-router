@@ -155,46 +155,50 @@ function rowMarkup(record) {
   </tr>`;
 }
 
-function sortLocally(records, key, dir) {
-  const factor = dir === 'asc' ? 1 : -1;
-  const value = (record) => {
-    if (key === 'duration') return record.durationMs ?? -1;
-    if (key === 'ttft') return record.ttftMs ?? -1;
-    if (key === 'tokens') return record.tokens?.output ?? -1;
-    if (key === 'outcome') return String(record.outcome || '');
-    return record.tsEpochMs ?? new Date(record.ts || 0).getTime() ?? 0;
-  };
-  return [...records].sort((a, b) => {
-    const left = value(a);
-    const right = value(b);
-    if (left === right) return 0;
-    return (left > right ? 1 : -1) * factor;
-  });
+/* The sort key of a record, or null when this router never measured it. */
+function sortValue(record, key) {
+  if (key === 'duration') return record.durationMs ?? null;
+  if (key === 'ttft') return record.ttftMs ?? null;
+  if (key === 'tokens') return record.tokens?.output ?? null;
+  if (key === 'outcome') return String(record.outcome || '');
+  return record.tsEpochMs ?? (record.ts ? new Date(record.ts).getTime() : null);
 }
 
-/* The contract lets a router ignore `sort`, so verify before claiming the
-   server did it: a page that is not monotonic in the requested key is sorted
-   here and labelled as such. */
+/* Whether the rows arrived in the order we asked for. A hole in the column
+   settles it: an order that cannot be checked has not been checked, so the page
+   sorts what it can see instead of wearing a sort indicator the data does not
+   support. Unknown values sort last either way, never as a zero. */
 function orderedServerSide(records, key, dir) {
-  if (records.length < 3) return true;
-  const value = (record) => {
-    if (key === 'duration') return record.durationMs;
-    if (key === 'ttft') return record.ttftMs;
-    if (key === 'tokens') return record.tokens?.output;
-    if (key === 'outcome') return String(record.outcome || '');
-    return record.tsEpochMs ?? null;
-  };
-  const numbers = records.every((record) => typeof value(record) === 'number');
-  if (!numbers && key !== 'outcome') return true;
+  if (records.length < 2) return true;
+  const values = records.map((record) => sortValue(record, key));
+  const known = values.filter((value) => value !== null && value !== undefined);
+  if (known.length < 2) return true;
+  if (known.length !== values.length) return false;
   const factor = dir === 'asc' ? 1 : -1;
-  let previous = null;
-  for (const record of records) {
-    const current = value(record);
-    if (current === null || current === undefined) return true;
-    if (previous !== null && (current - previous) * factor < 0) return false;
-    previous = current;
+  for (let index = 1; index < known.length; index += 1) {
+    const step = key === 'outcome'
+      ? String(known[index]).localeCompare(String(known[index - 1]))
+      : known[index] - known[index - 1];
+    if (step * factor < 0) return false;
   }
   return true;
+}
+
+function sortLocally(records, key, dir) {
+  const factor = dir === 'asc' ? 1 : -1;
+  const known = [];
+  const unknown = [];
+  for (const record of records) {
+    const value = sortValue(record, key);
+    (value === null || value === undefined ? unknown : known).push({ record, value });
+  }
+  known.sort((left, right) => {
+    const step = typeof left.value === 'string'
+      ? left.value.localeCompare(right.value)
+      : left.value - right.value;
+    return step === 0 ? 0 : step * factor;
+  });
+  return [...known.map((entry) => entry.record), ...unknown.map((entry) => entry.record)];
 }
 
 function pager(currentOffset, limit, total, hasMore) {
