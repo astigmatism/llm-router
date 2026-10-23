@@ -3,87 +3,173 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLM Router Admin</title>
-  <link rel="stylesheet" href="/admin/style.css">
+  <title>LLM Router - Observability portal</title>
+  <meta name="description" content="Live request history, routing decisions and retention state of the local LLM router.">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to dashboard</a>
+
   <header class="topbar">
-    <div>
-      <h1>LLM Router Admin</h1>
-      <p class="subtitle">Dashboard for model routing, policy, request history, and inference telemetry.</p>
-      <p class="trust-note">No login or token is required. Keep this port on a trusted local/LAN network only.</p>
+    <div class="topbar-in">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 1.6l5.6 3.2v6.4L8 14.4 2.4 11.2V4.8z"/><path d="M8 5.2v5.6M5.4 6.6v2.8M10.6 6.6v2.8" stroke-width="1.3"/></svg>
+        </div>
+        <div>
+          <h1>LLM Router <span class="tag mono" id="router-version">-</span></h1>
+          <div class="sub" id="router-address">Observability</div>
+        </div>
+      </div>
+
+      <div id="hostpills"></div>
+
+      <div class="spacer"></div>
+
+      <form class="search" id="search-form" role="search">
+        <span id="search-icon" aria-hidden="true"></span>
+        <input id="search-input" type="search" placeholder="Search requests, clients, errors" aria-label="Search requests" autocomplete="off" spellcheck="false">
+        <span class="kbd" aria-hidden="true">Ctrl K</span>
+      </form>
+
+      <div class="seg" id="window-seg" role="group" aria-label="Statistics window"></div>
+
+      <span class="pill" id="live-chip" role="status" aria-live="polite" title="Server-Sent Events on /admin/api/stream"></span>
+
+      <button class="btn ghost" id="pause-button" type="button" aria-pressed="false" title="Pause live updates without losing the current view"></button>
+      <button class="btn ghost" id="refresh-button" type="button" title="Refetch this page now"></button>
+      <button class="btn" id="actions-button" type="button" aria-expanded="false" aria-controls="actions-drawer">Actions</button>
     </div>
-    <div class="action-box">
-      <a class="api-link" href="/admin/api/summary">Summary JSON</a>
-      <button id="refresh">Refresh</button>
+
+    <div class="statebar">
+      <div class="statebar-in" id="statebar"></div>
     </div>
   </header>
 
-  <main>
-    <section class="cards" id="cards"></section>
-    <section class="panel" id="hosts-section" hidden>
-      <h2>Machines</h2>
-      <p class="panel-note">Each machine publishes the models it runs. A machine under maintenance stops its own traffic and leaves the rest serving.</p>
-      <div id="hosts"></div>
-    </section>
-    <section class="panel"><h2>Resident models</h2><div id="model-catalog"></div></section>
-
-    <section class="grid policy-grid">
-      <section class="panel">
-        <h2>Router policy and active marker</h2>
-        <div id="policy"></div>
-      </section>
-      <section class="panel">
-        <h2>Recent rejects and errors</h2>
-        <div id="issues"></div>
-      </section>
-    </section>
-
-    <section class="panel controls">
-      <h2>Controls</h2>
-      <p class="panel-note">These actions are intentionally unauthenticated on the admin port.</p>
-      <div class="button-row">
-        <label for="control-model">Model</label> <select id="control-model"></select>
-        <button id="prewarm">Prewarm selected model</button>
-        <button id="test-chat">Run test chat</button>
-        <button id="reload-config">Reload active marker</button>
-        <button id="toggle-maintenance">Toggle maintenance</button>
-      </div>
-      <pre id="control-output"></pre>
-    </section>
-
-    <section class="grid">
-      <section class="panel">
-        <h2>Request history</h2>
-        <div class="table-toolbar">
-          <label for="request-filter">Show</label>
-          <select id="request-filter">
-            <option value="all">All requests</option>
-            <option value="prompt">Prompt calls only</option>
-            <option value="status">Status &amp; pings only</option>
-            <option value="other">Other</option>
-          </select>
+  <main id="main">
+    <!-- 01 - which runtime configuration each machine is serving right now -->
+    <section id="sec-configurations" class="panel" aria-labelledby="cfg-h">
+      <div class="sec-head">
+        <span class="eyebrow" aria-hidden="true">01</span>
+        <h2 id="cfg-h">Active configurations</h2>
+        <span class="hint" id="cfg-hint"></span>
+        <div class="tools">
+          <span class="hint">catalog revision</span>
+          <code class="mono faint" id="caprev"></code>
+          <button class="btn sm ghost" id="refresh-all-button" type="button">Refresh all</button>
         </div>
-        <div class="table-wrap"><table id="requests-table"></table></div>
-      </section>
-      <section class="panel">
-        <h2>Activity timeline</h2>
-        <div id="events"></div>
-      </section>
+      </div>
+      <div class="sec-body">
+        <p class="section-note" id="cfg-error" hidden></p>
+        <div class="hosts" id="hosts"></div>
+      </div>
     </section>
 
-    <section class="grid">
-      <section class="panel">
-        <h2>Resident model health and metadata</h2>
-        <pre id="ps"></pre>
-      </section>
-      <section class="panel">
-        <h2>Metrics</h2>
-        <pre id="metrics"></pre>
-      </section>
+    <!-- 02 - what can be asked of this router, and how it behaves -->
+    <section id="sec-models" class="panel" aria-labelledby="mod-h">
+      <div class="sec-head">
+        <span class="eyebrow" aria-hidden="true">02</span>
+        <h2 id="mod-h">Models</h2>
+        <span class="hint" id="mod-hint"></span>
+        <div class="tools">
+          <span class="hint" id="mod-sort-label">sort</span>
+          <select id="model-sort" aria-labelledby="mod-sort-label"></select>
+        </div>
+      </div>
+      <div class="sec-body">
+        <p class="section-note" id="mod-note"></p>
+      </div>
+      <div class="tw models"><table id="models"></table></div>
+      <div class="pager" id="models-foot"></div>
+    </section>
+
+    <!-- 03 - is it healthy in this window -->
+    <section id="sec-signals" class="panel" aria-labelledby="sig-h">
+      <div class="sec-head">
+        <span class="eyebrow" aria-hidden="true">03</span>
+        <h2 id="sig-h">Signals</h2>
+        <span class="hint" id="sig-hint">aggregates computed by the router for the selected window</span>
+        <div class="tools legend" id="sig-legend"></div>
+      </div>
+      <div class="sec-body">
+        <p class="section-note" id="sig-note" hidden></p>
+        <div id="sig-content">
+          <div class="signals" id="signals"></div>
+          <div class="cards2" id="cards2"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 - every handled request -->
+    <section id="sec-requests" class="panel" aria-labelledby="req-h">
+      <div class="sec-head">
+        <span class="eyebrow" aria-hidden="true">04</span>
+        <h2 id="req-h">Requests</h2>
+        <span class="hint" id="req-hint"></span>
+        <div class="tools">
+          <div class="seg" id="kind-seg" role="group" aria-label="Filter by kind"></div>
+          <div class="seg" id="density-seg" role="group" aria-label="Row density">
+            <button type="button" data-density="dense">Dense</button>
+            <button type="button" data-density="comfortable">Comfortable</button>
+          </div>
+        </div>
+      </div>
+      <form class="filters" id="filters" role="search">
+        <span class="fl">filters</span>
+        <select id="filter-model" aria-label="Model"></select>
+        <select id="filter-host" aria-label="Machine"></select>
+        <select id="filter-client" aria-label="Client"></select>
+        <select id="filter-outcome" aria-label="Outcome"></select>
+        <select id="filter-status" aria-label="Status"></select>
+        <select id="filter-protocol" aria-label="Protocol"></select>
+        <select id="filter-journal" aria-label="Payload archive state"></select>
+        <select id="filter-window" aria-label="Time range"></select>
+        <span id="filter-chips" class="filters-inline"></span>
+        <span class="spacer"></span>
+        <span class="faint" id="match-info" style="font-size:11px"></span>
+      </form>
+      <div class="tw requests"><table id="requests"></table></div>
+      <div class="pager" id="requests-foot"></div>
+      <p class="sr-only" id="requests-live" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- 05 - admission, listeners, retention and what is broken -->
+    <section id="sec-state" class="panel" aria-labelledby="ops-h">
+      <div class="sec-head">
+        <span class="eyebrow" aria-hidden="true">05</span>
+        <h2 id="ops-h">Router state, retention and recent changes</h2>
+        <span class="hint">everything an operator reads from the admin API without leaving the page</span>
+      </div>
+      <div class="sec-body"><div class="cards2 flush" id="ops"></div></div>
     </section>
   </main>
 
-  <script src="/admin/app.js"></script>
+  <footer class="meta">
+    Served by the router on its admin port, which is unauthenticated by design: keep it on a trusted
+    local/LAN network. Every number on this page comes from
+    <code>/admin/api/portal/state</code>, <code>/admin/api/requests</code>, <code>/admin/api/stats</code>,
+    <code>/admin/api/events</code>, <code>/admin/api/capabilities</code> and the
+    <code>/admin/api/stream</code> subscription - see <code>docs/PORTAL_API.md</code>.
+    A missing value is an em dash with a reason, never a zero.
+  </footer>
+
+  <div id="modal-root"></div>
+
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+  <aside class="drawer" id="actions-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <div class="row">
+      <h2 id="drawer-title">Actions</h2>
+      <span class="grow"></span>
+      <button class="btn sm ghost" id="drawer-close" type="button">Close</button>
+    </div>
+    <p class="section-note">Control routes are unauthenticated on the admin port. On an older router behind a
+      token they answer 401 and the button disables itself with the reason.</p>
+    <div id="drawer-body"></div>
+    <pre class="out" id="drawer-out" role="status" aria-live="polite" hidden></pre>
+  </aside>
+
+  <p class="sr-only" id="live-status" role="status" aria-live="polite"></p>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>

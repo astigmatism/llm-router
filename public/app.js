@@ -1,297 +1,364 @@
-const output = document.querySelector('#control-output');
-const requestFilter = document.querySelector('#request-filter');
-let lastSummary = null;
-let lastRequests = [];
+/* Portal boot. Three jobs, in order: find out what this router actually speaks
+   (section 1 with graceful degradation to the pre-v2 reads), keep the page current by
+   streaming (section 9) with a polling fallback that never asks two endpoints in the
+   same tick, and hand every rendered pixel to the section modules through the
+   single store so one frame equals one DOM pass. */
 
-const REQUEST_FILTER_KEY = 'router-admin-request-filter';
-const PROMPT_CALLS = new Set([
-  'POST /api/chat',
-  'POST /api/generate',
-  'POST /v1/responses',
-  'POST /responses'
-]);
-const STATUS_CALLS = new Set([
-  'GET /api/tags',
-  'GET /api/version',
-  'GET /api/ps',
-  'POST /api/show'
-]);
+import { load, ROUTES } from './modules/api.js';
+import { normalizeRecord, synthesizePortal } from './modules/legacy.js';
+import { get, invalidate, note, dropNote, requestParams, set, subscribe } from './modules/state.js';
+import { startStream } from './modules/stream.js';
+import * as chrome from './modules/statusbar.js';
+import * as actionsDrawer from './modules/actions.js';
+import * as configurations from './modules/configurations.js';
+import * as modelsSection from './modules/models.js';
+import * as signalsSection from './modules/signals.js';
+import * as requestsTable from './modules/requests.js';
+import * as detail from './modules/request-detail.js';
+import * as inspectorSection from './modules/inspector.js';
 
-if (requestFilter) {
-  const savedFilter = localStorage.getItem(REQUEST_FILTER_KEY) || 'all';
-  if ([...requestFilter.options].some((option) => option.value === savedFilter)) {
-    requestFilter.value = savedFilter;
-  }
-  requestFilter.addEventListener('change', () => {
-    localStorage.setItem(REQUEST_FILTER_KEY, requestFilter.value);
-    renderRequests(filterRequests(lastRequests, requestFilter.value));
-  });
-}
+const TICK_MS = 1000;
 
-document.querySelector('#refresh').addEventListener('click', refresh);
-// The hosts table is re-rendered on every refresh, so the buttons are handled
-// from the panel rather than bound to each row.
-document.querySelector('#hosts').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-drain-host]');
-  if (!button) return;
-  void postControl('/admin/api/runtime-drain', {
-    host: button.dataset.drainHost,
-    enabled: button.dataset.enabled === 'true',
-    reason: button.dataset.enabled === 'true' ? 'paused from the admin portal' : null
-  });
-});
-document.querySelector('#prewarm').addEventListener('click', () => postControl('/admin/api/prewarm', { model: document.querySelector('#control-model').value }));
-document.querySelector('#reload-config').addEventListener('click', () => postControl('/admin/api/reload-config', {}));
-document.querySelector('#test-chat').addEventListener('click', () => postControl('/admin/api/test-chat', { model: document.querySelector('#control-model').value, prompt: 'Reply with a short router health check.' }));
-document.querySelector('#toggle-maintenance').addEventListener('click', () => {
-  const enabled = !(lastSummary && lastSummary.router && lastSummary.router.maintenanceMode);
-  postControl('/admin/api/maintenance', { enabled });
-});
+/* One in-flight request per endpoint, tracked so a slow route cannot stack
+   requests behind itself while the operator watches. */
+const busy = new Set();
+/* Which view the table, the state strip and the aggregates currently hold, so a
+   history step can tell a reload-worthy change from a modal opening. */
+const loaded = { requests: '', window: '', stats: '' };
+let pendingInserts = 0;
+let polling = false;
 
-function headers() {
-  return { 'content-type': 'application/json', accept: 'application/json' };
-}
-
-async function getJson(url) {
-  const response = await fetch(url, { headers: headers(), cache: 'no-store' });
-  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-  return response.json();
-}
-
-async function postControl(url, body) {
-  output.textContent = 'Running...';
+async function once(key, task) {
+  if (busy.has(key)) return null;
+  busy.add(key);
   try {
-    const response = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
-    const text = await response.text();
-    output.textContent = text;
-    refresh();
+    return await task();
   } catch (error) {
-    output.textContent = error.message;
+    console.warn(`[portal] ${key} failed`, error);
+    return null;
+  } finally {
+    busy.delete(key);
   }
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+/* ---- endpoint loaders ---------------------------------------------------- */
+
+async function loadPortal() {
+  return once('portal', async () => {
+    const view = get().view;
+    const result = await load(ROUTES.portalState, { params: { window: view.window } });
+    if (result.ok) {
+      const previous = get().portal;
+      set({
+        portal: mergeStreamedFacts(result.data, previous),
+        portalSource: 'portal/state',
+        loading: { ...get().loading, portal: false }
+      });
+      loaded.window = get().view.window;
+      dropNote('portal');
+      return;
+    }
+    if (!result.missing) {
+      note('portal', `${ROUTES.portalState} answered ${result.status} ${result.code || ''}: ${result.message || 'unreachable'}.`);
+      set({ portalSource: null });
+      return;
+    }
+    await degrade();
+  });
 }
 
-function fmt(value) {
-  if (value === null || value === undefined || value === '') return 'none';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  if (typeof value === 'boolean') return value ? 'yes' : 'no';
-  return String(value);
-}
-
-function text(value) {
-  return escapeHtml(fmt(value));
-}
-
-function card(label, value, className = '') {
-  return `<div class="card"><div class="label">${text(label)}</div><div class="value ${className}">${text(value)}</div></div>`;
-}
-
-function modelContext(summary) {
-  const marker = summary.activeModel?.raw || {};
-  const loaded = summary.activeLoadedState?.raw || {};
-  return marker.context || marker.num_ctx || marker.numCtx || marker.options?.num_ctx || loaded.context || loaded.context_length || 'not reported';
-}
-
-function uptime(value) {
-  const seconds = Number(value || 0);
-  if (!Number.isFinite(seconds)) return 'unknown';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m ${seconds % 60}s`;
-}
-
-function renderCards(summary) {
-  const loaded = summary.activeLoadedState || {};
-  const upstreamClass = summary.upstream?.ok ? 'good' : 'danger';
-  const loadedClass = loaded.loaded ? 'good' : 'warn';
-  const metrics = summary.metrics || {};
-  const config = summary.config || {};
-  document.querySelector('#cards').innerHTML = [
-    card('Default backend', summary.upstream?.ok ? 'healthy' : 'unavailable', upstreamClass),
-    card('Active model', summary.activeModel?.model),
-    card('Active loaded', loaded.loaded ? 'loaded' : 'not loaded', loadedClass),
-    card('Context', modelContext(summary)),
-    card('Loaded until', loaded.until || 'unknown'),
-    card('Forced keep_alive', config.forcedKeepAlive),
-    card('Router policy', config.modelPolicyMode),
-    card('Model rewrite', config.rewriteRequestedModelToActive ? 'enabled' : 'disabled', config.rewriteRequestedModelToActive ? 'warn' : ''),
-    card('Uptime', uptime(summary.router?.uptimeSeconds)),
-    card('Requests', metrics.totalRequests || 0),
-    card('Keep-alive rewrites', metrics.keepAliveNormalizations || 0),
-    card('Rejected/errors', `${metrics.rejectedRequests || 0} / ${metrics.upstreamErrors || 0}`, metrics.rejectedRequests || metrics.upstreamErrors ? 'warn' : 'good')
-  ].join('');
-}
-
-function kv(label, value) {
-  return `<div class="kv"><div class="kv-label">${text(label)}</div><div class="kv-value">${text(value)}</div></div>`;
-}
-
-// One row per machine that publishes models here. Absent for a router with a
-// single host, which is the deployment the portal was written for.
-function renderHosts(summary) {
-  const section = document.querySelector('#hosts-section');
-  const hosts = summary.hosts;
-  if (!hosts?.length) {
-    section.hidden = true;
-    section.innerHTML = '';
+/* A router without section 1 can still paint the page from the older reads. Anything
+   the older reads cannot prove stays absent, which the sections render as an em
+   dash with a reason. */
+async function degrade() {
+  const [summary, hosts, metrics] = await Promise.all([
+    load(ROUTES.summary),
+    load(ROUTES.hosts),
+    load(ROUTES.metrics)
+  ]);
+  if (!summary.ok) {
+    note('portal', `${ROUTES.portalState} does not exist on this router and ${ROUTES.summary} answered ${summary.status}, so there is nothing to paint.`);
+    set({ portal: null, portalSource: null, loading: { ...get().loading, portal: false } });
     return;
   }
-  section.hidden = false;
-  document.querySelector('#hosts').innerHTML = '<table><tr><th>Machine</th><th>Models</th><th>Health</th><th>Draining</th><th>Last published</th><th>Traffic</th><th></th></tr>'
-    + hosts.map((host) => `<tr>
-      <td>${text(host.display_name ?? host.id)}${host.default ? ' <span class="badge">default</span>' : ''}</td>
-      <td>${text((host.model_ids || []).join(', ') || '—')}</td>
-      <td>${host.published ? (host.error ? `unpublished (${text(host.error.code)})` : 'published') : 'no catalog'}</td>
-      <td>${host.draining ? `yes${host.drain_reason ? ` — ${text(host.drain_reason)}` : ''}` : 'no'}</td>
-      <td>${text(host.accepted_at ?? 'never')}</td>
-      <td>${text(host.active ?? 0)} active, ${text(host.queued ?? 0)} queued</td>
-      <td><button data-drain-host="${text(host.id)}" data-enabled="${host.draining ? 'false' : 'true'}">${host.draining ? 'Resume traffic' : 'Drain for maintenance'}</button></td>
-    </tr>`).join('') + '</table>'
-    + (summary.hosts_error ? `<div class="issue">${text(summary.hosts_error.message)}</div>` : '');
+  const portal = synthesizePortal({
+    summary: summary.data,
+    hosts: hosts.ok ? hosts.data : null,
+    metrics: metrics.ok ? metrics.data : null
+  });
+  set({
+    portal,
+    portalSource: `${ROUTES.summary} + ${ROUTES.hosts} + ${ROUTES.metrics}`,
+    loading: { ...get().loading, portal: false }
+  });
+  loaded.window = get().view.window;
+  note('portal', `this router does not expose ${ROUTES.portalState}; the page is assembled from ${ROUTES.summary}, ${ROUTES.hosts} and ${ROUTES.metrics}, so per-window and per-stage figures are absent.`);
 }
 
-function renderPolicy(summary) {
-  const config = summary.config || {};
-  const active = summary.activeModel || {};
-  const router = summary.router || {};
-  const admin = router.admin || {};
-  document.querySelector('#policy').innerHTML = [
-    kv('API listener', `${router.api?.host || config.host}:${router.api?.port || config.port}`),
-    kv('Admin listener', admin.enabled ? `${admin.bindHost}:${admin.port}` : 'disabled'),
-    kv('Admin portal auth', admin.authRequired ? 'required' : 'not required'),
-    kv('Policy mode', config.modelPolicyMode),
-    kv('Rewrite requested model to active', config.rewriteRequestedModelToActive),
-    kv('Forced keep_alive', config.forcedKeepAlive),
-    kv('Protected endpoints', (config.protectedModelEndpoints || []).join(', ')),
-    kv('Active marker source', active.source),
-    kv('Active marker loaded from', active.loadedFrom),
-    kv('Marker keep_alive', active.keep_alive),
-    kv('Marker updated at', active.updated_at || active.file_mtime),
-    kv('Upstream URL', config.upstreamUrl)
-  ].join('');
+async function loadStats() {
+  return once('stats', async () => {
+    const view = get().view;
+    // No bucket parameter: the router chooses one that keeps the series under 600
+    // buckets and reports what it settled on.
+    const result = await load(ROUTES.stats, { params: { window: view.window } });
+    if (!result.ok) {
+      set({ stats: null });
+      if (result.missing) note('stats', `${ROUTES.stats} is not exposed by this router yet`);
+      else note('stats', `${ROUTES.stats} answered ${result.status}: ${result.message || 'unreachable'}`);
+      invalidate();
+      return;
+    }
+    set({ stats: result.data });
+    loaded.stats = get().view.window;
+    dropNote('stats');
+  });
 }
 
-function renderIssues(summary) {
-  const issues = summary.recentRejectsOrErrors || [];
-  const retentionError = summary.logs?.generationRetention?.lastError;
-  const retentionIssue = retentionError
-    ? `<div class="issue"><strong>Archive cleanup failed</strong> ${text(retentionError.message)}. Cleanup will retry automatically.</div>`
-    : '';
-  if (!issues.length) {
-    document.querySelector('#issues').innerHTML = retentionIssue || '<p class="empty">No recent rejects or upstream errors.</p>';
-    return;
+async function loadEvents() {
+  return once('events', async () => {
+    const result = await load(ROUTES.events, { params: { limit: 80 } });
+    if (!result.ok) {
+      if (result.missing) note('events', `${ROUTES.events} is not exposed by this router`);
+      return;
+    }
+    const events = Array.isArray(result.data?.events) ? result.data.events : [];
+    set({ events });
+    dropNote('events');
+  });
+}
+
+async function loadCapabilities() {
+  return once('capabilities', async () => {
+    const result = await load(ROUTES.capabilities, { params: { include: 'load' }, useEtag: true });
+    if (!result.ok) {
+      if (result.missing) note('capabilities', `${ROUTES.capabilities} is not reachable from this port`);
+      return;
+    }
+    set({ capabilities: result.data });
+    dropNote('capabilities');
+  });
+}
+
+async function loadRequests() {
+  return once('requests', async () => {
+    const before = get();
+    set({ loading: { ...before.loading, requests: true } });
+    const result = await load(ROUTES.requests, { params: requestParams(before.view) });
+    const state = get();
+    if (!result.ok) {
+      note('requests', `${ROUTES.requests} answered ${result.status} ${result.code || ''}: ${result.message || 'unreachable'}`);
+      set({ loading: { ...state.loading, requests: false } });
+      return;
+    }
+    dropNote('requests');
+    loaded.requests = fingerprint(state.view).requests;
+    const payload = { ...result.data, requests: (result.data?.requests || []).map(normalizeRecord) };
+    requestsTable.ingest(payload, state);
+    set({ loading: { ...state.loading, requests: false } });
+  });
+}
+
+/* Drain flips and heartbeats that arrived before the next portal/state read. */
+function mergeStreamedFacts(portal, previous) {
+  if (!previous || !portal) return portal;
+  if (portal.state?.inFlight?.active == null && previous.state?.inFlight?.active != null) {
+    portal.state = { ...portal.state, inFlight: previous.state.inFlight };
   }
-  document.querySelector('#issues').innerHTML = retentionIssue + issues.map((row) => `<div class="issue">
-    <div><strong>${text(row.errorCode || row.responseStatus || row.status)}</strong> ${text(row.errorSummary || row.endpoint)}</div>
-    <div class="event-time">${text(row.ts)} · ${text(row.method)} ${text(row.endpoint)} · ${text(row.clientIdentity)}</div>
-  </div>`).join('');
+  return portal;
 }
 
-function classifyRequest(row) {
-  const key = `${row.method || 'GET'} ${row.endpoint || ''}`;
-  if (PROMPT_CALLS.has(key)) return 'prompt';
-  if (STATUS_CALLS.has(key)) return 'status';
-  return 'other';
-}
-
-function filterRequests(rows, filter) {
-  if (!filter || filter === 'all') return rows;
-  return rows.filter((row) => classifyRequest(row) === filter);
-}
-
-function renderRequests(rows) {
-  const table = document.querySelector('#requests-table');
-  const header = '<tr><th>Time</th><th>Client</th><th>Endpoint</th><th>Model</th><th>Thinking</th><th>Keep alive</th><th>Status</th><th>Latency</th></tr>';
-  if (!rows.length) {
-    table.innerHTML = header + '<tr><td colspan="8">No requests match this filter.</td></tr>';
-    return;
-  }
-  const body = rows.map((row) => {
-    const statusClass = row.rejected || row.upstreamError ? 'warn' : 'good';
-    return `<tr>
-      <td>${text(row.ts)}</td>
-      <td>${text(row.clientIdentity)}<br><span class="event-time">${text(row.sourceIp)}</span></td>
-      <td>${text(row.method)} ${text(row.endpoint)}</td>
-      <td>${text(row.modelRewritten ? `${row.requestedModel} -> ${row.forwardedModel}` : row.forwardedModel || row.requestedModel)}</td>
-      <td>${thinkCell(row)}</td>
-      <td>in: ${text(row.incomingKeepAlive)}<br>out: ${text(row.forwardedKeepAlive)}</td>
-      <td class="${statusClass}">${text(row.responseStatus || row.status)}</td>
-      <td>${text(row.latencyMs)} ms</td>
-    </tr>`;
-  }).join('');
-  table.innerHTML = header + body;
-}
-
-function thinkValue(value) {
-  if (value === undefined || value === null) return 'not set';
-  if (typeof value === 'boolean') return value ? 'on' : 'off';
-  return String(value);
-}
-
-function thinkCell(row) {
-  const dropped = row.thinkDropped === true
-    || (row.thinkDropped === undefined && row.thinkNormalized && row.forwardedThink === undefined);
-  const lines = [
-    `in: ${text(thinkValue(row.incomingThink))}`,
-    `out: ${text(dropped ? 'dropped' : thinkValue(row.forwardedThink))}`
-  ];
-  if (row.incomingReasoningEffort) lines.push(`request effort: ${text(row.incomingReasoningEffort)}`);
-  else if (row.reasoningEffort) lines.push(`effective effort: ${text(row.reasoningEffort)}`);
-  if (row.thinkMapped && !dropped) lines.push('<span class="event-time">mapped by active profile</span>');
-  if (dropped) lines.push('<span class="event-time">control dropped: model lacks thinking</span>');
-  return lines.join('<br>');
-}
-
-function renderEvents(events) {
-  if (!events.length) {
-    document.querySelector('#events').innerHTML = '<p class="empty">No events yet.</p>';
-    return;
-  }
-  document.querySelector('#events').innerHTML = events.map((event) => `<div class="event"><div>${text(event.type)}</div><div class="event-time">${text(event.ts)}</div><pre>${text(JSON.stringify(event, null, 2))}</pre></div>`).join('');
-}
+/* ---- refresh ------------------------------------------------------------- */
 
 async function refresh() {
+  await Promise.all([loadPortal(), loadStats(), loadEvents(), loadCapabilities(), loadRequests()]);
+}
+
+/* ---- polling fallback ---------------------------------------------------- */
+
+const POLLERS = [
+  { key: 'requests', every: 5000, task: loadRequests, priority: 0 },
+  { key: 'portal', every: 10000, task: loadPortal, priority: 1 },
+  { key: 'stats', every: 10000, task: loadStats, priority: 2 },
+  { key: 'events', every: 10000, task: loadEvents, priority: 3 },
+  { key: 'capabilities', every: 30000, task: loadCapabilities, priority: 4 }
+];
+const lastRun = new Map();
+let tickTimer = null;
+
+function tick() {
+  const state = get();
+  if (state.paused || busy.size || document.hidden) return;
+  const now = Date.now();
+  const due = POLLERS
+    .filter((poller) => now - (lastRun.get(poller.key) || 0) >= poller.every)
+    .sort((left, right) => left.priority - right.priority);
+  if (!due.length) return;
+  const poller = due[0];
+  lastRun.set(poller.key, now);
+  poller.task();
+}
+
+function startPolling(reason) {
+  if (polling) return;
+  polling = true;
+  note('stream', `${reason}; falling back to polling ${ROUTES.requests} every 5 s and the rest every 10 s, one endpoint per second.`);
+  for (const poller of POLLERS) lastRun.set(poller.key, Date.now() - poller.every);
+  tickTimer = setInterval(tick, TICK_MS);
+  tick();
+}
+
+function stopPolling() {
+  polling = false;
+  clearInterval(tickTimer);
+  tickTimer = null;
+}
+
+/* ---- live subscription --------------------------------------------------- */
+
+function onStreamEvent(type, data) {
+  const state = get();
+  if (type === 'request') {
+    const result = requestsTable.applyStreamedRecord(normalizeRecord(data), state);
+    if (result === 'prepended') pendingInserts += 1;
+  } else if (type === 'event') {
+    const events = state.events || [];
+    set({ events: [data, ...events].slice(0, 200) });
+  } else if (type === 'drain') {
+    applyDrain(data);
+  } else if (type === 'capabilities') {
+    set({ capabilities: data });
+    const portal = state.portal;
+    if (portal) {
+      portal.state = { ...portal.state, capabilities: { revision: data?.revision, observedAt: data?.observedAt, complete: data?.complete, warnings: data?.warnings || [] } };
+    }
+  } else if (type === 'heartbeat') {
+    const portal = state.portal;
+    if (portal) {
+      portal.state = { ...portal.state, inFlight: { ...portal.state?.inFlight, active: data?.active ?? null, queued: data?.queued ?? null } };
+    }
+  }
+  invalidate();
+}
+
+function applyDrain(data) {
+  const portal = get().portal;
+  if (!portal || !data) return;
+  if (data.host) {
+    portal.hosts = (portal.hosts || []).map((entry) => (entry.id === data.host
+      ? { ...entry, draining: !!data.draining, drain_reason: data.draining ? data.reason : null }
+      : entry));
+  } else {
+    portal.state = { ...portal.state, draining: !!data.draining, admission: data.draining ? 'draining' : 'accepting' };
+  }
+  invalidate();
+}
+
+/* ---- chrome actions ------------------------------------------------------ */
+
+const actions = {
+  state: get,
+  invalidate,
+  loadRequests,
+  openRequest: (id) => detail.open(id),
+  drainHost: (host, enabled) => actionsDrawer.drainHost(host, enabled)
+};
+
+const chromeHandlers = {
+  refresh: () => refresh(),
+  togglePause: () => {
+    const state = get();
+    const paused = !state.paused;
+    set({ paused });
+    if (!paused) refresh();
+  },
+  toggleDrawer: () => actionsDrawer.toggle(),
+  windowChanged: () => {
+    loadPortal();
+    loadStats();
+    loadRequests();
+  }
+};
+
+/* ---- render loop --------------------------------------------------------- */
+
+/* A section that cannot paint itself must not take the rest of the page down
+   with it: each one is painted behind its own guard and reports in the console
+   with its name. */
+function paint(name, task) {
   try {
-    const [summary, requests, events] = await Promise.all([
-      getJson('/admin/api/summary'),
-      getJson('/admin/api/requests?limit=100'),
-      getJson('/admin/api/events?limit=50')
-    ]);
-    lastSummary = summary;
-    renderCards(summary);
-    const models = summary.models || [];
-    const multiHost = models.some((entry) => entry.x_ollama_router?.host);
-    document.querySelector('#model-catalog').innerHTML = `<table><tr><th>Model</th>${multiHost ? '<th>Machine</th>' : ''}<th>Health</th><th>Context</th><th>Slots</th><th>Capabilities</th><th>Aliases</th></tr>` + models.map((entry) => {
-      const meta = entry.x_ollama_router;
-      return `<tr><td>${text(meta.display_name ?? meta.upstream_model)}</td>${multiHost ? `<td>${text(meta.host ?? '—')}</td>` : ''}<td>${text(meta.health?.available ? 'healthy' : 'unavailable')}</td><td>${text(meta.context_window)}</td><td>${text(meta.active_request_limit)}</td><td>${text(meta.capabilities?.join(', '))}</td><td>${text(meta.aliases?.join(', '))}</td></tr>`;
-    }).join('') + '</table>';
-    const picker = document.querySelector('#control-model');
-    const previous = picker.value;
-    picker.innerHTML = models.map((entry) => `<option value="${text(entry.id)}">${text(entry.x_ollama_router?.display_name ?? entry.id)}</option>`).join('');
-    if (models.some((entry) => entry.id === previous)) picker.value = previous;
-    renderHosts(summary);
-    renderPolicy(summary);
-    renderIssues(summary);
-    lastRequests = requests.requests || [];
-    renderRequests(filterRequests(lastRequests, requestFilter ? requestFilter.value : 'all'));
-    renderEvents(events.events || []);
-    document.querySelector('#ps').textContent = JSON.stringify(summary.models || summary.ollamaPs, null, 2);
-    document.querySelector('#metrics').textContent = JSON.stringify(summary.metrics, null, 2);
+    task();
   } catch (error) {
-    document.querySelector('#cards').innerHTML = card('Dashboard error', error.message, 'danger');
-    document.querySelector('#policy').innerHTML = '';
-    document.querySelector('#issues').innerHTML = '';
+    console.warn(`[portal] ${name} could not paint`, error);
   }
 }
 
-refresh();
-setInterval(refresh, 10000);
+function render(state) {
+  paint('chrome', () => chrome.render(state));
+  paint('configurations', () => configurations.render(state));
+  paint('models', () => modelsSection.render(state));
+  paint('signals', () => signalsSection.render(state));
+  paint('requests', () => requestsTable.render(state));
+  paint('inspector', () => inspectorSection.render(state));
+  paint('actions', () => actionsDrawer.render(state));
+  paint('detail', () => detail.sync(state));
+  if (pendingInserts) {
+    const count = pendingInserts;
+    pendingInserts = 0;
+    const queued = state.requests?.staleCount || 0;
+    requestsTable.announce(count === 1
+      ? 'One new request was added to this page.'
+      : `${count} new requests were added to this page.${queued ? ` ${queued} more arrived while you were on another page; reload to see them.` : ''}`);
+  }
+}
+
+/* ---- boot ---------------------------------------------------------------- */
+
+function fingerprint(view) {
+  const requestKeys = ['q', 'model', 'host', 'client', 'outcome', 'status', 'protocol', 'journal', 'sort', 'dir', 'offset', 'limit'];
+  return {
+    requests: requestKeys.map((key) => `${key}=${view[key]}`).join('&'),
+    window: view.window
+  };
+}
+
+async function boot() {
+  subscribe(render);
+  chrome.configure(chromeHandlers);
+  chrome.mountChrome();
+  actionsDrawer.wire(chromeHandlers);
+  configurations.wire(actions);
+  modelsSection.wire();
+  requestsTable.wire(actions);
+  detail.wire();
+
+  await refresh();
+  startStream({
+    onEvent: onStreamEvent,
+    onFallback: (reason) => startPolling(reason),
+    onLive: () => stopPolling()
+  });
+
+  // Back and Forward change the view without going through any of our handlers,
+  // so the restored view is compared with what is actually on screen: a step
+  // that only opens or closes a request modal touches no network at all, a step
+  // that changes the filters or the window reloads exactly what it invalidates.
+  window.addEventListener('popstate', () => {
+    const next = fingerprint(get().view);
+    if (next.window !== loaded.window) loadPortal();
+    if (next.window !== loaded.stats) loadStats();
+    if (next.window !== loaded.window || next.requests !== loaded.requests) loadRequests();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && polling && !get().paused) refresh();
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    console.warn('[portal] unhandled rejection', event.reason);
+    event.preventDefault();
+  });
+
+  invalidate();
+}
+
+boot();

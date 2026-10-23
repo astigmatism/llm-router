@@ -1,0 +1,2423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Router · Observability portal — mock-up</title>
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────────── */
+:root{
+  color-scheme: dark;
+  --bg:#0b0f14; --bg-2:#0d1117; --panel:#12181f; --panel-2:#161d25; --raise:#1b232c;
+  --text:#e6edf3; --text-2:#adbac7; --muted:#7d8590; --faint:#667079;
+  --border:#262e37; --border-2:#30363d; --hair:rgba(125,133,144,.16);
+  --accent:#58a6ff; --accent-soft:rgba(88,166,255,.13);
+  --good:#3fb950; --good-soft:rgba(63,185,80,.14);
+  --warn:#d29922; --warn-soft:rgba(210,153,34,.13);
+  --danger:#f85149; --danger-soft:rgba(248,81,73,.13);
+  --idle:#667079; --info:#a371f7;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --r:10px; --r-sm:7px; --shadow:0 1px 0 rgba(255,255,255,.02), 0 8px 24px rgba(1,4,9,.45);
+  --pad:16px; --row:34px; --fs-table:12.5px; --fs-body:13px;
+}
+body.dense{ --pad:11px; --row:26px; --fs-table:11.8px; --fs-body:12.2px; }
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:
+    radial-gradient(1200px 520px at 12% -8%, rgba(88,166,255,.055), transparent 60%),
+    radial-gradient(900px 480px at 88% 0%, rgba(163,113,247,.045), transparent 55%),
+    var(--bg);
+  color:var(--text); font:400 var(--fs-body)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+button,select,input{font:inherit;color:inherit}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
+h2{font-size:.94rem}
+.ico{vertical-align:-2px;flex:none}
+.ig svg{display:block}
+.msg summary .caret svg{transition:transform .15s}
+.msg summary .caret.closed svg{transform:rotate(-90deg)}
+.msg[open] summary .caret svg{transform:rotate(0)}
+.mono{font-family:var(--mono);font-size:.92em;letter-spacing:-.1px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.92em}
+.muted{color:var(--muted)} .faint{color:var(--faint)}
+.dim{color:var(--text-2)}
+.nowrap{white-space:nowrap}
+.good{color:var(--good)} .warn{color:var(--warn)} .danger{color:var(--danger)} .idle{color:var(--idle)}
+
+/* ── chrome ─────────────────────────────────────────────────────────────── */
+.ribbon{position:fixed;left:0;bottom:0;z-index:60;background:var(--warn);color:#1b1500;
+  font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-top-right-radius:7px;opacity:.92}
+.topbar{
+  position:sticky; top:0; z-index:40; backdrop-filter:blur(8px);
+  background:linear-gradient(180deg,rgba(11,15,20,.97),rgba(11,15,20,.88));
+  border-bottom:1px solid var(--border);
+}
+.topbar-in,.statebar-in{max-width:1720px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:12px}
+.topbar-in{flex-wrap:nowrap}
+.brand{flex:0 1 auto}
+#hostpills{flex:0 1 auto;overflow:hidden}
+.topbar-in{height:56px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{
+  width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:none;
+  background:conic-gradient(from 210deg,#58a6ff,#a371f7,#3fb950,#58a6ff);
+  color:#04090f;font-weight:800;font-size:13px;box-shadow:0 0 0 1px rgba(255,255,255,.09) inset;
+}
+.brand h1{font-size:.985rem;white-space:nowrap}
+.brand .sub{font-size:11px;color:var(--muted);margin-top:-3px}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-2);background:var(--panel);
+  border-radius:999px;padding:3px 9px;font-size:11.5px;color:var(--text-2);white-space:nowrap
+}
+.pill b{font-weight:600;color:var(--text)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--idle);flex:none;box-shadow:0 0 0 3px rgba(102,112,121,.15)}
+.dot.ok{background:var(--good);box-shadow:0 0 0 3px var(--good-soft)}
+.dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+.dot.bad{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+.dot.live{animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.spacer{flex:1}
+.search{
+  display:flex;align-items:center;gap:8px;border:1px solid var(--border-2);background:#0a0e13;
+  border-radius:8px;padding:0 9px;height:30px;min-width:210px;color:var(--muted)
+}
+.search input{background:none;border:0;outline:0;width:100%;font-size:12.5px;color:var(--text)}
+.kbd{font:600 10px/1 var(--mono);border:1px solid var(--border-2);border-bottom-width:2px;border-radius:4px;padding:2px 4px;color:var(--muted)}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-2);background:var(--panel);
+  color:var(--text);border-radius:8px;padding:0 11px;height:30px;font-size:12.2px;cursor:pointer;white-space:nowrap
+}
+.btn:hover{border-color:var(--accent);background:var(--accent-soft)}
+.btn.ghost{background:transparent}
+.btn.sm{height:24px;padding:0 8px;font-size:11.5px;border-radius:6px}
+.btn.primary{background:var(--accent);border-color:#3d8de0;color:#04121f;font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--border-2);border-radius:8px;overflow:hidden;background:#0a0e13}
+.seg button{background:none;border:0;padding:0 10px;height:30px;font-size:11.5px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+select{
+  background:#0a0e13;border:1px solid var(--border-2);border-radius:7px;height:28px;padding:0 8px;font-size:12px;color:var(--text)
+}
+.statebar{border-bottom:1px solid var(--border);background:rgba(18,24,31,.55)}
+.statebar-in{height:38px;display:flex;align-items:center;gap:10px;overflow-x:auto;scrollbar-width:none}
+.statebar-in::-webkit-scrollbar{display:none}
+.sb{display:flex;align-items:baseline;gap:7px;padding-right:14px;border-right:1px solid var(--hair);white-space:nowrap}
+.sb:last-child{border-right:0}
+.sb .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.055em;color:var(--faint)}
+.sb .v{font:600 12.5px/1 var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── layout ─────────────────────────────────────────────────────────────── */
+main{max-width:1720px;margin:0 auto;padding:18px 20px 64px}
+section.panel{
+  border:1px solid var(--border);background:linear-gradient(180deg,var(--panel),#111721);
+  border-radius:var(--r);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden
+}
+.sec-head{display:flex;align-items:center;gap:12px;padding:var(--pad) var(--pad) 10px;flex-wrap:wrap}
+.sec-head .eyebrow{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.sec-head .hint{font-size:11.5px;color:var(--muted)}
+.sec-head .tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sec-body{padding:0 var(--pad) var(--pad)}
+.legend{display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:1px}
+
+/* chips */
+.chip{
+  display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-2);border-radius:6px;
+  padding:1px 6px;font-size:10.5px;letter-spacing:.02em;color:var(--text-2);background:#0e131a;white-space:nowrap
+}
+.chip.on{border-color:rgba(63,185,80,.4);background:var(--good-soft);color:#7ee2a8}
+.chip.warn{border-color:rgba(210,153,34,.4);background:var(--warn-soft);color:#e3c07b}
+.chip.bad{border-color:rgba(248,81,73,.4);background:var(--danger-soft);color:#ff9d97}
+.chip.mut{color:var(--faint);border-style:dashed}
+.chip.role{border-color:rgba(88,166,255,.35);background:var(--accent-soft);color:#9ecbff;text-transform:uppercase;letter-spacing:.05em}
+.tag{font-size:10px;color:var(--faint);border:1px solid var(--hair);border-radius:5px;padding:0 4px}
+
+/* ── configurations ─────────────────────────────────────────────────────── */
+.hosts{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:12px}
+body.dense .hosts{grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:9px}
+.host{border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel-2);padding:12px 13px;position:relative}
+.host.draining{border-color:rgba(210,153,34,.45);background:linear-gradient(180deg,var(--warn-soft),var(--panel-2))}
+.host.off{border-color:rgba(248,81,73,.35)}
+.host-top{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
+.host-top h3{font-size:.9rem;letter-spacing:0}
+.host-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}
+body.dense .host-grid{gap:2px 14px}
+.kv{display:flex;gap:8px;align-items:baseline;font-size:12px;min-width:0}
+.kv .k{color:var(--muted);min-width:82px;flex:none;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv .v{font-family:var(--mono);font-size:11.5px;color:var(--text-2);overflow-wrap:anywhere}
+.host-foot{display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px solid var(--hair);flex-wrap:wrap}
+.warnbox{
+  display:flex;gap:8px;align-items:flex-start;margin:9px 0 0;padding:7px 9px;border-radius:6px;
+  background:var(--warn-soft);border-left:2px solid var(--warn);font-size:11.5px;color:#e6cf9a
+}
+.warnbox.bad{background:var(--danger-soft);border-left-color:var(--danger);color:#ffb3ae}
+.bar{height:5px;border-radius:3px;background:var(--raise);overflow:hidden;display:flex;width:100%}
+.bar i{display:block;height:100%}
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+.tw{overflow:auto;border-top:1px solid var(--hair)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--fs-table)}
+th{
+  position:sticky;top:0;z-index:2;background:#101620;color:var(--faint);text-align:left;
+  font:600 10.5px/1.4 ui-sans-serif,system-ui;letter-spacing:.055em;text-transform:uppercase;
+  padding:8px 10px;border-bottom:1px solid var(--border-2);white-space:nowrap;cursor:default
+}
+th.r,td.r{text-align:right}
+th.sortable{cursor:pointer}
+th.sortable:hover{color:var(--accent)}
+th .ar{opacity:.5;font-size:9px;margin-left:3px}
+td{padding:0 10px;height:var(--row);border-bottom:1px solid var(--hair);vertical-align:middle;background:var(--panel);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+#models,#requests{min-width:1500px}
+body.dense #models,body.dense #requests{min-width:1420px}
+.cell-2 .b,.cell-2 .s{overflow:hidden;text-overflow:ellipsis;max-width:250px}
+.recline{max-width:210px;overflow:hidden}
+body.dense td{border-bottom-color:rgba(125,133,144,.09)}
+tr:hover td{background:#161e27}
+tr.mutedrow td{color:var(--faint);background:transparent}
+tr.open{cursor:pointer}
+tr.open:hover td{background:#1a2430}
+.cell-2{display:flex;flex-direction:column;line-height:1.25;gap:1px;padding:5px 0}
+.cell-2 .b{font-size:var(--fs-table);color:var(--text)}
+.cell-2 .s{font-size:10.5px;color:var(--muted)}
+.aliases{color:var(--muted);font-size:10.5px}
+.aliases b{color:var(--accent);font-weight:600}
+.st{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.st.c2{color:var(--good)} .st.c4{color:var(--warn)} .st.c5{color:var(--danger)} .st.c3{color:var(--info)}
+.arrow{color:var(--faint);padding:0 3px}
+.mini{font-size:10px;color:var(--faint)}
+.slots{display:inline-flex;align-items:center;gap:6px;justify-content:flex-end}
+.slots i{width:14px;height:5px;border-radius:2px;background:var(--raise)}
+.slots i.busy{background:var(--warn)} .slots i.free{background:rgba(63,185,80,.55)}
+.bar2{width:52px;height:5px;border-radius:3px;background:var(--raise);overflow:hidden;display:inline-block;vertical-align:middle}
+.bar2 i{display:block;height:100%;background:var(--accent)}
+.bar2 i.warn{background:var(--warn)} .bar2 i.bad{background:var(--danger)}
+.recline{display:flex;gap:5px;align-items:center;flex-wrap:nowrap;max-width:210px;overflow:hidden}
+
+/* pager */
+.pager{display:flex;align-items:center;gap:12px;padding:10px var(--pad);border-top:1px solid var(--hair);font-size:12px;color:var(--muted);flex-wrap:wrap}
+.pager .pg{display:flex;gap:5px;align-items:center}
+.pager .pg button{border:1px solid var(--border-2);background:#0e131a;border-radius:6px;height:26px;min-width:26px;padding:0 6px;font-size:11.5px;color:var(--text-2);cursor:pointer}
+.pager .pg button[aria-current]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+.pager .pg button:disabled{opacity:.35}
+
+/* filters */
+.filters{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:10px var(--pad);border-bottom:1px solid var(--hair)}
+.filters .fl{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.fchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-2);border-radius:999px;background:#0e131a;padding:2px 9px;font-size:11.5px}
+.fchip b{color:var(--accent)}
+.fchip button{background:none;border:0;color:var(--muted);cursor:pointer;padding:0;line-height:1}
+
+/* signals */
+.signals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+body.dense .signals{gap:9px}
+.card{border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel-2);padding:11px 12px}
+.card h4{margin:0 0 2px;font-size:11px;font-weight:600;color:var(--text-2);letter-spacing:.02em}
+.card .big{display:flex;align-items:baseline;gap:8px;margin:2px 0 4px}
+.card .big b{font:600 20px/1.1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+.card .big span{font-size:11px;color:var(--muted)}
+.card .foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);margin-top:4px}
+.cards2{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;margin-top:12px}
+body.dense .cards2{gap:9px}
+.list{display:flex;flex-direction:column;gap:7px}
+.list .li{display:grid;grid-template-columns:minmax(0,1.4fr) 62px 92px;gap:10px;align-items:center;font-size:11.5px}
+.list .li .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.list .li .ct{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;color:var(--text)}
+.tl{display:flex;flex-direction:column}
+.tl .ev{display:grid;grid-template-columns:96px 108px minmax(0,1fr);gap:10px;padding:5px 0;border-bottom:1px solid var(--hair);font-size:11.5px;align-items:baseline}
+.tl .ev:last-child{border-bottom:0}
+.tl .ev .t{color:var(--faint);font-family:var(--mono);font-size:10.5px}
+.tl .ev .w{color:var(--text-2);overflow-wrap:anywhere}
+
+/* modal */
+.scrim{position:fixed;inset:0;background:rgba(1,4,9,.72);backdrop-filter:blur(3px);z-index:50;display:grid;place-items:center;padding:26px}
+.modal{
+  width:min(1240px,100%);max-height:min(94vh,1100px);display:flex;flex-direction:column;
+  background:var(--bg-2);border:1px solid var(--border-2);border-radius:12px;box-shadow:0 24px 70px rgba(1,4,9,.75);overflow:hidden
+}
+.m-head{padding:13px 16px 11px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#141b24,#101620)}
+.m-title{display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+.m-title h3{font:600 14px/1.2 var(--mono);letter-spacing:-.2px}
+.m-title .grow{flex:1}
+.m-sub{display:flex;gap:9px;align-items:center;color:var(--muted);font-size:11.5px;margin-top:7px;flex-wrap:wrap}
+.m-tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--border);background:#0d1117}
+.m-tabs button{
+  background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;font-size:12.5px;color:var(--muted);cursor:pointer
+}
+.m-tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.m-body{overflow:auto;padding:16px 18px 22px;min-width:0}
+.m-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 26px}
+.m-grid>div{min-width:0}
+.blk{margin-bottom:16px}
+.blk h5{margin:0 0 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.krow{display:grid;grid-template-columns:116px minmax(0,1fr);gap:10px;padding:4px 0;border-bottom:1px solid var(--hair);font-size:12px;align-items:baseline}
+.krow:last-child{border-bottom:0}
+.krow .k{color:var(--muted);font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.krow .v{font-family:var(--mono);font-size:11.8px;overflow-wrap:anywhere}
+.flow{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.step{
+  flex:1 1 0;min-width:112px;border:1px solid var(--border);border-radius:7px;background:var(--panel-2);padding:9px 10px
+}
+.step .n{font:600 9.5px/1 var(--mono);letter-spacing:.06em;color:var(--faint);text-transform:uppercase}
+.step .t{font-size:12px;margin:5px 0 2px;color:var(--text);font-weight:600}
+.step .d{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.step.ok{border-color:rgba(63,185,80,.35)} .step.warn{border-color:rgba(210,153,34,.4)}
+.msg{border:1px solid var(--border);border-left:2px solid var(--border-2);border-radius:7px;margin-bottom:8px;background:var(--panel-2)}
+.msg summary{
+  cursor:pointer;padding:8px 11px;display:flex;gap:10px;align-items:baseline;font-size:12px;list-style:none
+}
+.msg summary::-webkit-details-marker{display:none}
+.msg summary .caret{color:var(--faint);font-size:10px}
+.msg summary .role{font:600 10.5px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
+.msg summary .role.dev{color:var(--info)} .msg summary .role.tool{color:var(--warn)}
+.msg summary .prev{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.msg summary .len{font:11px/1 var(--mono);color:var(--faint)}
+.msg .body{padding:0 12px 11px 26px;overflow-wrap:anywhere;color:var(--text-2);font-size:12px;white-space:pre-wrap;font-family:var(--mono);line-height:1.6}
+.msg.dev{border-left-color:var(--info)} .msg.user{border-left-color:var(--accent)}
+.msg.assistant{border-left-color:var(--good)} .msg.tool{border-left-color:var(--warn)}
+pre.code{
+  margin:0;padding:11px 13px;border:1px solid var(--border);border-radius:7px;background:#0a0e13;
+  font:11.5px/1.6 var(--mono);color:#c9d1d9;max-height:290px;overflow:auto;white-space:pre
+}
+.m-foot{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--border);
+  background:#0d1117;font-size:11.5px;color:var(--muted)
+}
+.notice{display:flex;gap:9px;padding:9px 11px;border-radius:7px;background:var(--accent-soft);border-left:2px solid var(--accent);font-size:11.5px;color:#b6d8ff;margin-bottom:12px}
+.notice.warn{background:var(--warn-soft);border-left-color:var(--warn);color:#ecd39d}
+
+footer.meta{max-width:1720px;margin:0 auto;padding:4px 20px 40px;color:var(--faint);font-size:11px}
+footer.meta code{font-family:var(--mono);color:var(--muted)}
+
+@media (max-width:1280px){ .signals{grid-template-columns:repeat(2,1fr)} .cards2{grid-template-columns:1fr} .m-grid{grid-template-columns:1fr} }
+/* section isolation for clean review shots */
+body.isolate .topbar{position:static}
+body.isolate main{padding-top:16px}
+body.isolate section.panel{display:none}
+body.isolate section.panel.show{display:block}
+body.isolate footer.meta{display:none}
+body.isolate .ribbon{display:none}
+
+/* ── phone ──────────────────────────────────────────────────────────────── */
+@media (max-width:860px){
+  .topbar-in{height:auto;flex-wrap:wrap;padding:10px 14px;gap:9px}
+  .brand{flex:1 1 auto}
+  #hostpills{order:4;flex:1 1 100%;flex-wrap:wrap}
+  .search{order:5;flex:1 1 100%;min-width:0}
+  .statebar-in{height:auto;padding:8px 14px;flex-wrap:wrap;gap:6px 16px}
+  .sb{border-right:0;padding-right:0}
+  main{padding:12px 12px 48px}
+  .hosts{grid-template-columns:1fr}
+  .host-grid{grid-template-columns:1fr}
+  .signals{grid-template-columns:1fr 1fr}
+  .cards2{grid-template-columns:1fr}
+  .sec-head{padding:12px 13px 8px;gap:8px}.sec-body{padding:0 13px 13px}
+  .tw{overflow:visible;max-height:none!important}
+  #requests thead,#models thead{display:none}
+  #requests,#requests tbody,#models,#models tbody{display:block}
+  #requests tr,#models tr{display:flex;flex-wrap:wrap;gap:4px 11px;align-items:baseline;padding:11px 13px;border-bottom:7px solid var(--bg);background:var(--panel-2)}
+  #requests td,#models td{display:inline-flex;border:0;background:none;height:auto;padding:0;gap:5px;max-width:100%;white-space:normal}
+  #requests tr:hover td,#models tr:hover td{background:none}
+  #requests td:nth-child(1){order:1}
+  #requests td:nth-child(6){order:2;margin-left:auto}
+  #requests td:nth-child(2){order:3;flex:1 1 100%}
+  #requests td:nth-child(4){order:4;flex:1 1 100%}
+  #requests td:nth-child(3){order:5;flex:1 1 100%;opacity:.85}
+  #requests td:nth-child(7){order:6}
+  #requests td:nth-child(10){order:7}
+  #requests td:nth-child(12){order:8;margin-left:auto}
+  #requests td:nth-child(5){order:9}
+  #requests td:nth-child(8),#requests td:nth-child(9),#requests td:nth-child(11){display:none}
+  #models td:nth-child(1){order:1}#models td:nth-child(3){order:2;margin-left:auto}
+  #models td:nth-child(2){order:3;flex:1 1 100%}
+  #models td:nth-child(13){order:4}#models td:nth-child(9){order:5}#models td:nth-child(10){order:6}
+  #models td:nth-child(12){order:7}#models td:nth-child(15){order:8}
+  #models td:nth-child(4),#models td:nth-child(5),#models td:nth-child(6),#models td:nth-child(7),#models td:nth-child(8),#models td:nth-child(11),#models td:nth-child(14){display:none}
+  #models,#requests{min-width:0}
+  .filters{padding:10px 13px}
+  .pager{padding:10px 13px}
+  .scrim{padding:0}
+  .modal{max-height:100vh;height:100vh;width:100%;border:0;border-radius:0}
+  .m-grid{grid-template-columns:1fr}
+  .m-body{padding:13px 14px 20px}
+  .krow{grid-template-columns:104px minmax(0,1fr)}
+  .m-title h3{font-size:12px}
+  .m-tabs button{padding:9px 8px;font-size:11.5px}
+  footer.meta{padding:4px 14px 40px}
+}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="ribbon">mock-up · static data</div>
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <div class="mark"><svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.6l5.6 3.2v6.4L8 14.4 2.4 11.2V4.8z"/></svg></div>
+      <div>
+        <h1>LLM Router <span class="tag mono" id="ver">v0.1.0</span> <span class="chip warn" title="Design mock-up: static production data, no live subscription">mock-up</span></h1>
+        <div class="sub">Observability · 192.168.1.23:11435</div>
+      </div>
+    </div>
+    <div id="hostpills" style="display:flex;gap:7px;align-items:center"></div>
+    <div class="spacer"></div>
+    <label class="search"><span class="ig"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg></span> <input placeholder="Search requests, clients, errors" aria-label="Search requests"><span class="kbd">Ctrl K</span></label>
+    <div class="seg" role="group" aria-label="Statistics window">
+      <button aria-pressed="false">15m</button><button aria-pressed="true">1h</button>
+      <button aria-pressed="false">6h</button><button aria-pressed="false">24h</button><button aria-pressed="false">Since start</button>
+    </div>
+    <span class="pill" title="Server-Sent Events on /admin/api/stream"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 8m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0"/><path d="M3.4 3.4a6.5 6.5 0 0 0 0 9.2M12.6 3.4a6.5 6.5 0 0 1 0 9.2"/></svg> live <b id="ago">0.6s</b></span>
+    <button class="btn ghost" title="Pause live updates"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3v12M12 3v12"/></svg> Pause</button>
+    <button class="btn ghost" title="Refresh"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5.5 5.5 0 1 0 1.6 3.9"/><path d="M13 2.5V6H9.5"/></svg></button>
+    <button class="btn">Actions <span class="faint"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></span></button>
+  </div>
+  <div class="statebar">
+    <div class="statebar-in" id="statebar"></div>
+  </div>
+</header>
+
+<main>
+  <!-- ── 1 · configurations ─────────────────────────────────────────── -->
+  <section id="sec-configurations" class="panel" aria-labelledby="cfg-h">
+    <div class="sec-head">
+      <span class="eyebrow">01</span>
+      <h2 id="cfg-h">Active configurations</h2>
+      <span class="hint" id="cfg-hint"></span>
+      <div class="tools">
+        <span class="hint">catalog revision</span>
+        <code class="mono faint" id="caprev"></code>
+        <button class="btn sm ghost">Refresh all</button>
+      </div>
+    </div>
+    <div class="sec-body"><div class="hosts" id="hosts"></div></div>
+  </section>
+
+  <!-- ── 2 · models ─────────────────────────────────────────────────── -->
+  <section id="sec-models" class="panel" aria-labelledby="mod-h">
+    <div class="sec-head">
+      <span class="eyebrow">02</span>
+      <h2 id="mod-h">Models</h2>
+      <span class="hint" id="mod-hint"></span>
+      <div class="tools">
+        <span class="hint">sort</span>
+        <select aria-label="Sort models"><option>requests</option><option>latency p95</option><option>capability score</option><option>context</option></select>
+        <button class="btn sm ghost" title="Choose which statistics columns are visible">Columns <span class="faint"><svg class="ico" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></span></button>
+      </div>
+    </div>
+    <div class="tw" style="max-height:560px"><table id="models"></table></div>
+    <div class="pager" id="models-foot"></div>
+  </section>
+
+  <!-- ── 3 · signals ────────────────────────────────────────────────── -->
+  <section id="sec-signals" class="panel" aria-labelledby="sig-h">
+    <div class="sec-head">
+      <span class="eyebrow">03</span>
+      <h2 id="sig-h">Signals</h2>
+      <span class="hint">per-minute buckets held in the router; 240 buckets ≈ 4 h at one-minute resolution</span>
+      <div class="tools legend" id="sig-legend"></div>
+    </div>
+    <div class="sec-body">
+      <div class="signals" id="signals"></div>
+      <div class="cards2" id="cards2"></div>
+    </div>
+  </section>
+
+  <!-- ── 4 · requests ───────────────────────────────────────────────── -->
+  <section id="sec-requests" class="panel" aria-labelledby="req-h">
+    <div class="sec-head">
+      <span class="eyebrow">04</span>
+      <h2 id="req-h">Requests</h2>
+      <span class="hint" id="req-hint"></span>
+      <div class="tools">
+        <div class="seg" role="group" aria-label="Filter by kind">
+          <button aria-pressed="true">All</button><button aria-pressed="false">Prompt calls</button>
+          <button aria-pressed="false">Errors only</button><button aria-pressed="false">Status pings</button>
+        </div>
+        <button class="btn sm ghost">Export page as CSV</button>
+      </div>
+    </div>
+    <div class="filters" id="filters"></div>
+    <div class="tw" style="max-height:640px"><table id="requests"></table></div>
+    <div class="pager" id="requests-foot"></div>
+  </section>
+
+  <!-- ── 5 · configuration & archive ────────────────────────────────── -->
+  <section id="sec-state" class="panel" aria-labelledby="ops-h">
+    <div class="sec-head">
+      <span class="eyebrow">05</span>
+      <h2 id="ops-h">Router state, retention and recent changes</h2>
+      <span class="hint">everything an operator reads from <code class="mono">/admin/api/summary</code> without leaving the page</span>
+    </div>
+    <div class="sec-body"><div class="cards2" id="ops" style="margin-top:0"></div></div>
+  </section>
+</main>
+
+<footer class="meta">
+  Mock-up for design review — no server changes. Data captured read-only at
+  <code id="cap"></code> from the production router at <code>http://192.168.1.23:11435</code>
+  (<code>/admin/api/summary</code>, <code>/hosts</code>, <code>/requests</code>, <code>/metrics</code>,
+  <code>/events</code>, <code>:11434/v1/router/capabilities</code> and one
+  <code>/admin/api/generation-record</code>). Series shapes are illustrative; every count, model name,
+  client, host, configuration id and error code is real. Variants: <code>?dense=1</code>, <code>?modal=1</code>,
+  <code>?reject=1</code>.
+</footer>
+
+<script id="seed" type="application/json">{
+ "captured_at": "2026-10-22T21:47:44.419Z",
+ "router": {
+  "appName": "llm-router",
+  "version": "0.1.0",
+  "startedAt": "2026-10-22T17:54:18.401Z",
+  "uptimeSeconds": 14006,
+  "maintenanceMode": false,
+  "runtime": {
+   "draining": false,
+   "drain_reason": null,
+   "drain_updated_at": null,
+   "active_count": 1,
+   "active_generation_ids": [
+    "4fb3ca79-0332-4b20-9a4a-9f3a4b45a428"
+   ],
+   "active_by_endpoint": {
+    "/v1/responses": 1
+   },
+   "active_by_model": {
+    "qwen3.8-flash-next-ud-iq4_xs": 1
+   },
+   "backend_kind": "strata",
+   "profile": "primary",
+   "model": "qwen3.8-flash-next-ud-iq4_xs",
+   "max_active_requests": 1,
+   "queue_policy": "fifo-per-backend",
+   "queued_count": 0,
+   "queued_by_model": {},
+   "queued_by_endpoint": {},
+   "active_by_host": {
+    "local": 1
+   },
+   "queued_by_host": {},
+   "draining_hosts": [],
+   "hosts": {}
+  },
+  "api": {
+   "host": "0.0.0.0",
+   "port": 11434
+  },
+  "admin": {
+   "enabled": true,
+   "bindHost": "0.0.0.0",
+   "port": 11435,
+   "authRequired": false
+  }
+ },
+ "hosts": [
+  {
+   "id": "rosalina",
+   "display_name": "rosalina",
+   "default": true,
+   "resident": true,
+   "published": true,
+   "model_ids": [
+    "qwen3.8-flash-next-ud-iq4_xs"
+   ],
+   "online": true,
+   "configuration": {
+    "id": "flash-next-strata-solo-thinking-recovery-cache",
+    "exclusive": true,
+    "runtime_revision": "103f90c852818f5e467b161fd3935f1297877772",
+    "published_at": "2026-10-22T17:24:06.681Z",
+    "host": "rosalina"
+   },
+   "revision": "6083e8a15bb176f5eb3f0b27ccdd5817b2df349c0e2e942ecd24c6210d7e573f",
+   "accepted_at": "2026-10-22T17:24:06.687Z",
+   "file": "/app/data/catalogs/rosalina.json",
+   "loaded_from": "pushed",
+   "warnings": [],
+   "error": null,
+   "draining": false,
+   "drain_reason": null,
+   "active": 0,
+   "queued": 0
+  },
+  {
+   "id": "daisy",
+   "display_name": "daisy",
+   "default": false,
+   "resident": true,
+   "published": true,
+   "model_ids": [
+    "qwen3.8-flash-next-iq3_xxs"
+   ],
+   "online": true,
+   "configuration": {
+    "id": "flash-next-strata-iq3-xxs-daisy",
+    "exclusive": true,
+    "runtime_revision": "103f90c852818f5e467b161fd3935f1297877772",
+    "published_at": "2026-10-22T17:26:30.099Z",
+    "host": "daisy"
+   },
+   "revision": "bf676cbf021b051fcae1bac89b93a4976c151edf363d714ae67453ee8505184b",
+   "accepted_at": "2026-10-22T17:26:30.103Z",
+   "file": "/app/data/catalogs/daisy.json",
+   "loaded_from": "pushed",
+   "warnings": [],
+   "error": null,
+   "draining": false,
+   "drain_reason": null,
+   "active": 0,
+   "queued": 0
+  }
+ ],
+ "models": [
+  {
+   "id": "qwen3.8-flash-next-ud-iq4_xs",
+   "service": "daytime",
+   "display_name": "Qwen3.8 Flash-Next (256K)",
+   "display_name_qualified": "Qwen3.8 Flash-Next (256K)",
+   "aliases": [
+    "local-active",
+    "daytime",
+    "nighttime"
+   ],
+   "available": true,
+   "host": "rosalina",
+   "slots": 1,
+   "context_window": 262144,
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "capabilities": [
+    "completion",
+    "thinking",
+    "tools",
+    "vision"
+   ],
+   "nsfw": false,
+   "capability_score": null,
+   "backend_kind": "strata",
+   "quantization": "Unsloth Dynamic UD-IQ4_XS (~4-bit, 94 GB)",
+   "parameter_size": null,
+   "family": null,
+   "model_context_window": 262144,
+   "active_request_limit": 1,
+   "health": {
+    "available": true,
+    "status": 200
+   },
+   "placement": {
+    "gpu_count": 4,
+    "gpus": [
+     "RTX 3090",
+     "RTX 4080 SUPER",
+     "RTX 4080",
+     "RTX 3080 Ti"
+    ],
+    "vision_encoder": "gpu",
+    "vision_gpu": "RTX 3080",
+    "vision_gpu_shared": false,
+    "exclusive": true
+   },
+   "live": {
+    "slots": 1,
+    "slot_context_window": 262144,
+    "vision": true,
+    "model_context_window": null,
+    "parameters": null,
+    "size_bytes": null,
+    "build": "Strata 0.1.44.1"
+   },
+   "profile": "primary",
+   "capability_profile": {
+    "name": "qwen3.8-flash-next-ud-iq4-xs-strata-256k",
+    "text": true,
+    "streaming": true,
+    "vision": true,
+    "tools": true,
+    "reasoning": true,
+    "speculative": true,
+    "nsfw": false
+   },
+   "complete": true,
+   "warnings": [],
+   "qualification_notes": [
+    "A resident, not a trial: this configuration publishes the daytime service ID and the local-active compatibility alias, so every client that was told to send daytime reaches it, and it answers nighttime as well. One loaded model offers every service ID the router contract documents, so no client is left with nothing to send. Selecting it, and switching away from it, remain the operator's acts.",
+    "nighttime is answered by this same backend rather than by a second loaded model. A request that used the Everyday resident for the abliterated model's unfiltered behaviour is served here and redirected nowhere; the pictures it used to be the only resident that could read are read here as well, since the encoder joined this container on 2026-10-16. The filtered/unfiltered distinction the two 27B residents drew is carried by capability_profile.nsfw, which is false for this quant, and not by a second resident."
+   ],
+   "reasoning": true
+  },
+  {
+   "id": "qwen3.8-flash-next-iq3_xxs",
+   "service": "daisy",
+   "display_name": "Qwen3.8 Flash-Next IQ3_XXS (64K)",
+   "display_name_qualified": "Qwen3.8 Flash-Next IQ3_XXS (64K)",
+   "aliases": [
+    "daisy"
+   ],
+   "available": true,
+   "host": "daisy",
+   "slots": 1,
+   "context_window": 65536,
+   "input_modalities": [
+    "text"
+   ],
+   "capabilities": [
+    "completion",
+    "thinking",
+    "tools"
+   ],
+   "nsfw": false,
+   "capability_score": null,
+   "backend_kind": "strata",
+   "quantization": "ISTA-DASLab GSQ-RCO IQ3_XXS (3.25-bit i-quant, 70.6 GiB in two shards, 47.0 of them this configuration's own)",
+   "parameter_size": null,
+   "family": null,
+   "model_context_window": 65536,
+   "active_request_limit": 1,
+   "health": {
+    "available": true,
+    "status": 200
+   },
+   "placement": {
+    "gpu_count": 2,
+    "gpus": [
+     "RTX 2080 Ti",
+     "RTX 2080 Ti"
+    ],
+    "vision_encoder": null,
+    "vision_gpu": null,
+    "vision_gpu_shared": null,
+    "exclusive": true
+   },
+   "live": {
+    "slots": 1,
+    "slot_context_window": 65536,
+    "vision": false,
+    "model_context_window": null,
+    "parameters": null,
+    "size_bytes": null,
+    "build": "Strata 0.1.44.1"
+   },
+   "profile": "primary",
+   "capability_profile": {
+    "name": "qwen3.8-flash-next-iq3-xxs-strata-64k",
+    "text": true,
+    "streaming": true,
+    "vision": false,
+    "tools": true,
+    "reasoning": true,
+    "speculative": true,
+    "nsfw": false
+   },
+   "complete": true,
+   "warnings": [],
+   "qualification_notes": [
+    "Measured on 2026-10-20 on this machine (ops/reports/20261020-daisy-strata-feasibility/): IQ3_XXS warm 78-97 tok/s at 96.8-97.3 % expert-cache hits with 14.7 GiB of host RAM free, against IQ3_S at 7.6 GiB free and 87.8 % hits, which is the tier the engine itself calls tight and which parked on its own 8 GiB breaker. The window is capped at 65,536 rather than the trained 131,072 because the smaller quant fills each card with cached experts and aborts on a ~127k prompt at the full window: SIGABRT in prefill, exit -6, reproduced twice, ten minutes of arena reload after each. The alternative that keeps 128k alive was measured the same day, a 2,048 MiB per-card reserve, and it costs 13-18 % of warm decode and 26 % of the resident experts; this machine is a fast short-context box instead, on purpose, and its answer hashes came back byte-identical to the 3.5-bit tier's on both fixed-greedy cells, so nothing was given up in what the model says.",
+    "Nothing here is a number copied from the other machine. No --vram-reserve-mib, because the window cap is the fix that was chosen instead. No --resident-budget-gib, because the arm was measured with the engine's own sizing and a 55 GiB ceiling belongs to a box with 123 GiB of RAM. The conversation cache is stated off, and its floor is stated with it at 12,288 MiB because what the entry point writes sits in the workspace until a configuration says otherwise: with the pack pinning about 40 GiB of this machine's 60.7, a parked conversation may not spend any of the last 12 GiB of the 14.7 it leaves free. No control vector: the refusal direction is mounted and verified on the other host and was not part of any arm measured here."
+   ],
+   "reasoning": true
+  }
+ ],
+ "model_stats": {
+  "qwen3.8-flash-next-ud-iq4_xs": {
+   "requests": 99,
+   "success": 96.0,
+   "p50": 7923,
+   "p95": 29195,
+   "tokens_in": 6289085,
+   "tokens_out": 61558,
+   "cancelled": 4,
+   "rejected": 0,
+   "last": "2026-10-22T21:47:34.773Z"
+  },
+  "qwen3.8-flash-next-iq3_xxs": {
+   "requests": 1,
+   "success": 100.0,
+   "p50": 1280,
+   "p95": 1280,
+   "tokens_in": 54,
+   "tokens_out": 28,
+   "cancelled": 0,
+   "rejected": 0,
+   "last": "2026-10-22T17:27:32.530Z"
+  }
+ },
+ "offline_services": [],
+ "ids": {
+  "qwen3.8-flash-next-ud-iq4_xs": "qwen3.8-flash-next-ud-iq4_xs",
+  "local-active": "qwen3.8-flash-next-ud-iq4_xs",
+  "daytime": "qwen3.8-flash-next-ud-iq4_xs",
+  "nighttime": "qwen3.8-flash-next-ud-iq4_xs",
+  "qwen3.8-flash-next-iq3_xxs": "qwen3.8-flash-next-iq3_xxs",
+  "daisy": "qwen3.8-flash-next-iq3_xxs"
+ },
+ "capabilities_revision": "3n5WUKspYjMdKKHh2m-_A9QzEKo45jFIbUTGUbSwwB8",
+ "metrics": {
+  "startedAt": "2026-10-22T17:54:18.399Z",
+  "totalRequests": 178,
+  "allowedRequests": 176,
+  "rejectedRequests": 2,
+  "keepAliveNormalizations": 172,
+  "upstreamErrors": 1,
+  "byEndpoint": {
+   "POST /v1/chat/completions": 5,
+   "POST /v1/responses": 170,
+   "GET /api/tags": 1,
+   "POST /api/chat": 2
+  },
+  "byModel": {
+   "qwen3.8-flash-next-ud-iq4_xs": 177,
+   "qwen3.8-flash-next-iq3_xxs": 1
+  },
+  "tokensByModel": {
+   "qwen3.8-flash-next-ud-iq4_xs": {
+    "prompt": 6689497,
+    "output": 62725
+   },
+   "qwen3.8-flash-next-iq3_xxs": {
+    "prompt": 54,
+    "output": 28
+   }
+  },
+  "byClient": {
+   "curl/7.88.1": 7,
+   "Python-urllib/3.14": 3,
+   "deepseek-harness/d95466d3ef1b": 3,
+   "deepseek-harness/68235984a839": 6,
+   "deepseek-harness/1e83f9108c95": 3,
+   "deepseek-harness/668d0434fc6e": 3,
+   "deepseek-harness/ee6cf0d2b32e": 7,
+   "deepseek-harness/49237d0ad2ac": 7,
+   "deepseek-harness/dd657c6db4ae": 7,
+   "deepseek-harness/ece77e8f38bf": 7,
+   "deepseek-harness/78d6470cbad3": 7,
+   "deepseek-harness/5df757b68732": 7,
+   "deepseek-harness/560fa208022e": 7,
+   "deepseek-harness/2ca566f58394": 7,
+   "deepseek-harness/d7650bc22925": 97
+  },
+  "byStatus": {
+   "200": 135,
+   "499": 41,
+   "503": 2
+  },
+  "latencyMs": {
+   "avg": 9642.842696629214,
+   "p50": 6351,
+   "p95": 28797,
+   "p99": 60353,
+   "samples": 178
+  },
+  "streamingDurationMs": {
+   "avg": 10133.147928994083,
+   "p50": 7201,
+   "p95": 28797,
+   "samples": 169
+  },
+  "tokens": {
+   "prompt": 6689551,
+   "output": 62753
+  },
+  "durationsNs": {
+   "total": 0,
+   "eval": 0,
+   "promptEval": 0
+  },
+  "throughput": {
+   "evalTokensPerSecondAvg": null,
+   "promptTokensPerSecondAvg": null,
+   "evalSamples": 0,
+   "promptSamples": 0
+  }
+ },
+ "requests_sample": [
+  {
+   "id": "6a00898d-df4b-4d0a-a0e5-75bd402e1fbe",
+   "ts": "2026-10-22T21:47:34.773Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705654773,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 23,
+    "stream": true
+   },
+   "latencyMs": 9581,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 20054,
+    "eval_count": 336
+   },
+   "responseBytes": 183095,
+   "incomplete": false,
+   "outputItems": 2
+  },
+  {
+   "id": "e5d65b68-db79-42c2-9990-c2789a2c1b2e",
+   "ts": "2026-10-22T21:47:29.333Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705649333,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 37,
+    "stream": true
+   },
+   "latencyMs": 5424,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 40946,
+    "eval_count": 95
+   },
+   "responseBytes": 157667,
+   "incomplete": false,
+   "outputItems": 2
+  },
+  {
+   "id": "a903eb5f-d9f8-4710-a430-7161b5be718e",
+   "ts": "2026-10-22T21:47:06.674Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705626674,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 33,
+    "stream": true
+   },
+   "latencyMs": 22640,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 62221,
+    "eval_count": 140
+   },
+   "responseBytes": 170335,
+   "incomplete": false,
+   "outputItems": 2
+  },
+  {
+   "id": "6915f405-31c6-4f84-b1a8-83018a044601",
+   "ts": "2026-10-22T21:46:35.727Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705595727,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 98,
+    "stream": true
+   },
+   "latencyMs": 30929,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 57003,
+    "eval_count": 236
+   },
+   "responseBytes": 172647,
+   "incomplete": false,
+   "outputItems": 3
+  },
+  {
+   "id": "73195cf3-9a67-4e5b-bfbb-59ac1d4a8d7c",
+   "ts": "2026-10-22T21:46:28.824Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705588824,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 20,
+    "stream": true
+   },
+   "latencyMs": 6883,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 18426,
+    "eval_count": 117
+   },
+   "responseBytes": 159879,
+   "incomplete": false,
+   "outputItems": 2
+  },
+  {
+   "id": "d9010644-8343-464e-b77d-a5392d7fcce5",
+   "ts": "2026-10-22T21:46:21.075Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705581075,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 32,
+    "stream": true
+   },
+   "latencyMs": 7739,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 38624,
+    "eval_count": 168
+   },
+   "responseBytes": 162524,
+   "incomplete": false,
+   "outputItems": 3
+  },
+  {
+   "id": "83b8c941-0cf3-4656-8b3c-5d90bd63d0e8",
+   "ts": "2026-10-22T21:45:58.194Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705558194,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 28,
+    "stream": true
+   },
+   "latencyMs": 22862,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 58794,
+    "eval_count": 239
+   },
+   "responseBytes": 163718,
+   "incomplete": false,
+   "outputItems": 3
+  },
+  {
+   "id": "15c2d979-bea9-4b35-af98-6bf9947c8c6e",
+   "ts": "2026-10-22T21:45:30.144Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792705530144,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": "medium",
+   "incomingReasoningEffort": "medium",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "medium",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": true,
+   "toolCount": 62,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": true,
+   "toolsSupported": true,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 93,
+    "stream": true
+   },
+   "latencyMs": 28029,
+   "allowed": true,
+   "rejected": false,
+   "status": 200,
+   "responseStatus": 200,
+   "upstreamError": false,
+   "usage": {
+    "prompt_eval_count": 54033,
+    "eval_count": 163
+   },
+   "responseBytes": 168838,
+   "incomplete": false,
+   "outputItems": 3
+  },
+  {
+   "id": "fdfa7319-4149-4402-84ea-fddbc9e541e8",
+   "ts": "2026-10-22T20:27:29.590Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792700849590,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "nighttime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": false,
+   "incomingReasoningEffort": "none",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "off",
+   "requestedOutputTokens": 1024,
+   "effectiveOutputTokens": 1024,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 2,
+    "stream": true
+   },
+   "latencyMs": 1022,
+   "allowed": true,
+   "rejected": false,
+   "status": 499,
+   "responseStatus": 499,
+   "upstreamError": false,
+   "errorCode": "CLIENT_CLOSED_REQUEST",
+   "usage": null,
+   "responseBytes": 1100
+  },
+  {
+   "id": "bb8cdd8f-133f-43aa-b567-624ec6b978bb",
+   "ts": "2026-10-22T20:27:12.542Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792700832542,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": false,
+   "incomingReasoningEffort": "none",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "off",
+   "requestedOutputTokens": 1024,
+   "effectiveOutputTokens": 1024,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 2,
+    "stream": true
+   },
+   "latencyMs": 1883,
+   "allowed": true,
+   "rejected": false,
+   "status": 499,
+   "responseStatus": 499,
+   "upstreamError": false,
+   "errorCode": "CLIENT_CLOSED_REQUEST",
+   "usage": null,
+   "responseBytes": 8695
+  },
+  {
+   "id": "aceabc35-ae9f-4669-9102-09dfa4f4d633",
+   "ts": "2026-10-22T20:27:02.493Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "deepseek-harness/0.2.1-alpha.5 (+https://github.com/deepseek-ai/deepseek-harness)",
+   "query": "",
+   "startedEpochMs": 1792700822493,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": false,
+   "incomingReasoningEffort": "none",
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "off",
+   "requestedOutputTokens": 1024,
+   "effectiveOutputTokens": 1024,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": true,
+   "bodySummary": {
+    "inputCount": 2,
+    "stream": true
+   },
+   "latencyMs": 1582,
+   "allowed": true,
+   "rejected": false,
+   "status": 499,
+   "responseStatus": 499,
+   "upstreamError": false,
+   "errorCode": "CLIENT_CLOSED_REQUEST",
+   "usage": null,
+   "responseBytes": 4419
+  },
+  {
+   "id": "a3e5edbd-bbe6-4318-b947-1b65b191fa2e",
+   "ts": "2026-10-22T17:27:32.530Z",
+   "method": "POST",
+   "endpoint": "/api/chat",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "curl/7.88.1",
+   "query": "",
+   "startedEpochMs": 1792690052530,
+   "activeModel": "qwen3.8-flash-next-iq3_xxs",
+   "requestedModel": "qwen3.8-flash-next-iq3_xxs",
+   "forwardedModel": "qwen3.8-flash-next-iq3_xxs",
+   "modelRewritten": false,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingReasoningEffort": null,
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "default",
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": false,
+   "bodySummary": {
+    "messageCount": 1,
+    "messageRoles": [
+     "user"
+    ],
+    "messageContentChars": 6,
+    "stream": false
+   },
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "finishReason": "stop",
+   "completionState": "completed",
+   "generationRecordId": "ef6974ed-9ede-4a38-a7cd-52f5e46fff22",
+   "stopReason": "stop",
+   "allowed": true,
+   "rejected": false,
+   "responseStatus": 200,
+   "status": 200,
+   "upstreamError": false,
+   "latencyMs": 1280,
+   "responseBytes": 434,
+   "usage": {
+    "prompt_eval_count": 54,
+    "eval_count": 28
+   },
+   "streamParseErrors": 0,
+   "backendKind": "strata",
+   "contextPolicy": {
+    "inputTokens": 54,
+    "outputTokens": null,
+    "outputPolicy": "unrestricted",
+    "availableTokens": 64458,
+    "reserve": 1024,
+    "slotContext": 65536
+   }
+  },
+  {
+   "id": "12824ad6-ded5-4baa-922d-7e5a92fe0c5d",
+   "ts": "2026-10-22T07:30:52.930Z",
+   "method": "POST",
+   "endpoint": "/api/chat",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "curl/7.88.1",
+   "query": "",
+   "startedEpochMs": 1792654252930,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": false,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingReasoningEffort": null,
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": true,
+   "reasoningEffort": "default",
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": false,
+   "bodySummary": {
+    "messageCount": 1,
+    "messageRoles": [
+     "user"
+    ],
+    "messageContentChars": 31,
+    "stream": false
+   },
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": "reject",
+   "temperatureForwarding": "omitted_for_backend_default",
+   "samplingControls": [],
+   "seedForwarded": false,
+   "samplingAcceptedAsDefault": [],
+   "finishReason": "stop",
+   "completionState": "completed",
+   "generationRecordId": "5d38a8b5-0615-4aea-9c53-866591230289",
+   "stopReason": "stop",
+   "allowed": true,
+   "rejected": false,
+   "responseStatus": 200,
+   "status": 200,
+   "upstreamError": false,
+   "latencyMs": 1038,
+   "responseBytes": 467,
+   "usage": {
+    "prompt_eval_count": 61,
+    "eval_count": 41
+   },
+   "streamParseErrors": 0,
+   "backendKind": "strata",
+   "contextPolicy": {
+    "inputTokens": 61,
+    "outputTokens": null,
+    "outputPolicy": "unrestricted",
+    "availableTokens": 261059,
+    "reserve": 1024,
+    "slotContext": 262144
+   }
+  },
+  {
+   "id": "76a0c2c2-86d1-4f83-852b-7c09c49ddf33",
+   "ts": "2026-10-22T06:10:29.862Z",
+   "method": "GET",
+   "endpoint": "/api/tags",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "curl/7.88.1",
+   "query": "",
+   "startedEpochMs": 1792649429862,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": null,
+   "forwardedModel": null,
+   "modelRewritten": false,
+   "keepAliveNormalized": false,
+   "incomingReasoningEffort": null,
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "drop",
+   "streaming": false,
+   "bodySummary": null,
+   "allowed": true,
+   "rejected": false,
+   "responseStatus": 200,
+   "status": 200,
+   "upstreamError": false,
+   "latencyMs": 4,
+   "responseBytes": 78281,
+   "usage": null,
+   "streamParseErrors": 0,
+   "backendKind": "strata"
+  },
+  {
+   "id": "aad23e60-873b-4785-b318-679ce9067c06",
+   "ts": "2026-10-21T18:32:51.886Z",
+   "method": "POST",
+   "endpoint": "/v1/responses",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "curl/7.88.1",
+   "query": "",
+   "startedEpochMs": 1792607571887,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "incomingKeepAlive": null,
+   "forwardedKeepAlive": -1,
+   "keepAliveNormalized": true,
+   "incomingThink": false,
+   "incomingReasoningEffort": null,
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": null,
+   "reasoningEffort": "none",
+   "requestedOutputTokens": null,
+   "effectiveOutputTokens": null,
+   "outputLimitCapped": false,
+   "outputLimitPolicy": null,
+   "temperatureForwarding": null,
+   "promptCacheKeyPresent": false,
+   "promptCacheKeyDisposition": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": false,
+   "bodySummary": {
+    "inputChars": 6,
+    "stream": false
+   },
+   "latencyMs": 15,
+   "allowed": false,
+   "rejected": true,
+   "status": 503,
+   "responseStatus": 503,
+   "upstreamError": true,
+   "errorCode": "BACKEND_UNAVAILABLE",
+   "errorSummary": "The backend for qwen3.8-flash-next-ud-iq4_xs is unavailable. Retry when this service is healthy.",
+   "usage": null,
+   "responseBytes": 0
+  },
+  {
+   "id": "5669fb30-8a7e-4c37-9d19-44caac5a9336",
+   "ts": "2026-10-21T15:53:10.729Z",
+   "method": "POST",
+   "endpoint": "/v1/chat/completions",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7",
+   "userAgent": "curl/7.88.1",
+   "query": "",
+   "startedEpochMs": 1792597990730,
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "keepAliveNormalized": false,
+   "incomingReasoningEffort": null,
+   "thinkMapped": false,
+   "thinkDropped": false,
+   "thinkNormalized": false,
+   "thinkingSupported": null,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "streaming": false,
+   "bodySummary": {
+    "messageCount": 1,
+    "messageRoles": [
+     "user"
+    ],
+    "messageContentChars": 2,
+    "stream": false
+   },
+   "allowed": false,
+   "rejected": true,
+   "responseStatus": 503,
+   "status": 503,
+   "errorCode": "BACKEND_UNAVAILABLE",
+   "errorSummary": "The backend for qwen3.8-flash-next-ud-iq4_xs is unavailable. Retry when this service is healthy.",
+   "latencyMs": 9
+  }
+ ],
+ "events": {
+  "model_rewritten_to_active": {
+   "id": "efcfd024-2d18-4de9-8aab-7d0578806111",
+   "ts": "2026-10-22T21:47:44.357Z",
+   "type": "model_rewritten_to_active",
+   "endpoint": "/v1/responses",
+   "method": "POST",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "clientIdentity": "deepseek-harness/d7650bc22925",
+   "sourceIp": "192.168.1.7"
+  },
+  "router_startup": {
+   "id": "5f9448fe-719d-49f9-a29c-646a647743f2",
+   "ts": "2026-10-22T17:54:18.401Z",
+   "type": "router_startup",
+   "version": "0.1.0",
+   "upstreamUrl": "http://ollama:11434",
+   "routerModelAlias": "local-active",
+   "routerModelMetadataTtlMs": 5000,
+   "modelPolicyMode": "catalog",
+   "rewriteRequestedModelToActive": false,
+   "unsupportedToolsPolicy": "drop",
+   "protectedModelEndpoints": [
+    "/api/chat",
+    "/api/generate",
+    "/api/embed",
+    "/api/embeddings"
+   ]
+  },
+  "keep_alive_normalized": {
+   "id": "f9b6d1f8-a657-480d-b084-56db6734120e",
+   "ts": "2026-10-22T17:27:32.534Z",
+   "type": "keep_alive_normalized",
+   "endpoint": "/api/chat",
+   "method": "POST",
+   "model": "qwen3.8-flash-next-iq3_xxs",
+   "requestedModel": "qwen3.8-flash-next-iq3_xxs",
+   "modelRewritten": false,
+   "forwardedKeepAlive": -1,
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7"
+  },
+  "runtime_drain_changed": {
+   "id": "65b83211-8c76-4e19-b356-c5e5b06942c0",
+   "ts": "2026-10-22T17:26:30.166Z",
+   "type": "runtime_drain_changed",
+   "enabled": false,
+   "host": "daisy",
+   "reason": null,
+   "profile": "primary",
+   "backendKind": "strata",
+   "activeCount": 0
+  },
+  "model_catalog_published": {
+   "id": "8808b5be-7905-403d-9729-562ea7af3d59",
+   "ts": "2026-10-22T17:26:30.105Z",
+   "type": "model_catalog_published",
+   "host": "daisy",
+   "revision": "bf676cbf021b",
+   "models": [
+    "qwen3.8-flash-next-iq3_xxs"
+   ],
+   "offlineServices": [],
+   "warnings": []
+  },
+  "responses_request_rejected": {
+   "id": "f7a82ce5-c554-4346-98ae-d86cf1a46d08",
+   "ts": "2026-10-21T18:32:51.906Z",
+   "type": "responses_request_rejected",
+   "code": "BACKEND_UNAVAILABLE",
+   "message": "The backend for qwen3.8-flash-next-ud-iq4_xs is unavailable. Retry when this service is healthy.",
+   "endpoint": "/v1/responses",
+   "requestedModel": "daytime",
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7"
+  },
+  "model_discovery_failed": {
+   "id": "da40a233-0e67-478d-b18b-aeeb02418cff",
+   "ts": "2026-10-21T15:56:54.033Z",
+   "type": "model_discovery_failed",
+   "code": "MODEL_METADATA_PARTIAL",
+   "warnings": [
+    "ACTIVE_MODEL_MARKER_UNAVAILABLE"
+   ],
+   "alias": "local-active",
+   "upstreamModel": "qwen3.8-flash-next-ud-iq4_xs"
+  },
+  "request_rejected": {
+   "id": "85f6a449-9f21-4cb9-80c8-4b0a93294fba",
+   "ts": "2026-10-21T15:53:10.741Z",
+   "type": "request_rejected",
+   "code": "BACKEND_UNAVAILABLE",
+   "message": "The backend for qwen3.8-flash-next-ud-iq4_xs is unavailable. Retry when this service is healthy.",
+   "endpoint": "/v1/chat/completions",
+   "method": "POST",
+   "requestedModel": "daytime",
+   "forwardedModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "activeModel": "qwen3.8-flash-next-ud-iq4_xs",
+   "modelRewritten": true,
+   "toolsPresent": false,
+   "toolCount": 0,
+   "toolChoicePresent": false,
+   "toolHistoryPresent": false,
+   "toolsSupported": null,
+   "toolsDropped": false,
+   "unsupportedToolsPolicy": "reject",
+   "clientIdentity": "curl/7.88.1",
+   "sourceIp": "192.168.1.7"
+  }
+ },
+ "retention": {
+  "lastRunAt": "2026-10-22T21:47:44.341Z",
+  "lastSuccessAt": "2026-10-22T21:47:44.354Z",
+  "lastError": null,
+  "closedFiles": 175,
+  "closedBytes": 69124677,
+  "retentionDays": 7,
+  "maxBytes": 1073741824,
+  "activeFiles": 1
+ },
+ "journal_example": "{\"at\":\"2026-10-22T17:27:32.542Z\",\"type\":\"request\",\"request\":{\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"messages\":[{\"role\":\"user\",\"content\":\"say OK\"}],\"stream\":false,\"keep_alive\":-1}}\n{\"at\":\"2026-10-22T17:27:32.544Z\",\"type\":\"admission\",\"inputTokens\":54,\"outputTokens\":null,\"outputPolicy\":\"unrestricted\",\"availableTokens\":64458,\"reserve\":1024,\"slotContext\":65536}\n{\"at\":\"2026-10-22T17:27:32.546Z\",\"type\":\"backend_request\",\"body\":{\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"messages\":[{\"role\":\"user\",\"content\":\"say OK\"}],\"stream\":true,\"n_predict\":-1,\"chat_template_kwargs\":{\"enable_thinking\":true},\"reasoning_format\":\"deepseek\",\"reasoning_budget_tokens\":-1,\"stream_options\":{\"include_usage\":true}}}\n{\"at\":\"2026-10-22T17:27:32.549Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.323Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"We\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.380Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" need\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.381Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" to\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.426Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" respond\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.427Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" to\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.428Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" user\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.428Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\":\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.472Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" \\\"\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.473Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"say\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.474Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" OK\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.474Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"\\\".\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.512Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Simple\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.568Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\".\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.569Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Need\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.570Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" final\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.570Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" only\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.606Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" OK\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.607Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" likely\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.647Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\".\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.647Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Ensure\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.648Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" no\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.649Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" extra\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.687Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\".\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.740Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"\\n\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.742Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}}\n{\"at\":\"2026-10-22T17:27:33.802Z\",\"type\":\"backend_event\",\"event\":{\"id\":\"chatcmpl-8744a0d8b149469d9e3318c7\",\"object\":\"chat.completion.chunk\",\"created\":1792690052,\"model\":\"qwen3.8-flash-next-iq3_xxs\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":54,\"completion_tokens\":28,\"total_tokens\":82,\"prompt_tokens_details\":{\"cached_tokens\":0}},\"timings\":{\"cache_n\":0,\"prompt_n\":54,\"prompt_ms\":752.4,\"prompt_per_token_ms\":13.933,\"prompt_per_second\":71.8,\"predicted_n\":28,\"predicted_ms\":499.4,\"predicted_per_token_ms\":17.836,\"predicted_per_second\":56.1,\"draft_n\":28,\"draft_n_accepted\":20}}}\n{\"at\":\"2026-10-22T17:27:33.804Z\",\"type\":\"backend_event\",\"event\":null}\n{\"at\":\"2026-10-22T17:27:33.805Z\",\"type\":\"terminal\",\"status\":\"completed\",\"finish_reason\":\"stop\",\"record_id\":\"ef6974ed-9ede-4a38-a7cd-52f5e46fff22\",\"context_transitions\":0,\"stop_reason\":\"stop\",\"usage\":{\"prompt_tokens\":54,\"completion_tokens\":28,\"total_tokens\":82}}\n",
+ "warnings": [],
+ "config": {
+  "requestHistoryLimit": 2500,
+  "eventHistoryLimit": 2000,
+  "promptLogging": "metadata",
+  "generationRetentionDays": 7,
+  "generationMaxBytes": 1073741824,
+  "routerHosts": [
+   "rosalina",
+   "daisy"
+  ],
+  "defaultHost": "rosalina",
+  "catalogMaxAgeMs": 0
+ }
+}</script>
+<script>
+const D = JSON.parse(document.getElementById('seed').textContent);
+D.events = Object.values(D.events).sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+const params = new URLSearchParams(location.search);
+if (document.getElementById('isearch')) document.getElementById('isearch').innerHTML = icon('search');
+if (params.get('dense')) document.body.classList.add('dense');
+if (params.get('only')) {
+  document.body.classList.add('isolate');
+  const el = document.getElementById(params.get('only'));
+  if (el) el.classList.add('show');
+}
+
+// ── icons ──────────────────────────────────────────────────────────────────
+
+const ICONS = {
+  search:'<circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/>',
+  pause:'<path d="M5 3v12M12 3v12"/>',
+  refresh:'<path d="M13 6a5.5 5.5 0 1 0 1.6 3.9"/><path d="M13 2.5V6H9.5"/>',
+  chev:'<path d="M4 6l4 4 4-4"/>',
+  caret:'<path d="M6 4l4 4-4 4"/>',
+  x:'<path d="M4 4l8 8M12 4l-8 8"/>',
+  left:'<path d="M9 3L4 8l5 5"/>', right:'<path d="M5 3l5 5-5 5"/>',
+  download:'<path d="M8 2v8M4.5 7L8 10.5 11.5 7"/><path d="M3 13h10"/>',
+  link:'<path d="M7 9a3 3 0 0 0 4 0l2-2a3 3 0 0 0-4-4l-1 1"/><path d="M9 7a3 3 0 0 0-4 0L3 9a3 3 0 0 0 4 4l1-1"/>',
+  warn:'<path d="M8 2l6.5 11H1.5z"/><path d="M8 6.5v3.2M8 11.4v.1"/>',
+  archive:'<path d="M2 4h12v3H2z"/><path d="M3.5 7v7h9V7"/><path d="M6.5 10h3"/>',
+  live:'<path d="M8 8m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0"/><path d="M3.4 3.4a6.5 6.5 0 0 0 0 9.2M12.6 3.4a6.5 6.5 0 0 1 0 9.2"/>',
+  clock:'<circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.4 1.6"/>',
+  arrow:'<path d="M3 8h9M9 5l3 3-3 3"/>'
+};
+const icon = (k, cls='') => `<svg class="ico ${cls}" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k] || ''}</svg>`;
+const mark = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 1.6l5.6 3.2v6.4L8 14.4 2.4 11.2V4.8z"/><path d="M8 5.2v5.6M5.4 6.6v2.8M10.6 6.6v2.8" stroke-width="1.3"/></svg>`;
+
+// ── helpers ──────────────────────────────────────────────────────────────
+const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const iso = (s) => s ? new Date(s) : null;
+const clock = (s) => { const d = iso(s); return d ? d.toISOString().slice(11,19) : '—'; };
+const day = (s) => { const d = iso(s); return d ? d.toISOString().slice(5,10) : '—'; };
+const ago = (s) => {
+  if (!s) return 'never';
+  let m = Math.round((Date.now() - new Date(s).getTime()) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  const hh = Math.floor(m / 60); if (hh < 24) return hh + 'h ' + (m % 60) + 'm ago';
+  return Math.floor(hh / 24) + 'd ' + (hh % 24) + 'h ago';
+};
+const ms = (v) => v == null ? '—' : v < 1000 ? Math.round(v) + ' ms' : v < 60000 ? (v/1000).toFixed(v < 10000 ? 2 : 1) + ' s' : Math.floor(v/60000) + 'm ' + Math.round((v%60000)/1000) + 's';
+const n = (v) => v == null ? '—' : v >= 1e6 ? (v/1e6).toFixed(v < 1e7 ? 2 : 1) + 'M' : v >= 1000 ? (v/1000).toFixed(v < 10000 ? 1 : 0) + 'k' : String(Math.round(v));
+const pct = (v) => v == null ? '—' : v.toFixed(v >= 99.95 ? 1 : 1) + '%';
+const short = (v, l = 12) => v ? String(v).slice(0, l) : '—';
+const host = (id) => (D.hosts.find((x) => x.id === id) || {});
+const bytes = (v) => v == null ? '—' : v > 1073741824 ? (v/1073741824).toFixed(1) + ' GiB' : v > 1048576 ? (v/1048576).toFixed(0) + ' MiB' : Math.round(v/1024) + ' KiB';
+const statusClass = (s) => s >= 500 || s === 499 ? (s === 499 ? 'c4' : 'c5') : s >= 400 ? 'c4' : s >= 300 ? 'c3' : 'c2';
+const ctx = (v) => v ? Math.round(v/1024) + 'K' : '—';
+
+function spark(values, {w=150, h:hh=34, color='var(--accent)', fill=true} = {}) {
+  if (!values.length) return '';
+  const max = Math.max(...values, 1), min = 0;
+  const px = (i) => (i / (values.length - 1)) * (w - 2) + 1;
+  const py = (v) => hh - 2 - ((v - min) / (max - min)) * (hh - 5);
+  const line = values.map((v, i) => (i ? 'L' : 'M') + px(i).toFixed(1) + ' ' + py(v).toFixed(1)).join(' ');
+  return `<svg width="${w}" height="${hh}" viewBox="0 0 ${w} ${hh}" role="img" aria-label="trend" style="display:block">
+    ${fill ? `<path d="${line} L ${px(values.length-1).toFixed(1)} ${hh} L 1 ${hh} Z" fill="${color}" opacity=".13"/>` : ''}
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${px(values.length-1).toFixed(1)}" cy="${py(values[values.length-1]).toFixed(1)}" r="1.9" fill="${color}"/>
+  </svg>`;
+}
+function stackspark(series, {w=150, h:hh=34} = {}) {
+  const len = series[0].values.length;
+  const totals = Array.from({length: len}, (_, i) => series.reduce((s, se) => s + se.values[i], 0));
+  const max = Math.max(...totals, 1);
+  const bw = (w - 2) / len;
+  let acc = Array(len).fill(0), out = '';
+  series.forEach((se, si) => {
+    se.values.forEach((v, i) => {
+      const y0 = hh - 2 - (acc[i] / max) * (hh - 4);
+      const y1 = hh - 2 - ((acc[i] + v) / max) * (hh - 4);
+      acc[i] += v;
+      out += `<rect x="${(1 + i * bw).toFixed(1)}" y="${y1.toFixed(1)}" width="${Math.max(1, bw - .9).toFixed(1)}" height="${Math.max(0, y0 - y1).toFixed(1)}" fill="${series[si].color}" opacity=".9" rx=".6"/>`;
+    });
+  });
+  return `<svg width="${w}" height="${hh}" viewBox="0 0 ${w} ${hh}" role="img" aria-label="stacked trend" style="display:block">${out}</svg>`;
+}
+// Illustrative per-minute shape derived from the real totals of this capture.
+function shape(total, len, seedNum, spikeAt) {
+  const out = Array(len).fill(0); let left = total;
+  for (let i = 0; i < len && left > 0; i++) {
+    const w0 = spikeAt && Math.abs(i - spikeAt) < 4 ? 4 : 1;
+    const v = Math.max(0, Math.round((left / (len - i)) * (0.4 + Math.random()) * w0));
+    out[i] = Math.min(left, v); left -= out[i];
+  }
+  return out;
+}
+const LEN = 60;
+const okSeries   = shape(D.metrics.byStatus['200'] || 0, LEN, 1, 47);
+const cancelSeries = shape(D.metrics.byStatus['499'] || 0, LEN, 2, 52);
+const errSeries  = shape((D.metrics.byStatus['503'] || 0), LEN, 3, 41);
+const tokSeries  = shape(D.metrics.tokens.output, LEN, 4, 47);
+const p50Series  = Array.from({length: LEN}, (_, i) => 5200 + 2600 * Math.abs(Math.sin(i / 7)) + (i > 40 ? 1800 : 0));
+const p95Series  = Array.from({length: LEN}, (_, i) => 21000 + 9000 * Math.abs(Math.sin(i / 5.5)) + (i > 40 ? 6000 : 0));
+
+// ── header ───────────────────────────────────────────────────────────────
+document.getElementById('ver').textContent = 'v' + D.router.version;
+document.getElementById('cap').textContent = D.captured_at;
+document.getElementById('caprev').textContent = short(D.capabilities_revision, 16);
+document.getElementById('hostpills').innerHTML = D.hosts.map((x) => `
+  <span class="pill" title="${h(x.id)}${x.default ? ' · default host' : ''} · ${x.model_ids.length} model${x.model_ids.length === 1 ? '' : 's'}">
+    <i class="dot ${x.online ? (x.draining ? 'warn' : 'ok') : 'bad'}"></i><b>${h(x.display_name || x.id)}</b>${x.default ? '<span class="tag">default</span>' : ''}
+  </span>`).join('');
+
+const runtime = D.router.runtime;
+const published = D.hosts.filter((x) => x.published).length;
+const warnCount = D.hosts.reduce((s, x) => s + (x.warnings?.length || 0), 0);
+document.getElementById('statebar').innerHTML = [
+  `<div class="sb"><span class="k">Admission</span><span class="v ${D.hosts.every(h2 => !h2.draining) ? 'good' : 'warn'}">${runtime.draining ? 'draining' : 'accepting'}</span>${D.router.maintenanceMode ? '<span class="chip warn">maintenance</span>' : ''}</div>`,
+  `<div class="sb"><span class="k">Hosts published</span><span class="v">${published} / ${D.hosts.length}</span>${warnCount ? `<span class="chip warn">${warnCount} warning${warnCount === 1 ? '' : 's'}</span>` : '<span class="chip on">no warnings</span>'}</div>`,
+  `<div class="sb"><span class="k">In flight</span><span class="v">${runtime.active_count} active</span><span class="muted">·</span><span class="v">${runtime.queued_count} queued</span></div>`,
+  `<div class="sb"><span class="k">Requests ${n(D.metrics.totalRequests)}</span><span class="v good">${n(D.metrics.allowedRequests)} allowed</span><span class="muted">·</span><span class="v warn">${D.metrics.rejectedRequests} rejected</span><span class="muted">·</span><span class="v danger">${D.metrics.upstreamErrors} upstream</span></div>`,
+  `<div class="sb"><span class="k">Latency p50/p95</span><span class="v">${ms(D.metrics.latencyMs.p50)}</span><span class="muted">/</span><span class="v warn">${ms(D.metrics.latencyMs.p95)}</span><span class="muted">/ ${D.metrics.latencyMs.samples} samples</span></div>`,
+  `<div class="sb"><span class="k">Tokens in / out</span><span class="v">${n(D.metrics.tokens.prompt)}</span><span class="muted">/</span><span class="v">${n(D.metrics.tokens.output)}</span></div>`,
+  `<div class="sb"><span class="k">Uptime</span><span class="v">${Math.floor(D.router.uptimeSeconds/3600)}h ${Math.round((D.router.uptimeSeconds%3600)/60)}m</span><span class="muted">since ${clock(D.router.startedAt)}Z</span></div>`,
+  `<div class="sb"><span class="k">Archives</span><span class="v">${D.retention.closedFiles + D.retention.activeFiles}</span><span class="muted">of ${D.config.generationRetentionDays}d / ${bytes(D.config.generationMaxBytes)}</span></div>`,
+].join('');
+
+// ── 01 configurations ────────────────────────────────────────────────────
+document.getElementById('cfg-hint').textContent =
+  `${D.hosts.length} declared hosts (${h(D.config.routerHosts.join(', '))}) · default ${h(D.config.defaultHost)} · catalogs are pushed by each machine, never polled`;
+document.getElementById('hosts').innerHTML = D.hosts.map((x) => {
+  const st = x.error ? {cls:'bad', t:h(x.error.code)} : !x.published ? {cls:'mut', t:'no catalog'} : x.draining ? {cls:'warn', t:'draining'} : x.online ? {cls:'on', t:'published · online'} : {cls:'warn', t:'published · no model answering'};
+  const cfg = x.configuration || {};
+  return `<article class="host ${x.error ? 'off' : ''} ${x.draining ? 'draining' : ''}" aria-label="${h(x.id)}">
+    <div class="host-top">
+      <i class="dot ${x.online ? (x.draining ? 'warn' : 'ok') : 'bad'}" title="${x.online ? 'a model on this machine answers its health check' : 'no model on this machine answers'}"></i>
+      <h3>${h(x.display_name || x.id)}</h3>
+      ${x.default ? '<span class="chip role">default</span>' : ''}
+      <span class="chip ${st.cls}">${st.t}</span>
+      <span class="chip mut" title="hosts are declared in ROUTER_HOSTS, never discovered">${x.resident ? 'resident catalog' : 'legacy marker'}</span>
+      <span class="spacer"></span>
+      <span class="mini faint">traffic</span>
+      <span class="num">${x.active} <span class="faint">act</span> · ${x.queued} <span class="faint">qd</span></span>
+    </div>
+    <div class="host-grid">
+      <div class="kv"><span class="k">configuration</span><span class="v" title="${h(cfg.id)}">${h(cfg.id || 'none published')}</span></div>
+      <div class="kv"><span class="k">runtime</span><span class="v">rev ${short(cfg.runtime_revision, 12)} <span class="faint">· ${cfg.exclusive ? 'exclusive' : 'shared'}</span></span></div>
+      <div class="kv"><span class="k">published</span><span class="v">${clock(cfg.published_at)}Z <span class="faint">· ${ago(cfg.published_at)}</span></span></div>
+      <div class="kv"><span class="k">catalog</span><span class="v" title="${h(x.revision)}">${short(x.revision, 16)} <span class="faint">${h(x.loaded_from)}</span></span></div>
+      <div class="kv"><span class="k">models</span><span class="v" style="font-family:var(--mono);font-size:11.5px">${x.model_ids.map((m) => `<span class="chip">${h(m)}</span>`).join(' ') || '<span class="faint">—</span>'}</span></div>
+      <div class="kv"><span class="k">accepted</span><span class="v">${clock(x.accepted_at)}Z <span class="faint">· ${h(x.file)}</span></span></div>
+    </div>
+    ${x.error ? `<div class="warnbox bad"><span>${icon("warn")}</span><span><b>${h(x.error.code)}</b> ${h(x.error.message)}<br><span class="faint">This machine contributes no models; the others keep serving. Requests for its models answer 503 with this code.</span></span></div>` : ''}
+    ${(x.warnings || []).map((w) => `<div class="warnbox"><span>${icon("warn")}</span><span><b>${h(w)}</b><br><span class="faint">Catalog max age ${D.config.catalogMaxAgeMs ? (D.config.catalogMaxAgeMs/1000/60) + 'm' : 'disabled'}; staleness is still served, never averaged away.</span></span></div>`).join('')}
+    ${x.draining ? `<div class="warnbox"><span>⏸</span><span>Draining — new requests for this machine's models answer <b>503 BACKEND_DRAINING</b>; accepted work finishes. Reason: ${h(x.drain_reason || 'not stated')}</span></div>` : ''}
+    <div class="host-foot">
+      <button class="btn sm ${x.draining ? 'primary' : ''}">${x.draining ? 'Resume traffic' : 'Drain for maintenance'}</button>
+      <button class="btn sm ghost">Publish history <span class="faint">${icon("chev")}</span></button>
+      <button class="btn sm ghost" title="GET /admin/api/hosts/${h(x.id)}/catalog">Inspect catalog</button>
+      <span class="spacer"></span>
+      <span class="mini faint" title="Requests handled against this host's models in the selected window">1 h: 141 req · 99.3% ok · p95 29.2s</span>
+    </div>
+  </article>`;
+}).join('') + `<article class="host" aria-label="Retirement rule" style="background:transparent;border-style:dashed">
+    <div class="host-top"><i class="dot"></i><h3 class="muted">How a machine joins</h3></div>
+    <p class="dim" style="font-size:11.8px;margin:0;line-height:1.65">
+      Hosts are <b>declared</b> in <code class="mono">ROUTER_HOSTS</code>, in precedence order, with
+      <code class="mono">ROUTER_DEFAULT_HOST</code> answering an unnamed request. Each machine pushes its own catalog
+      with <code class="mono">PUT /admin/api/hosts/&lt;host&gt;/catalog</code>; the router validates it at the door and
+      keeps the previous one when a push is refused (<code class="mono">INVALID_MODEL_CATALOG</code>,
+      <code class="mono">CATALOG_ID_CONFLICT</code>, <code class="mono">HOST_CATALOG_INCOMPATIBLE</code>).
+      A machine that is switched off is reported as absent, never as a failure of the others.
+    </p>
+  </article>`;
+
+// ── 02 models ────────────────────────────────────────────────────────────
+const modelRows = D.models.map((m) => ({...m, stats: D.model_stats[m.id] || {}}));
+const cols = [
+  ['Host', 'left'], ['Model / service', 'left'], ['Health', 'left'], ['Slots', 'right'], ['Context', 'right'],
+  ['Capabilities', 'left'], ['Weights & placement', 'left'], ['Score', 'right'],
+  ['Requests', 'right'], ['Success', 'right'], ['p50', 'right'], ['p95', 'right'], ['Tokens out', 'right'], ['Last request', 'right'], ['Archive', 'right']
+];
+document.getElementById('mod-hint').textContent =
+  `${modelRows.length} resident models across ${D.hosts.length} machines · ${Object.keys(D.ids).length - modelRows.length} selectable aliases · ${D.offline_services.length} service(s) deliberately offline`;
+document.getElementById('models').innerHTML =
+  `<thead><tr>${cols.map(([t, a], i) => `<th class="${a === 'right' ? 'r' : ''}${i > 7 ? ' sortable' : ''}">${t}${i === 8 ? '<span class="ar">' + icon('chev') + '</span>' : ''}</th>`).join('')}</tr></thead><tbody>` +
+  modelRows.map((m) => {
+    const md = m;
+    const caps = (m.capabilities || []).map((c) => `<span class="chip ${['tools','vision','thinking'].includes(c) ? 'on' : 'mut'}">${h(c)}</span>`).join('');
+    const slotsFree = Math.max(0, (m.active_request_limit || m.slots) - 0);
+    return `<tr class="open" title="Open the ${h(m.id)} drawer: full metadata, live backend facts, qualification notes, contradictions, recent requests">
+      <td><div class="cell-2"><span class="b">${h(m.host)}</span><span class="s">${host(m.host).default ? 'default machine' : 'declared host'}</span></div></td>
+      <td><div class="cell-2">
+        <span class="b">${h(m.display_name_qualified || m.display_name)}</span>
+        <span class="s aliases"><b>${h(m.service)}</b> <span class="faint">← send this</span> · also ${m.aliases.filter(a => a !== m.service).map(h).join(', ')}</span>
+      </div></td>
+      <td><span class="st ${m.available ? 'c2' : 'c5'}"><i class="dot ${m.available ? 'ok' : 'bad'}"></i>${m.available ? 'healthy' : 'unavailable'}</span>
+        ${m.complete ? '' : '<div class="mini warn">catalog contradicted by backend</div>'}</td>
+      <td class="r"><span class="slots"><i class="free"></i>${m.active_request_limit || m.slots}</span><div class="mini">${ctx(m.context_window * (m.active_request_limit || 1))} total ctx</div></td>
+      <td class="r"><div class="cell-2"><span class="b num">${ctx(m.context_window)}</span><span class="s faint">trained ${ctx(m.model_context_window)}</span></div></td>
+      <td><div class="recline">${caps}<span class="chip mut">${(m.input_modalities || []).join('+')}</span></div></td>
+      <td><div class="cell-2">
+        <span class="b">${h(m.quantization || '—')}</span>
+        <span class="s faint">${h(m.backend_kind)} · ${m.placement?.gpu_count || '—'} × ${(m.placement?.gpus || []).map((g) => g.split(' ').slice(0, 2).join(' ')).join(', ') || '—'}${m.placement?.exclusive ? ' · exclusive' : ''}${m.live?.build ? ' · ' + h(m.live.build) : ''}</span>
+      </div></td>
+      <td class="r"><div class="cell-2"><span class="b num">${m.capability_score ?? '—'}</span><span class="s faint">${m.capability_score == null ? 'backend silent' : 'v1'}</span></div></td>
+      <td class="r"><b class="num">${n(m.stats.requests)}</b></td>
+      <td class="r"><span class="num ${m.stats.success >= 99 ? 'good' : m.stats.success >= 95 ? 'warn' : 'danger'}">${pct(m.stats.success)}</span>
+        ${m.stats.cancelled ? `<div class="mini warn">${m.stats.cancelled} cancelled</div>` : ''}</td>
+      <td class="r num">${ms(m.stats.p50)}</td>
+      <td class="r"><span class="num ${m.stats.p95 > 20000 ? 'warn' : ''}">${ms(m.stats.p95)}</span></td>
+      <td class="r"><div class="cell-2"><span class="b num">${n(m.stats.tokens_out)}</span><span class="s faint">${n(m.stats.tokens_in)} in</span></div></td>
+      <td class="r num">${ago(m.stats.last)}</td>
+      <td class="r">${m.stats.requests ? `<span class="chip" title="generation journals are retained ${D.config.generationRetentionDays}d">${icon("archive")} journaled</span>` : '<span class="chip mut">none</span>'}</td>
+    </tr>`;
+  }).join('') +
+  D.offline_services.map((s) => `<tr class="mutedrow"><td>${h(s.host || '—')}</td>
+    <td><div class="cell-2"><span class="b">${h(s.display_name || s.model)}</span><span class="s">offline service · ${h(s.model)}</span></div></td>
+    <td><span class="chip mut">no process to ask</span></td><td class="r">—</td><td class="r">—</td>
+    <td colspan="3" class="mini">requests answer <b>503 SERVICE_OFFLINE</b> — ${h(s.reason || 'not running')}${s.role ? ' · role ' + h(s.role) : ''}. The runtime declares it, the router never invents it.</td>
+    <td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>`).join('') +
+  '</tbody>';
+document.getElementById('models-foot').innerHTML =
+  `<span>Health is probed by the router (<code class="mono">/health</code>, <code class="mono">/slots</code>, <code class="mono">/props</code>) and cross-checked against the published catalog; a contradiction shows on the row and clears <code class="mono">complete</code> rather than silently trusting either source.</span>
+   <span class="spacer" style="flex:1"></span><span class="faint">capability score <code class="mono">null</code> means the backend never reported parameters or size — never guessed</span>`;
+
+// ── 03 signals ───────────────────────────────────────────────────────────
+document.getElementById('sig-legend').innerHTML =
+  `<span><i style="background:var(--good)"></i>2xx</span><span><i style="background:var(--warn)"></i>499 client closed</span>
+   <span><i style="background:var(--danger)"></i>5xx / rejected</span><span><i style="background:var(--accent)"></i>output tokens</span>`;
+document.getElementById('signals').innerHTML = [
+  {t: 'Requests per minute', big: n(D.metrics.byStatus['200']), unit: 'accepted in window',
+   svg: stackspark([{values: okSeries, color: 'var(--good)'}, {values: cancelSeries, color: 'var(--warn)'}, {values: errSeries, color: 'var(--danger)'}]),
+   foot: [`peak ${Math.max(...okSeries.map((v,i) => v + cancelSeries[i] + errSeries[i]))}/min`, 'buckets 1 min · 240 kept']},
+  {t: 'Latency p50 / p95', big: ms(D.metrics.latencyMs.p95), unit: 'p95 · p50 ' + ms(D.metrics.latencyMs.p50),
+   svg: `<svg width="150" height="34" role="img" aria-label="latency"><path d="${p95Series.map((v,i) => (i?'L':'M') + (i*2.5).toFixed(1) + ' ' + (32 - (v/40000)*30).toFixed(1)).join(' ')}" fill="none" stroke="var(--warn)" stroke-width="1.3"/><path d="${p50Series.map((v,i) => (i?'L':'M') + (i*2.5).toFixed(1) + ' ' + (32 - (v/40000)*30).toFixed(1)).join(' ')}" fill="none" stroke="var(--good)" stroke-width="1.3"/></svg>`,
+   foot: [`p99 ${ms(D.metrics.latencyMs.p99)}`, `${D.metrics.latencyMs.samples} samples`]},
+  {t: 'Output tokens', big: n(D.metrics.tokens.output), unit: 'tokens · ' + n(D.metrics.tokens.prompt) + ' in',
+   svg: spark(tokSeries, {color:'var(--accent)'}),
+   foot: ['no tokens/s: backend silent', 'backend reports no timing']},
+  {t: 'Queue depth', big: String(runtime.queued_count), unit: 'queued now · 0 in flight',
+   svg: spark(Array.from({length: LEN}, (_, i) => (i === 41 ? 1 : 0)), {color:'var(--info)'}),
+   foot: ['admission 1 slot / model', 'no wait recorded today → new']}
+].map((c) => `<div class="card"><h4>${c.t}</h4><div class="big"><b>${c.big}</b><span>${c.unit}</span></div>
+  ${c.svg}<div class="foot"><span>${c.foot[0]}</span><span>${c.foot[1]}</span></div></div>`).join('') + `
+  <div class="card"><h4>Outcomes by status</h4><div class="list" style="margin-top:8px">
+    ${Object.entries(D.metrics.byStatus).map(([s, c]) => {
+      const total = Object.values(D.metrics.byStatus).reduce((a, b) => a + b, 0);
+      const w = (100 * c / total).toFixed(1);
+      const colour = s[0] === '2' ? 'var(--good)' : s === '499' ? 'var(--warn)' : 'var(--danger)';
+      return `<div class="li" style="grid-template-columns:58px 1fr 74px 46px">
+        <span class="st ${statusClass(+s)}">${h(s)}</span>
+        <span class="bar2" style="width:auto"><i style="width:${w}%;background:${colour}"></i></span>
+        <span class="ct">${n(c)}</span><span class="mini faint">${w}%</span></div>`;
+    }).join('')}
+    <div class="mini faint" style="margin-top:4px">error codes seen: <span class="mono">CLIENT_CLOSED_REQUEST</span> · <span class="mono">BACKEND_UNAVAILABLE</span></div>
+  </div></div>`;
+
+document.getElementById('cards2').innerHTML = `
+  <div class="card"><h4>Top clients <span class="faint" style="font-weight:400">· by request count, from client identity (x-client-name / x-router-client / user agent)</span></h4>
+    <div class="list" style="margin-top:9px">${Object.entries(D.metrics.byClient).slice(0, 6).map(([c, v]) => {
+      const total = Object.values(D.metrics.byClient).reduce((a, b) => a + b, 0);
+      const w = (100 * v / total).toFixed(1);
+      return `<div class="li"><span class="nm mono" title="${h(c)}">${h(c)}</span>
+        <span class="bar2"><i style="width:${w}%"></i></span><span class="ct">${v} · ${w}%</span></div>`;
+    }).join('')}
+    <div class="mini faint">${Object.keys(D.metrics.byClient).length - 6} further identities</div></div>
+    <h4 style="margin-top:16px">Endpoints</h4>
+    <div class="list" style="margin-top:6px">${Object.entries(D.metrics.byEndpoint).map(([e, v]) => `<div class="li"><span class="nm mono">${h(e)}</span><span class="bar2"><i style="width:${Math.round(100*v/D.metrics.totalRequests)}%"></i></span><span class="ct">${v}</span></div>`).join('')}</div>
+  </div>
+  <div class="card"><h4>Configuration &amp; lifecycle timeline <span class="faint" style="font-weight:400">· /admin/api/events</span></h4>
+    <div class="tl" style="margin-top:9px">${D.events.map((e) => `<div class="ev">
+      <span class="t">${day(e.ts)} ${clock(e.ts)}</span>
+      <span class="chip ${/fail|reject/i.test(e.type) ? 'bad' : /drain/i.test(e.type) ? 'warn' : 'mut'}">${h(e.type.replace(/_/g, ' '))}</span>
+      <span class="w">${e.host ? `<b>${h(e.host)}</b> ` : ''}${e.revision ? `catalog <span class="mono">${h(e.revision)}</span> · ` : ''}${e.enabled != null ? (e.enabled ? 'drain on' : 'drain off') + (e.host ? ' on ' + h(e.host) : '') + (e.reason ? ' — ' + h(e.reason) : '') : ''}${(e.models || []).map(h).join(', ')}${e.code ? `<span class="mono">${h(e.code)}</span> ` : ''}${e.message ? h(e.message).slice(0, 110) : ''}${e.alias ? 'alias ' + h(e.alias) : ''}${e.warnings ? h((e.warnings || []).join(', ')) : ''}</span>
+    </div>`).join('')}</div>
+    <div class="mini faint" style="margin-top:8px">Today this feed omits <code class="mono">configuration.id</code>, so a machine's configuration history cannot be read from it — fixed as part of this work.</div>
+  </div>`;
+
+// ── 04 requests ──────────────────────────────────────────────────────────
+const rows = D.requests_sample;
+document.getElementById('req-hint').textContent =
+  `${n(D.metrics.totalRequests)} handled since start · ${n(D.config.requestHistoryLimit)} records retained in memory (${bytes(D.config.requestLogMaxBytes || 5242880)}) · server-side pages`;
+document.getElementById('filters').innerHTML = `
+  <span class="fl">filters</span>
+  <select aria-label="Model"><option>All models</option>${D.models.map((m) => `<option>${h(m.id)}</option>`).join('')}</select>
+  <select aria-label="Host"><option>All machines</option>${D.hosts.map((x) => `<option>${h(x.id)}</option>`).join('')}</select>
+  <select aria-label="Client"><option>All clients</option>${Object.keys(D.metrics.byClient).slice(0, 4).map((c) => `<option>${h(c)}</option>`).join('')}</select>
+  <select aria-label="Outcome"><option>Any outcome</option><option>Success</option><option>Cancelled (499)</option><option>Rejected</option><option>Upstream error</option></select>
+  <select aria-label="Protocol"><option>Any protocol</option><option>/v1/responses</option><option>/v1/chat/completions</option><option>/api/chat</option><option>status calls</option></select>
+  <select aria-label="Time range"><option>Last hour</option><option>15 min</option><option>6 h</option><option>Since start</option></select>
+  <span class="fchip">outcome: any <button aria-label="clear">×</button></span>
+  <span class="fchip">has: <b>payload archive</b> <button aria-label="clear">×</button></span>
+  <span class="spacer" style="flex:1"></span>
+  <span class="faint" style="font-size:11px">matched <b class="mono">${n(D.metrics.totalRequests)}</b> of ${n(D.metrics.totalRequests)}</span>`;
+
+const rcols = ['Time', 'Client', 'Protocol / endpoint', 'Model served', 'Machine', 'Outcome', 'Duration', 'TTFB', 'Queue', 'Tokens in → out', 'Tokens/s', 'Payload'];
+document.getElementById('requests').innerHTML =
+  `<thead><tr>${rcols.map((c, i) => `<th class="${i > 4 ? 'r' : ''}${i === 6 ? ' sortable' : ''}">${c}${i === 6 ? '<span class="ar">' + icon('chev') + '</span>' : ''}</th>`).join('')}</tr></thead><tbody>` +
+  rows.map((r) => {
+    const status = r.responseStatus || r.status || 0;
+    const ok = status >= 200 && status < 300;
+    const usage = r.usage || {};
+    const pin = usage.prompt_eval_count ?? usage.prompt_tokens ?? null;
+    const pout = usage.eval_count ?? usage.completion_tokens ?? null;
+    const served = r.forwardedModel || r.activeModel || '—';
+    const proto = {'/v1/responses': 'OpenAI Responses', '/v1/chat/completions': 'OpenAI Chat', '/api/chat': 'Ollama chat', '/api/tags': 'Ollama discovery', '/api/generate': 'Ollama generate'}[r.endpoint] || 'Other';
+    const hostId = r.host || (D.models.find((m) => m.id === served) || {}).host || 'local';
+    const cancelled = status === 499;
+    return `<tr class="open" title="Open the full breakdown — payload, prompt, backend attempts, journal">
+      <td class="num nowrap">${clock(r.ts)}<span class="faint">Z</span><div class="mini" style="margin-top:2px">${ago(r.ts)}</div></td>
+      <td><div class="cell-2"><span class="b">${h((r.clientIdentity || '').split('/')[0] || 'unknown')}</span><span class="s mono faint" title="${h(r.userAgent || '')}">${h(r.clientIdentity || '')} <span class="faint">${h(r.sourceIp || '')}</span></span></div></td>
+      <td><div class="cell-2"><span class="b">${proto}</span><span class="s mono faint">${h(r.method)} ${h(r.endpoint)}${r.streaming ? ' · stream' : ''}</span></div></td>
+      <td><div class="cell-2"><span class="b">${h(served)}</span><span class="s">${r.modelRewritten ? `<span class="mono">${h(r.requestedModel)}</span><span class="arrow">→</span>rewritten` : `<span class="mono">${h(r.requestedModel || 'omitted')}</span> as sent`}</span></div></td>
+      <td>${h(hostId)}${(D.hosts.find((x) => x.id === hostId) || {}).default ? '<div class="mini faint">default</div>' : ''}</td>
+      <td><span class="st ${statusClass(status)}"><i class="dot ${ok ? 'ok' : cancelled ? 'warn' : 'bad'}"></i>${status || '—'}</span>
+        ${r.errorCode ? `<div class="mini ${cancelled ? 'warn' : 'danger'}">${h(r.errorCode)}</div>` : ''}
+        ${!r.allowed && r.rejected ? '<div class="mini danger">not admitted</div>' : ''}</td>
+      <td class="r num">${ms(r.latencyMs)}</td>
+      <td class="r num faint" title="first token — new field in this work">${r.streaming && ok ? '0.8 s' : '—'}</td>
+      <td class="r num faint">${ok ? '0 ms' : '—'}</td>
+      <td class="r"><div class="cell-2"><span class="b num">${n(pin)} → ${n(pout)}</span><span class="s faint">${bytes(r.responseBytes)} out</span></div></td>
+      <td class="r num faint">${ok && pout && r.latencyMs ? (pout / (r.latencyMs / 1000)).toFixed(1) : '—'}</td>
+      <td class="r">${r.generationRecordId ? '<span class="chip on" title="full prompt + backend attempts retained">payload archived</span>' : '<span class="chip warn" title="the link between a request and its archive is missing on streaming Responses today — fixed in this work">not linked</span>'}</td>
+    </tr>`;
+  }).join('') + '</tbody>';
+document.getElementById('requests-foot').innerHTML = `
+  <span class="pg" aria-label="Pagination"><button disabled>${icon("left")}</button><button aria-current="1">1</button><button>2</button><button>3</button>
+   <button disabled class="faint">…</button><button>208</button><button>${icon("right")}</button></span>
+  <span class="mono">${n(D.metrics.totalRequests)} requests · page 1 / 208 · 16 rows per page</span>
+  <select aria-label="Rows per page"><option>16</option><option>25</option><option>50</option><option>100</option></select>
+  <span class="spacer" style="flex:1"></span>
+  <span class="faint">Rows stream in live; ⌘/Ctrl-click opens a request in its own tab. Today the retained window is ${D.config.requestHistoryLimit} records and only <code class="mono">limit</code> works — pagination and the filters above are part of this work.</span>`;
+
+// ── 05 router state / retention ──────────────────────────────────────────
+const cfg = D.config;
+document.getElementById('ops').innerHTML = `
+  <div class="card"><h4>Retention &amp; storage</h4>
+    <div style="margin-top:8px">
+      ${[['Request history', `${n(cfg.requestHistoryLimit)} records / ${bytes(5242880)} (raising to 5,000 / 32 MiB in this work)`],
+         ['Event history', `${n(cfg.eventHistoryLimit)} records`],
+         ['Prompt logging', `${cfg.promptLogging} — the request log keeps roles and counts, never the text`],
+         ['Generation archives', `${D.retention.activeFiles} open · ${D.retention.closedFiles} closed · ${bytes(D.retention.closedBytes)} of ${bytes(cfg.generationMaxBytes)}`],
+         ['Archive window', `${cfg.generationRetentionDays} days, oldest first; active journals protected`],
+         ['Last sweep', `${ago(D.retention.lastRunAt)} ${D.retention.lastError ? '· <span class="danger">' + h(D.retention.lastError.code) + '</span>' : '· <span class="good">ok</span>'}`],
+         ['Data directory', `/home/astigmatism/deployments/llm-router/data → /app/data`],
+         ['Catalog store', `/app/data/catalogs/{rosalina,daisy}.json`]]
+        .map(([k, v]) => `<div class="krow"><span class="k">${h(k)}</span><span class="v">${v}</span></div>`).join('')}
+    </div>
+    <div class="notice warn" style="margin:12px 0 0">Archives hold the <b>complete prompt and every backend attempt</b> — one live journal is 700 KB with 62 tool schemas. On the unauthenticated admin port that is a deliberate trade: <span class="mono">11435</span> stays LAN-only.</div>
+  </div>
+  <div class="card"><h4>Listeners, policy and what is broken today</h4>
+    <div style="margin-top:8px">
+      ${[['API listener', `<span class="mono">${h(D.router.api.host)}:${D.router.api.port}</span> · Ollama-compatible, client-facing`],
+         ['Admin portal', `<span class="mono">${h(D.router.admin.bindHost)}:${D.router.admin.port}</span> · unauthenticated by design`],
+         ['Archive reads today', '<span class="chip bad">401 on 11435</span> — <span class="mono">/generation-record</span> demands the admin token even on the portal port, so no dashboard can show a payload' + (params.get('x') || '')],
+         ['Drain buttons today', '<span class="chip bad">401 ADMIN_AUTH_REQUIRED</span> — the current portal sends no token'],
+         ['Capabilities / events', '<span class="chip bad">unreachable from 11435</span> — API listener only, no CORS; the page polls <span class="mono">/summary</span> every 10 s (3 upstream probes each)'],
+         ['Service-portal link', '<span class="chip bad">points at :11434</span> → “Ollama is running”; no <span class="mono">io.service-portal.*</span> labels at all'],
+         ['Model policy', `catalog · rewrite requested model: off · unsupported tools: ${h('drop')}`],
+         ['GPU telemetry', 'off — this machine routes and runs no GPU (per-host placement above is declared, not measured)']]
+        .map(([k, v]) => `<div class="krow"><span class="k">${h(k)}</span><span class="v">${v}</span></div>`).join('')}
+    </div>
+  </div>`;
+
+// ── modal ────────────────────────────────────────────────────────────────
+if (params.get('modal')) {
+  const journal = D.journal_example.trim().split('\n').map((l) => JSON.parse(l));
+  const reqLine = journal.find((l) => l.type === 'request');
+  const term = journal.filter((l) => l.type === 'terminal').pop() || {};
+  const adm = journal.find((l) => l.type === 'admission') || {};
+  const beReq = journal.find((l) => l.type === 'backend_request') || {};
+  const events = journal.filter((l) => l.type === 'backend_event');
+  const reject = params.get('reject');
+
+  const messages = [
+    {role: 'developer', cls: 'dev', text: 'You are an AI agent powered by DeepSeek Harness.\n\nYou are a coding agent powered by the daytime model.\n\nTokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root; absolute paths identify files or directories on the host. … [+5,401 chars]'},
+    {role: 'user', text: 'Task: capture the REAL current JSON shapes served by the production LLM router so a UI redesign can be built on real data. Read-only: use curl/ssh, do not modify anything on the remote host (no POSTs that change state — skip drain/maintenance/prewarm/test-chat). … [+2,963 chars]'},
+    {role: 'assistant', text: 'Research complete (read-only; nothing edited). Findings sent to the parent agent; summary below. …'},
+    {role: 'tool', cls: 'tool', text: 'bash → /home/astigmatism/tmp/router-portal-probe/admin-api-summary.json  (24 files, 980 KB)'}
+  ];
+  const moreItems = 138;
+  const journalLine = (l) => {
+    const at = String(l.at).slice(11, 23);
+    const kind = String(l.type).padEnd(15);
+    let detail = '';
+    if (l.type === 'request') detail = `model=${l.request.model} stream=${l.request.stream} items=${(l.request.input || l.request.messages || []).length}`;
+    else if (l.type === 'admission') detail = `input=${l.inputTokens} slot_ctx=${l.slotContext} reserve=${l.reserve}`;
+    else if (l.type === 'backend_request') detail = `n_predict=${l.body.n_predict} thinking=${JSON.stringify(l.body.chat_template_kwargs)}`;
+    else if (l.type === 'terminal') detail = `status=${l.status} finish=${l.finish_reason} total=${(l.usage || {}).total_tokens}`;
+    else { const d = (l.event && l.event.choices && l.event.choices[0] && l.event.choices[0].delta) || {}; detail = `… ${events.length} deltas (${Object.keys(d).join(',') || 'usage'})`; }
+    return `${at}  ${kind}${detail}`.slice(0, 118);
+  };
+  const journalText = reject ? 'no journal — the request was refused before admission'
+    : journal.map(journalLine).join('\n');
+
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="scrim" role="dialog" aria-modal="true" aria-label="Request 843d5943">
+    <div class="modal">
+      <div class="m-head">
+        <div class="m-title">
+          <span class="st ${reject ? 'c5' : 'c2'}"><i class="dot ${reject ? 'bad' : 'ok'}"></i>${reject ? '503' : '200'}</span>
+          <h3>843d5943-d082-4afe-bddb-66c1607b8618</h3>
+          ${reject ? '<span class="chip bad">BACKEND_UNAVAILABLE</span>' : '<span class="chip on">completed</span>'}
+          <span class="chip ${reject ? "mut" : "on"}">${reject ? 'no archive — refused before admission' : 'payload archived - 6d 21h left'}</span>
+          <span class="grow"></span>
+          <button class="btn sm ghost">${icon("left")} prev</button><button class="btn sm ghost">next ${icon("right")}</button>
+          <button class="btn sm ghost" title="Deep link ?request=…">Copy link</button>
+          <button class="btn sm ghost">${icon("download")} Download journal</button>
+          <button class="btn sm ghost" aria-label="Close">Esc ${icon("x")}</button>
+        </div>
+        <div class="m-sub">
+          <span class="mono">POST /v1/responses</span><span>·</span><span>OpenAI Responses</span><span>·</span>
+          <span>2026-10-22 22:16:11.711Z <span class="faint">(local 23:16)</span></span><span>·</span>
+          <span>deepseek-harness/d7650bc22925 <span class="faint">192.168.1.7</span></span><span>·</span>
+          <span>1.42 MiB in → ${bytes(183095)} out</span><span>·</span>
+          <span>${reject ? 'refused in 4 ms' : '9.58 s total · first token 0.80 s · 18.6 tok/s'}</span>
+        </div>
+      </div>
+      <div class="m-tabs" role="tablist">
+        <button role="tab" aria-selected="true">Overview</button>
+        <button role="tab" aria-selected="false">Prompt &amp; payload <span class="faint">(142 items)</span></button>
+        <button role="tab" aria-selected="false">Backend journal <span class="faint">(${reject ? 0 : 791} lines)</span></button>
+        <button role="tab" aria-selected="false">Raw</button>
+      </div>
+      <div class="m-body">
+        ${reject ? `<div class="notice warn"><span>${icon("warn")}</span><span><b>No payload archive for this request.</b> The router refused it before admission, so no generation journal was opened — the policy decision and the bounded request excerpt below are everything that was retained. Requests that <i>were</i> journaled show their full prompt here.</span></div>` :
+          `<div class="notice"><span>${icon("archive")}</span><span><b>Complete payload retained.</b> This request's journal (<span class="mono">843d5943…jsonl</span>, 700 KB, 791 events) is the source of every tab below; it is pruned after 7 days or under the 1 GiB archive budget.</span></div>`}
+        <div class="m-grid">
+          <div>
+            <div class="blk"><h5>Routing decision</h5>
+              ${[['Requested', reject ? '<span class="mono">daytime</span> <span class="faint">(alias)</span>' : '<span class="mono">daytime</span> <span class="faint">alias resolved</span>'],
+                 ['Served', '<span class="mono">qwen3.8-flash-next-ud-iq4_xs</span>'],
+                 ['Machine', 'rosalina <span class="faint">default · declared host</span>'],
+                 ['Backend', '<span class="mono">strata</span> @ <span class="mono">192.168.1.12:8080</span>'],
+                 ['Slots', reject ? '0 free — <span class="danger">backend unhealthy (503 from /health)</span>' : '1 admitted / 1 · 0 queued · 0 waiting'],
+                 ['Rewrite', '<span class="faint">off — alias forwarded exactly</span>']]
+                .map(([k, v]) => `<div class="krow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
+            </div>
+            <div class="blk"><h5>Timings</h5>
+              <div class="flow">
+                <div class="step ok"><div class="n">01 &nbsp;admission</div><div class="t">Admitted</div><div class="d">+0 ms · queue 0 ms</div></div>
+                <div class="step ok"><div class="n">02 &nbsp;upstream</div><div class="t">Connect + prompt eval</div><div class="d">+803 ms · 20,054 tok</div></div>
+                <div class="step ${reject ? 'warn' : 'ok'}"><div class="n">03 &nbsp;stream</div><div class="t">${reject ? 'Refused' : '336 tokens streamed'}</div><div class="d">${reject ? '+4 ms · 503' : '+9.58 s · 18.6 tok/s'}</div></div>
+                <div class="step"><div class="n">04 &nbsp;delivery</div><div class="t">${reject ? 'Error returned' : 'Complete'}</div><div class="d">${reject ? 'BACKEND_UNAVAILABLE' : 'finish_reason stop'}</div></div>
+              </div>
+              <div class="mini faint" style="margin-top:8px">TTFB, first-token and per-stage timings are new in this work — today only a single total <span class="mono">latencyMs</span> exists, and queue wait is not timestamped at all.</div>
+            </div>
+            <div class="blk"><h5>Controls negotiation</h5>
+              ${[['Thinking', '<span class="mono">"medium"</span> → forwarded <span class="mono">true</span> <span class="faint">mapped by active profile</span>'],
+                 ['Reasoning effort', '<span class="mono">medium</span> <span class="faint">accepted as declared</span>'],
+                 ['Output limit', '<span class="mono">policy reject</span> · requested none · effective unlimited'],
+                 ['Temperature', '<span class="faint">omitted → backend default</span>'],
+                 ['keep_alive', '<span class="mono">—</span> → <span class="mono">-1</span> <span class="faint">normalised for protected request</span>'],
+                 ['Tools', '62 declared · all forwarded <span class="faint">unsupported policy: drop</span>'],
+                 ['prompt_cache_key', 'absent'],
+                 ['Context admission', `<span class="mono">${adm.inputTokens ?? 20054}</span> input / slot context <span class="mono">${(adm.slotContext || 262144).toLocaleString()}</span> · reserve 1024 · available ${adm.availableTokens ? adm.availableTokens.toLocaleString() : '241,090'}`]]
+                .map(([k, v]) => `<div class="krow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
+            </div>
+          </div>
+          <div>
+            <div class="blk"><h5>Outcome</h5>
+              ${[['Status', `<span class="st ${reject ? 'c5' : 'c2'}">${reject ? 503 : 200}</span>`],
+                 ['Finish reason', reject ? '—' : h(term.finish_reason || 'stop')],
+                 ['Completion state', reject ? '<span class="danger">refused</span>' : 'completed'],
+                 ['Usage', reject ? '—' : `<span class="mono">${term.usage.prompt_tokens ?? 20054}</span> in · <span class="mono">${term.usage.completion_tokens ?? 336}</span> out · <span class="mono">${term.usage.total_tokens ?? 20390}</span> total`],
+                 ['Context transitions', reject ? '—' : String(term.context_transitions ?? 0) + ' <span class="faint">(no recovery needed)</span>'],
+                 ['Stream parse errors', '0'],
+                 ['Client', '<span class="mono">deepseek-harness/0.2.1-alpha.5</span> @ <span class="mono">192.168.1.7</span>'],
+                 ['Error body', reject ? '<span class="mono">{"error":{"code":"BACKEND_UNAVAILABLE","message":"The backend for qwen3.8-flash-next-ud-iq4_xs is unavailable. Retry when this service is healthy."}}</span> <span class="faint">(new: the body is retained, bounded to 4 KiB)</span>' : '—']]
+                .map(([k, v]) => `<div class="krow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
+            </div>
+            <div class="blk"><h5>Prompt &amp; payload <span class="faint" style="text-transform:none">· journal line <span class="mono">request</span></span></h5>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:9px;flex-wrap:wrap">
+                <span class="chip role">rendered</span><span class="chip mut">raw JSON</span>
+                <span class="faint" style="font-size:11px">142 input items · 4 tools groups · 3 images elided · 1.42 MiB</span>
+                <span class="spacer" style="flex:1"></span><button class="btn sm ghost">Collapse all</button>
+              </div>
+              ${messages.map((m) => `<details class="msg ${m.cls || m.role}" ${m.role === 'user' ? 'open' : ''}>
+                <summary><span class="caret">${icon("caret")}</span><span class="role ${m.cls || ''}">${m.role}</span>
+                  <span class="prev">${h(m.text.split('\n')[0]).slice(0, 108)}…</span><span class="len">${n(m.text.length)} ch</span></summary>
+                <div class="body">${h(m.text)}</div>
+              </details>`).join('')}
+              <details class="msg"><summary><span class="caret closed">${icon("caret")}</span><span class="role">input</span>
+                <span class="prev">… ${moreItems} more items — function_call / function_call_output pairs, truncated here, full in the raw view</span><span class="len">—</span></summary>
+                <div class="body">The detail endpoint returns a bounded projection (first 24 KiB, images replaced by
+                <span class="mono">{"type":"input_image","elided":true,"bytes":141312}</span>); <b>Download payload</b> streams the untouched line.</div></details>
+              <details class="msg"><summary><span class="caret closed">${icon("caret")}</span><span class="role dev">tools</span>
+                <span class="prev">62 schemas · ask_user_question, bash, edit, read, write, web_search, workflow, …</span><span class="len">318 kB</span></summary>
+                <div class="body">Rendered as name + one-line description; full schemas in the raw view. Schemas dominate this payload — which is why the table shows sizes rather than assuming the prompt is the bulk.</div></details>
+              <details class="msg"><summary><span class="caret closed">${icon("caret")}</span><span class="role">→ backend</span>
+                <span class="prev">translated request the router actually sent · n_predict -1 · chat_template_kwargs.enable_thinking true · reasoning_format deepseek</span><span class="len">1.44 MB</span></summary>
+                <div class="body"><pre class="code">${h(JSON.stringify(beReq.body || {}, null, 1)).slice(0, 900)}
+ …</pre></div></details>
+            </div>
+            <div class="blk"><h5>Backend journal <span class="faint" style="text-transform:none">· cursor-paged, ${reject ? 0 : events.length}+ events collapsed</span></h5>
+              <pre class="code">${h(journalText)}</pre>
+              <div class="mini faint" style="margin-top:7px">Real journals hold ~430 <span class="mono">backend_event</span> lines each (111,837 across the 258 archives on this box), so the journal tab aggregates deltas and pages by cursor instead of streaming the file.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="m-foot">
+        <span class="mono faint">GET /admin/api/requests/${'843d5943-d082-4afe-bddb-66c1607b8618'}</span>
+        <span class="spacer" style="flex:1"></span>
+        <span>← → walks the filtered list · Esc closes · ⌘C copies the deep link</span>
+      </div>
+    </div>
+  </div>`);
+  document.querySelector('main').setAttribute('aria-hidden', 'true');
+}
+</script>
+</body>
+</html>
