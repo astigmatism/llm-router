@@ -47,7 +47,7 @@ import uuid
 CONFIG_FILE = "/etc/open-webui-model-sync.json"
 DEFAULTS = {
     "db": "/opt/open-webui/data/webui.db",
-    "router": "http://192.168.1.4:11434",
+    "router": "http://192.168.1.23:11434",   # multi-host router instance (192.168.1.4 is retired)
     "state_file": "/var/lib/open-webui-model-sync/state.json",
     "lock_file": "/run/open-webui-model-sync.lock",
     "owner_email": None,           # owner of rows this enforcer creates; first admin when unset
@@ -432,7 +432,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", default=CONFIG_FILE, help="private host settings (JSON)")
     ap.add_argument("--db", help="path to webui.db")
-    ap.add_argument("--router", help="router base URL, e.g. http://192.168.1.4:11434")
+    ap.add_argument("--router", help="router base URL, e.g. http://192.168.1.23:11434")
     ap.add_argument("--source-file", help="read a capabilities document from this file instead of HTTP (testing)")
     ap.add_argument("--state-file")
     ap.add_argument("--lock-file")

@@ -26,8 +26,10 @@ The router never does any of these:
 
 | Client location | OpenAI-compatible base URL | Ollama-compatible base URL |
 |---|---|---|
-| LAN | `http://192.168.1.4:11434/v1` | `http://192.168.1.4:11434` |
+| LAN | `http://192.168.1.23:11434/v1` | `http://192.168.1.23:11434` |
 | Container on Rosalina's `local-ai-ollama_default` network | `http://ai-router:11434/v1` | `http://ai-router:11434` |
+
+The router instance clients use is the multi-host one at `192.168.1.23`. Rosalina's original single-host router on `192.168.1.4` is retired and refuses connections: a client still configured for it must be repointed (a container that maps `ai-router` through `extra_hosts` only needs the address in that mapping changed).
 
 | Route | Use |
 |---|---|

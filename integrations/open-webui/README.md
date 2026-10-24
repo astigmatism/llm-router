@@ -2,7 +2,7 @@
 
 ## Current deployment (192.168.1.20)
 
-Open WebUI runs on its own host, 192.168.1.20 (container `open-webui`, port 3000, data in `/opt/open-webui/data`). It reaches the router through a native Ollama connection (`OLLAMA_BASE_URL=http://ai-router:11434`, with `extra_hosts` mapping `ai-router` to 192.168.1.4). Two parts of this directory run there:
+Open WebUI runs on its own host, 192.168.1.20 (container `open-webui`, port 3000, data in `/opt/open-webui/data`). It reaches the router through a native Ollama connection (`OLLAMA_BASE_URL=http://ai-router:11434`, with `extra_hosts` mapping `ai-router` to 192.168.1.23, the multi-host router instance; it pointed at 192.168.1.4 until 2026-10-24). Two parts of this directory run there:
 
 | Directory | What it is |
 |---|---|

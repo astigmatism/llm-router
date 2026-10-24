@@ -39,7 +39,7 @@ Private settings live in `/etc/open-webui-model-sync.json` on the host (root, mo
 
 Optional keys with defaults:
 - `db`: `/opt/open-webui/data/webui.db`
-- `router`: `http://192.168.1.4:11434`
+- `router`: `http://192.168.1.23:11434` (the multi-host router instance; `192.168.1.4` is retired)
 - `state_file`, `lock_file`
 - `client_name`: `open-webui-model-sync`, sent as `X-Client-Name`
 
