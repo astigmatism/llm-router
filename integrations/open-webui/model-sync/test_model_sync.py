@@ -16,10 +16,10 @@ OWNER, ALICE, CHILD = "u-owner", "u-alice", "u-child"
 DAY, NIGHT = "qwen-day", "qwen-night"
 
 
-def model(mid, aliases, ctx, nsfw, display):
+def model(mid, aliases, ctx, nsfw, display, caps=("completion", "thinking", "tools", "vision")):
     return {"id": mid, "service": aliases[-1], "aliases": aliases, "available": True, "slots": 1,
             "context_window": ctx, "input_modalities": ["text", "image"],
-            "capabilities": ["completion", "thinking", "tools", "vision"], "nsfw": nsfw,
+            "capabilities": list(caps), "nsfw": nsfw,
             "display_name": display, "capability_score": 68.3}
 
 
@@ -50,11 +50,11 @@ class Fixture(unittest.TestCase):
                                        principal_id text, permission text, created_at integer);
         """)
         s.executemany("insert into user values (?,?,?)", [(OWNER, "owner@example.test", "admin"),
-                                                         (ALICE, "alice@example.test", "user"),
-                                                         (CHILD, "child@example.test", "user")])
+                                                          (ALICE, "alice@example.test", "user"),
+                                                          (CHILD, "child@example.test", "user")])
         presets = [("p-day", "daytime", "Daytime (160K)", 1), ("p-day-deep", "daytime", "Daytime (Deep Thinking, 160K)", 1),
-                   ("p-night", "nighttime", "Nighttime (128K)", 1), ("p-night-deep", "nighttime", "Nighttime (Deep Thinking, 128K)", 1),
-                   ("p-retired", "nighttime", "Nighttime old experiment (64K)", 0), ("p-other", "llama3:8b", "Other (8K)", 1)]
+                   ("p-night", "nighttime", "Nighttime (96K)", 1), ("p-retired", "nighttime", "Nighttime old experiment (64K)", 0),
+                   ("p-other", "llama3:8b", "Other (8K)", 1)]
         for pid, base, name, active in presets:
             s.execute("insert into model values (?,?,?,?,?,?,?,?,?)",
                       (pid, OWNER, base, name, '{"think": true}', '{"description": "kept"}', 0, 0, active))
@@ -77,70 +77,140 @@ class Fixture(unittest.TestCase):
     def grants(self, mid):
         s = sqlite3.connect(self.db)
         try:
-            return {r[0] for r in s.execute("select principal_id from access_grant where resource_id=?", (mid,))}
+            return {r[0] for r in s.execute(
+                "select principal_id from access_grant where resource_id=? and permission='read'", (mid,))}
         finally:
             s.close()
 
 
-class ModelSyncTests(Fixture):
-    def test_paired_configuration_labels_rows_and_presets_and_grants_by_nsfw(self):
+class ReflectionTests(Fixture):
+    def test_every_published_tag_gets_its_own_visible_row_under_its_own_name(self):
         status, changes, summary = self.run_doc(PAIRED)
         self.assertEqual(status, "ok")
         rows = self.rows()
-        self.assertEqual((rows[DAY]["name"], rows[NIGHT]["name"]), ("Daytime (160K)", "Nighttime (96K)"))
+        for tag, canonical in [(DAY, DAY), ("local-active", DAY), ("daytime", DAY), (NIGHT, NIGHT), ("nighttime", NIGHT)]:
+            self.assertEqual(rows[tag]["name"], tag, "a row is named with the tag itself")
+            self.assertEqual(rows[tag]["active"], 1)
+            self.assertIs(rows[tag]["meta"]["hidden"], False)
+            self.assertEqual(rows[tag]["meta"][ms.MARKER], {"tag": tag})
+            self.assertEqual(rows[tag]["base"], None)
+            if tag != canonical:
+                self.assertIn(f"alias of {canonical}", rows[tag]["meta"]["description"])
+            else:
+                self.assertNotIn("alias of", rows[tag]["meta"]["description"])
         self.assertTrue(rows[NIGHT]["meta"]["description"].endswith("; NSFW"))
-        self.assertEqual(rows["p-night"]["name"], "Nighttime (96K)")
-        self.assertEqual(rows["p-night-deep"]["name"], "Nighttime (Deep Thinking, 96K)")
-        self.assertEqual(rows["p-day"]["name"], "Daytime (160K)")
-        # Non-NSFW models are public; NSFW models exclude the configured users.
-        self.assertEqual(self.grants("p-day"), {OWNER, ALICE, CHILD, "*"})
-        self.assertEqual(self.grants("p-night"), {OWNER, ALICE})
-        self.assertEqual(self.grants(NIGHT), {OWNER, ALICE})
-        # Presets keep their own parameters and descriptions; unrelated presets are untouched.
-        self.assertEqual((rows["p-night"]["params"], rows["p-night"]["meta"]), ('{"think": true}', {"description": "kept"}))
-        self.assertEqual(rows["p-other"]["name"], "Other (8K)")
-        self.assertEqual(self.grants("p-other"), set())
-        self.assertEqual(summary["nighttime"], NIGHT)
+        # Non-NSFW rows are public; NSFW rows (and their aliases) exclude the configured users.
+        for tag in (DAY, "local-active", "daytime"):
+            self.assertEqual(self.grants(tag), {OWNER, ALICE, CHILD, "*"})
+        for tag in (NIGHT, "nighttime"):
+            self.assertEqual(self.grants(tag), {OWNER, ALICE})
+        self.assertEqual(summary["tags"], sorted([DAY, "local-active", "daytime", NIGHT, "nighttime"]))
         self.assertEqual(self.run_doc(PAIRED)[1], [], "a second run is a no-op")
 
-    def test_solo_configuration_hides_nighttime_presets_and_restores_them(self):
+    def test_presets_are_never_touched(self):
+        self.run_doc(PAIRED)
+        rows = self.rows()
+        for pid, name in [("p-day", "Daytime (160K)"), ("p-day-deep", "Daytime (Deep Thinking, 160K)"),
+                          ("p-night", "Nighttime (96K)"), ("p-retired", "Nighttime old experiment (64K)"),
+                          ("p-other", "Other (8K)")]:
+            self.assertEqual((rows[pid]["name"], rows[pid]["params"], rows[pid]["meta"]),
+                             (name, '{"think": true}', {"description": "kept"}))
+            self.assertEqual(self.grants(pid), set(), "preset grants are nobody's business here")
+        self.assertEqual((rows["p-day"]["active"], rows["p-retired"]["active"]), (1, 0), "active flags untouched")
+
+    def test_legacy_branded_rows_are_adopted_renamed_and_unhidden(self):
+        s = sqlite3.connect(self.db)
+        s.execute("insert into model values (?,?,?,?,?,?,?,?,1)",
+                  (DAY, OWNER, None, "Daytime (160K)", "{}",
+                   json.dumps({"hidden": True, "description": "stale", "profile_image_url": "/img/day.png"}), 0, 0))
+        s.commit()
+        s.close()
+        self.run_doc(PAIRED)
+        rows = self.rows()
+        self.assertEqual(rows[DAY]["name"], DAY)
+        self.assertIs(rows[DAY]["meta"]["hidden"], False)
+        self.assertEqual(rows[DAY]["meta"]["profile_image_url"], "/img/day.png", "a hand-picked image survives")
+        self.assertEqual(rows[DAY]["meta"][ms.MARKER], {"tag": DAY})
+        self.assertIn("160K context", rows[DAY]["meta"]["description"])
+
+    def test_rows_for_unpublished_tags_are_retired_and_return_with_the_tag(self):
         self.run_doc(PAIRED)
         _, changes, summary = self.run_doc(SOLO)
         rows = self.rows()
-        self.assertEqual((rows["p-night"]["active"], rows["p-night-deep"]["active"]), (0, 0))
-        marker = rows["p-night"]["meta"][ms.MARKER]
-        self.assertEqual(marker["reason"], "offline in runtime configuration flash-next-solo-128k (exclusive_configuration)")
-        self.assertEqual(rows["p-day"]["name"], "Daytime (128K)")
-        # The Nighttime routine row is not retired, and its grants are not touched while offline.
-        self.assertEqual(rows[NIGHT]["active"], 1)
-        self.assertEqual(self.grants("p-night"), {OWNER, ALICE})
+        self.assertEqual((rows[NIGHT]["active"], rows["nighttime"]["active"]), (0, 0), "offline tags retire")
+        self.assertEqual(self.grants(NIGHT), {OWNER, ALICE}, "retirement keeps grants for the return")
+        self.assertTrue(any(c.startswith(f"retire reflection row {NIGHT!r}") for c in changes))
+        self.assertEqual(rows["flash"]["active"], 1)
         self.assertEqual(summary["offline"], ["nighttime", NIGHT])
-        self.assertEqual(self.run_doc(SOLO)[1], [])
-        # Nighttime returns, under a new canonical ID: presets come back and are relabelled.
+        self.assertEqual(self.run_doc(SOLO)[1], [], "a second solo pass is a no-op")
+        # retiring must not touch rows this enforcer never marked
+        s = sqlite3.connect(self.db)
+        s.execute("insert into model values (?,?,?,?,?,?,?,?,1)",
+                  ("qwen-handmade", OWNER, None, "Hand Made (8K)", "{}", '{"description": "mine"}', 0, 0))
+        s.commit()
+        s.close()
+        self.assertEqual(self.run_doc(PAIRED)[1].count("retire reflection row 'qwen-handmade'"), 0)
+        self.assertEqual(self.rows()["qwen-handmade"]["active"], 1)
         back = doc(model(DAY, ["local-active", "daytime"], 163840, False, "Qwen Day (160K)"),
-                   model("qwen-night-mtp3", ["nighttime"], 98304, True, "Night MTP3 (96K)"), revision="r3")
+                   model(NIGHT, ["nighttime"], 98304, True, "Qwen Night Abliterated (96K)"), revision="r3")
         self.run_doc(back)
         rows = self.rows()
-        self.assertEqual((rows["p-night"]["active"], rows["p-night-deep"]["active"]), (1, 1))
-        self.assertNotIn(ms.MARKER, rows["p-night"]["meta"])
-        self.assertEqual(rows["p-night"]["meta"], {"description": "kept"})
-        self.assertEqual(rows["qwen-night-mtp3"]["name"], "Nighttime (96K)")
-        self.assertEqual(rows[NIGHT]["active"], 0, "the replaced Nighttime model is retired")
-        self.assertEqual(self.grants("p-night"), {OWNER, ALICE})
+        self.assertEqual((rows[NIGHT]["active"], rows["nighttime"]["active"]), (1, 1), "the tags come back")
 
-    def test_presets_deactivated_by_hand_are_never_reactivated(self):
-        self.run_doc(SOLO)
+    def test_offline_tags_publish_nothing_and_retire_nothing_when_everything_is_offline(self):
         self.run_doc(PAIRED)
+        before = self.rows()
+        all_offline = doc(model(DAY, ["daytime"], 163840, False, "Qwen Day (160K)"),
+                          offline=[{"model": DAY, "aliases": ["daytime"], "display_name": "Day", "reason": "maintenance"}],
+                          configuration="maintenance", revision="r9")
+        status, changes, _ = self.run_doc(all_offline)
+        self.assertEqual(status, "no_models")
+        self.assertEqual(changes, [])
+        self.assertEqual(self.rows(), before, "an empty inventory is not a usable document")
+
+    def test_vision_switch_follows_the_model(self):
+        text_only = copy.deepcopy(PAIRED)
+        for m in text_only["models"]:
+            if m["id"] == NIGHT:
+                m["capabilities"] = ["completion", "thinking", "tools"]
+                m["input_modalities"] = ["text"]
+        self.run_doc(text_only)
         rows = self.rows()
-        self.assertEqual((rows["p-retired"]["active"], rows["p-retired"]["name"]), (0, "Nighttime old experiment (64K)"))
-        self.assertEqual(self.grants("p-retired"), set())
-        self.assertEqual(rows["p-night"]["active"], 1)
+        self.assertIs(rows[NIGHT]["meta"]["capabilities"]["vision"], False)
+        self.assertIs(rows[DAY]["meta"]["capabilities"]["vision"], True)
+        self.assertIs(rows["daytime"]["meta"]["capabilities"]["vision"], True, "an alias follows its model")
 
     def test_an_unknown_nsfw_flag_fails_closed(self):
         unknown = copy.deepcopy(PAIRED)
         unknown["models"][0]["nsfw"] = None
         self.run_doc(unknown)
-        self.assertEqual(self.grants("p-day"), {OWNER, ALICE})
+        self.assertEqual(self.grants(DAY), {OWNER, ALICE})
+        self.assertEqual(self.grants("daytime"), {OWNER, ALICE}, "an alias follows its model")
+
+    def test_hand_made_grants_are_corrected(self):
+        s = sqlite3.connect(self.db)
+        s.execute("insert into access_grant values ('g1','model',?,'user',?,'read',0)", (NIGHT, CHILD))
+        s.execute("insert into access_grant values ('g2','model',?,'user',?,'write',0)", (NIGHT, CHILD))
+        s.commit()
+        s.close()
+        _, changes, _ = self.run_doc(PAIRED)
+        self.assertEqual(self.grants(NIGHT), {OWNER, ALICE}, "the read grant to the excluded user is revoked")
+        s = sqlite3.connect(self.db)
+        try:
+            self.assertEqual({(r[0], r[1]) for r in s.execute("select principal_id, permission from access_grant where resource_id=?", (NIGHT,))},
+                             {(OWNER, "read"), (ALICE, "read"), (CHILD, "write")}, "non-read grants are never touched")
+        finally:
+            s.close()
+        self.assertTrue(any(c.startswith("revoke read") for c in changes))
+
+    def test_alias_colliding_with_a_canonical_id_keeps_the_canonical_row(self):
+        collide = doc(model("alpha", ["beta", "gamma"], 131072, False, "Alpha (128K)"),
+                      model("beta", ["beta-own"], 65536, False, "Beta (64K)"))
+        self.run_doc(collide)
+        rows = self.rows()
+        self.assertIn("Beta", rows["beta"]["meta"]["description"], "the canonical model owns its id")
+        self.assertEqual(rows["gamma"]["meta"][ms.MARKER], {"tag": "gamma"})
+        self.assertIn("alias of alpha", rows["gamma"]["meta"]["description"])
 
     def test_never_writes_without_a_usable_document(self):
         before = self.rows()
@@ -154,13 +224,14 @@ class ModelSyncTests(Fixture):
         before = self.rows()
         status, changes, _ = self.run_doc(SOLO, write=False)
         self.assertEqual(status, "dry_run")
-        self.assertTrue(any(c.startswith("deactivate preset 'p-night'") for c in changes))
+        self.assertTrue(any(c.startswith("create reflection row 'flash'") for c in changes))
         self.assertEqual(self.rows(), before)
 
     def test_run_once_records_state_under_the_lock(self):
         ms.run_once(copy.deepcopy(SOLO), self.cfg, dry_run=False)
         state = json.loads(Path(self.cfg["state_file"]).read_text())
         self.assertEqual((state["status"], state["configuration"], state["revision"]), ("ok", "flash-next-solo-128k", "r2"))
+        self.assertEqual(state["tags"], ["daytime", "flash", "local-active"])
 
     def test_private_settings_come_from_the_config_file(self):
         path = os.path.join(self.tmp.name, "config.json")

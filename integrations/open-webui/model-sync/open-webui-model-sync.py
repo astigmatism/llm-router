@@ -1,42 +1,45 @@
 #!/usr/bin/env python3
-"""open-webui-model-sync — keep Open WebUI's model list in step with the LLM Router.
+"""open-webui-model-sync — keep Open WebUI's model list an exact reflection of the LLM Router.
 
 The LLM Router publishes its live deployment at GET /v1/router/capabilities
 and pushes every change at GET /v1/router/events (see the router's
-docs/CLIENT_CONTRACT.md). Open WebUI (data dir /opt/open-webui/data) reaches the
-router through its native Ollama connection. This enforcer keeps Open WebUI's
-`model` and `access_grant` rows consistent with what the router serves:
+docs/CLIENT_CONTRACT.md). Open WebUI (data dir /opt/open-webui/data) reaches
+the router through its native Ollama connection, and Open WebUI layers its
+`model` table over that live list: a row with the same id renames the model
+and a row marked hidden vanishes from the picker. This enforcer keeps those
+rows from branding or hiding what the router serves:
 
-  1. routine rows — one hidden, active row per served model whose aliases
-     include `daytime` or `nighttime`, named "Daytime (128K)" / "Nighttime (96K)"
-     from the live context window, with a description of the model;
-  2. alias rows — `daytime`, `nighttime`, `local-active` stay labelled (admins
-     only, never granted);
-  3. access — read grants on routine rows and on presets based on a routine
-     alias follow the model's NSFW flag: NSFW models (or models whose flag is
-     unknown) go to every user except `nsfw_excluded_users`; other models go to
-     everyone ('*');
-  4. availability — presets based on a service that the current runtime
-     configuration deliberately stops (router `offline_services`) are
-     deactivated with a marker, and reactivated when the service returns. Only
-     presets this enforcer deactivated are ever reactivated;
-  5. labels — a routine preset name ending in "<N>K)" keeps N equal to the
-     serving model's context window;
-  6. retirement — routine-labelled rows for models the router no longer serves
-     are soft-retired (is_active = 0), but only for a profile still served.
+  1. reflection rows — one active, visible row per published tag: every served
+     model's canonical id plus its aliases, which is exactly the set of names
+     GET /api/tags returns. A row is named with the tag itself and never
+     renamed; its description tells the model behind the tag, and an alias
+     description names its canonical model;
+  2. access — read grants on those rows follow each model's NSFW flag: NSFW
+     models (or models whose flag is unknown) go to every user except
+     `nsfw_excluded_users`; other models go to everyone ('*');
+  3. retirement — rows this enforcer marked, for tags the router no longer
+     publishes, are soft-retired (`is_active = 0`) and reactivated if the tag
+     returns. Nothing here is ever deleted.
+
+Rows this enforcer did not mark — user presets (any row with a base model)
+and rows made by hand — are never renamed, relabelled, re-granted, hidden or
+retired. Version 3 (2026-10-24) replaced version 2's profile branding (routine
+rows named "Daytime (160K)", hidden alias labels, preset relabelling and
+offline-service reactivation) with this reflection rule at the owner's
+request: the picker must show exactly what the router publishes, under the
+names the router publishes.
 
 Runs once per invocation (timer) or follows the router's event stream
-(`--watch`). Writes nothing when the router is unreachable or serves no models.
-All writes commit atomically under a lock shared by both modes. Private host
-settings (owner, per-user exclusions) live in /etc/open-webui-model-sync.json,
-never in this file.
+(`--watch`). Writes nothing when the router is unreachable or publishes no
+tags. All writes commit atomically under a lock shared by both modes.
+Private host settings (owner, per-user exclusions) live in
+/etc/open-webui-model-sync.json, never in this file.
 """
 
 import argparse
 import fcntl
 import json
 import os
-import re
 import sqlite3
 import sys
 import time
@@ -54,7 +57,6 @@ DEFAULTS = {
     "nsfw_excluded_users": [],     # user IDs that never receive read access to NSFW models
     "client_name": "open-webui-model-sync",
 }
-PROFILE_WORDS = ("daytime", "nighttime")     # router service alias -> routine word
 CAPS = {
     "vision": True,
     "builtin_tools": True,
@@ -63,9 +65,7 @@ CAPS = {
     "terminal": True,
     "image_generation": True,
 }
-ROUTINE_NAME_RE = re.compile(r"^(Daytime|Nighttime) \(")
-CONTEXT_SUFFIX_RE = re.compile(r"^(?P<prefix>.*?)(?P<k>\d+)K\)$")
-MARKER = "model_sync"                        # key in a preset's meta set when this enforcer deactivates it
+MARKER = "model_sync"                        # key in a row's meta set when this enforcer manages it
 
 
 def log(msg):
@@ -95,39 +95,35 @@ def kctx(ctx):
         return ""
 
 
-def routine_word(aliases):
-    for w in PROFILE_WORDS:
-        if w in (aliases or []):
-            return w.capitalize()
-    return None
-
-
-def desired(word, model):
-    """Desired (label, meta) for a routine row, from a capabilities-document model."""
-    ctx = model.get("context_window")
-    label = f"{word} ({kctx(ctx)})" if ctx else word
-    disp = model.get("display_name") or model["id"]
+def describe(model, canonical, tag):
+    """Description for a reflection row: model, inputs, extras, context, and, for an
+    alias, the model it answers."""
+    disp = model.get("display_name") or canonical
     disp_core = disp.rsplit(" (", 1)[0] if " (" in disp else disp
     modalities = ", ".join(model.get("input_modalities") or ["text"])
     caps = model.get("capabilities") or []
-    extras = [c for c in ("tools", "reasoning") if c in caps]
+    extras = [c for c in ("tools", "thinking") if c in caps]
     desc = f"{disp_core}; {modalities}"
     if extras:
         desc += f", {', '.join(extras)}"
+    ctx = kctx(model.get("context_window"))
     if ctx:
-        desc += f"; {kctx(ctx)} context"
+        desc += f"; {ctx} context"
     if model.get("slots") == 1:
         desc += ", one active request"
+    if tag != canonical:
+        desc += f"; alias of {canonical}"
     if model.get("nsfw") is True:
         desc += "; NSFW"
-    meta = {
-        "profile_image_url": None,
-        "description": desc,
-        "capabilities": dict(CAPS),
-        "knowledge": None,
-        "hidden": True,
-    }
-    return label, meta
+    return desc
+
+
+def caps_for(model):
+    """Open WebUI feature switches for a row: the router's word for vision drives
+    the vision switch; the rest are Open WebUI-side features."""
+    caps = dict(CAPS)
+    caps["vision"] = "vision" in (model.get("capabilities") or [])
+    return caps
 
 
 def principals_for(model, user_ids, excluded):
@@ -213,17 +209,37 @@ def sync_grants(s, mid, principals, changes, write):
             )
 
 
+def published_tags(doc, offline, configuration):
+    """{tag: (canonical id, model)} for everything the router publishes right now:
+    each available model's canonical id plus its aliases, minus offline names."""
+    available = [m for m in doc if m.get("available") is not False]
+    tags = {}
+    for m in available:
+        if m["id"] not in offline:
+            tags[m["id"]] = (m["id"], m)
+    for m in available:
+        for alias in m.get("aliases") or []:
+            if alias in offline:
+                continue
+            if alias in tags:
+                if tags[alias][0] != m["id"]:
+                    warn(f"alias {alias!r} collides with model {tags[alias][0]!r}; keeping the canonical row")
+                continue
+            tags[alias] = (m["id"], m)
+    return tags
+
+
 def reconcile(doc, cfg, write):
     """Apply one capabilities document to the database. Returns (status, changes, summary)."""
     if not isinstance(doc, dict) or doc.get("object") != "router.capabilities":
         warn("router returned an unexpected document; refusing to touch the DB")
         return "invalid_document", [], {}
     models = [m for m in doc.get("models") or [] if isinstance(m, dict) and m.get("id")]
+    configuration = (doc.get("configuration") or {}).get("id")
     if not models:
         warn(f"router serves no models ({', '.join(doc.get('warnings') or []) or 'no warnings'}); refusing to touch the DB")
         return "no_models", [], {}
 
-    configuration = (doc.get("configuration") or {}).get("id")
     offline = {}
     for service in doc.get("offline_services") or []:
         reason = f"offline in runtime configuration {configuration}" if configuration else "offline"
@@ -233,19 +249,10 @@ def reconcile(doc, cfg, write):
             if alias:
                 offline[alias] = reason
 
-    served = {}           # alias -> model, for every served alias
-    managed = {}          # canonical id -> (word, model)
-    for m in models:
-        word = routine_word(m.get("aliases"))
-        if word:
-            managed[m["id"]] = (word, m)
-        for alias in m.get("aliases") or []:
-            served[alias] = m
-    words_served = {word for word, _ in managed.values()}
-    for word in (w.capitalize() for w in PROFILE_WORDS):
-        if word not in words_served:
-            state = "offline by configuration" if word.lower() in offline else "not served"
-            warn(f"no {word} model this cycle ({state}); stale rows for that profile will not be retired")
+    tags = published_tags(models, offline, configuration)
+    if not tags:
+        warn(f"router publishes no tags this cycle (all offline{': ' + ', '.join(sorted(offline)) if offline else ''}); refusing to touch the DB")
+        return "no_models", [], {}
 
     changes = []
     s = sqlite3.connect(cfg["db"], timeout=30)
@@ -263,100 +270,65 @@ def reconcile(doc, cfg, write):
         }
         now = int(time.time())
 
-        # ---- pass 1: routine rows (served daytime/nighttime models) ----
-        for mid in sorted(managed):
-            word, model = managed[mid]
-            label, meta = desired(word, model)
-            ex = existing.get(mid)
+        # ---- pass 1: reflection rows, one per published tag, named by the tag ----
+        for tag in sorted(tags):
+            canonical, model = tags[tag]
+            desc = describe(model, canonical, tag)
+            caps = caps_for(model)
+            principals = principals_for(model, user_ids, excluded)
+            marker = {"tag": tag}
+            ex = existing.get(tag)
             if ex is None:
-                changes.append(f"create routine row {mid!r} name={label!r}")
+                changes.append(f"create reflection row {tag!r}")
+                meta = {
+                    "profile_image_url": None,
+                    "description": desc,
+                    "capabilities": caps,
+                    "knowledge": None,
+                    "hidden": False,
+                    MARKER: marker,
+                }
                 execute("insert into model (id, user_id, base_model_id, name, params, meta,"
                         " updated_at, created_at, is_active) values (?,?,?,?,?,?,?,?,1)",
-                        (mid, owner_id, None, label, "{}", json.dumps(meta, separators=(",", ":")), now, now))
+                        (tag, owner_id, None, tag, "{}", json.dumps(meta, separators=(",", ":")), now, now))
             else:
                 old_meta = json.loads(ex["meta"] or "{}")
-                new_meta = dict(meta, profile_image_url=old_meta.get("profile_image_url"))
+                new_meta = dict(old_meta)
+                new_meta["description"] = desc
+                new_meta["capabilities"] = caps
+                new_meta["hidden"] = False
+                new_meta[MARKER] = marker
                 what = []
-                if ex["name"] != label:
-                    what.append(f"name {ex['name']!r}->{label!r}")
-                if old_meta.get("description") != meta["description"]:
+                if ex["name"] != tag:
+                    what.append(f"name {ex['name']!r}->{tag!r}")
+                if old_meta.get("description") != desc:
                     what.append("description refreshed")
-                if old_meta.get("hidden") is not True:
-                    what.append("hidden->true")
+                if old_meta.get("capabilities") != caps:
+                    what.append("capabilities refreshed")
+                if old_meta.get("hidden") is not False:
+                    what.append("hidden->false")
+                if old_meta.get(MARKER) != marker:
+                    what.append("marked")
                 if not ex["is_active"]:
                     what.append("re-activated")
                 if what:
-                    changes.append(f"update routine row {mid!r}: " + ", ".join(what))
+                    changes.append(f"update reflection row {tag!r}: " + ", ".join(what))
                     execute("update model set name=?, meta=?, is_active=1, updated_at=? where id=?",
-                            (label, json.dumps(new_meta, separators=(",", ":")), now, mid))
-            sync_grants(s, mid, principals_for(model, user_ids, excluded), changes, write)
+                            (tag, json.dumps(new_meta, separators=(",", ":")), now, tag))
+            sync_grants(s, tag, principals, changes, write)
 
-        # ---- pass 2: alias rows (admin labels, never granted) ----
-        alias_ids = set()
-        for alias, model in sorted(served.items()):
-            word = routine_word(model.get("aliases"))
-            if not word:
-                continue
-            if alias in managed:
-                warn(f"alias {alias!r} collides with a routine model id; skipping alias row")
-                continue
-            alias_ids.add(alias)
-            label, meta = desired(word, model)
-            ex = existing.get(alias)
-            if ex is None:
-                changes.append(f"create alias row {alias!r} name={label!r}")
-                execute("insert into model (id, user_id, base_model_id, name, params, meta,"
-                        " updated_at, created_at, is_active) values (?,?,?,?,?,?,?,?,1)",
-                        (alias, owner_id, None, label, "{}", json.dumps(meta, separators=(",", ":")), now, now))
-            elif ex["name"] != label:
-                changes.append(f"rename alias row {alias!r}: {ex['name']!r}->{label!r}")
-                execute("update model set name=?, updated_at=? where id=?", (label, now, alias))
-
-        # ---- passes 3-5: presets based on a routine alias ----
-        routine_aliases = {a for a, m in served.items() if routine_word(m.get("aliases"))} | set(offline)
-        for pid, base, name, meta_raw, active in list(s.execute(
-                "select id, base_model_id, name, meta, is_active from model where base_model_id is not null")):
-            if base not in routine_aliases:
-                continue  # presets on other bases (experiments, retired backends) are never touched
-            meta = json.loads(meta_raw or "{}")
-            marker = meta.get(MARKER) if isinstance(meta.get(MARKER), dict) else None
-            if not active and not (marker and marker.get("offline")):
-                continue  # deactivated by hand: never relabelled, regranted or reactivated
-            model = served.get(base)
-            if model is None:
-                # Offline by configuration: hide it until the service returns.
-                if active:
-                    meta[MARKER] = {"offline": True, "reason": offline[base], "since": now}
-                    changes.append(f"deactivate preset {pid!r} ({name!r}): {offline[base]}")
-                    execute("update model set is_active=0, meta=?, updated_at=? where id=?",
-                            (json.dumps(meta, separators=(",", ":")), now, pid))
-                continue
-            updates = {}
-            if marker and marker.get("offline"):
-                meta.pop(MARKER, None)
-                updates["is_active"] = 1
-                changes.append(f"reactivate preset {pid!r} ({name!r}): {base} is served again")
-            match = CONTEXT_SUFFIX_RE.match(name or "")
-            label = kctx(model.get("context_window"))
-            if match and label and f"{match.group('k')}K" != label:
-                new_name = f"{match.group('prefix')}{label})"
-                updates["name"] = new_name
-                changes.append(f"relabel preset {pid!r}: {name!r}->{new_name!r}")
-            if updates:
-                execute("update model set name=?, meta=?, is_active=?, updated_at=? where id=?",
-                        (updates.get("name", name), json.dumps(meta, separators=(",", ":")),
-                         updates.get("is_active", active), now, pid))
-            sync_grants(s, pid, principals_for(model, user_ids, excluded), changes, write)
-
-        # ---- pass 6: retire stale routine-labelled raw-model rows ----
+        # ---- pass 2: retire marked rows whose tag the router no longer publishes ----
         for mid, ex in sorted(existing.items()):
-            if mid in managed or mid in alias_ids:
+            if mid in tags:
                 continue
-            m = ROUTINE_NAME_RE.match(ex["name"] or "")
-            if not m or m.group(1) not in words_served:
-                continue  # not routine, or its profile isn't served this cycle: never retire
+            try:
+                meta = json.loads(ex["meta"] or "{}")
+            except ValueError:
+                continue
+            if not isinstance(meta.get(MARKER), dict):
+                continue  # not ours: hand-made rows and old experiments stay exactly as they are
             if ex["is_active"]:
-                changes.append(f"retire stale routine row {mid!r} name={ex['name']!r} (is_active=0)")
+                changes.append(f"retire reflection row {mid!r} (no longer published)")
                 execute("update model set is_active=0, updated_at=? where id=?", (now, mid))
 
         if changes and write:
@@ -367,9 +339,8 @@ def reconcile(doc, cfg, write):
     summary = {
         "configuration": configuration,
         "revision": doc.get("revision"),
-        "daytime": next((m["id"] for m in models if "daytime" in (m.get("aliases") or [])), None),
-        "nighttime": next((m["id"] for m in models if "nighttime" in (m.get("aliases") or [])), None),
-        "offline": sorted(a for a in offline if a in routine_aliases),
+        "tags": sorted(tags),
+        "offline": sorted(offline),
     }
     return ("ok" if write else "dry_run"), changes, summary
 
@@ -400,8 +371,8 @@ def run_once(doc, cfg, dry_run):
     if not dry_run:
         write_state(cfg["state_file"], {"status": status, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                         "router": cfg["router"], "changes": len(changes), **summary})
-    log(f"done: status={status} configuration={summary.get('configuration')} daytime={summary.get('daytime')} "
-        f"nighttime={summary.get('nighttime')} offline={summary.get('offline')} changes={len(changes)}")
+    log(f"done: status={status} configuration={summary.get('configuration')} revision={summary.get('revision')} "
+        f"tags={len(summary.get('tags') or [])} offline={summary.get('offline')} changes={len(changes)}")
     return status
 
 
