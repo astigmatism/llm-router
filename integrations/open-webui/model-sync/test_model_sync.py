@@ -84,20 +84,26 @@ class Fixture(unittest.TestCase):
 
 
 class ReflectionTests(Fixture):
-    def test_every_published_tag_gets_its_own_visible_row_under_its_own_name(self):
+    def test_models_show_under_published_display_names_and_aliases_stay_hidden(self):
         status, changes, summary = self.run_doc(PAIRED)
         self.assertEqual(status, "ok")
         rows = self.rows()
-        for tag, canonical in [(DAY, DAY), ("local-active", DAY), ("daytime", DAY), (NIGHT, NIGHT), ("nighttime", NIGHT)]:
-            self.assertEqual(rows[tag]["name"], tag, "a row is named with the tag itself")
+        for tag, canonical, name, hidden in [
+            (DAY, DAY, "Qwen Day (160K)", False),
+            (NIGHT, NIGHT, "Qwen Night Abliterated (96K)", False),
+            ("local-active", DAY, "local-active", True),
+            ("daytime", DAY, "daytime", True),
+            ("nighttime", NIGHT, "nighttime", True),
+        ]:
+            self.assertEqual(rows[tag]["name"], name, "models carry the router's display name; aliases the raw word")
             self.assertEqual(rows[tag]["active"], 1)
-            self.assertIs(rows[tag]["meta"]["hidden"], False)
+            self.assertIs(rows[tag]["meta"]["hidden"], hidden)
             self.assertEqual(rows[tag]["meta"][ms.MARKER], {"tag": tag})
             self.assertEqual(rows[tag]["base"], None)
-            if tag != canonical:
-                self.assertIn(f"alias of {canonical}", rows[tag]["meta"]["description"])
-            else:
-                self.assertNotIn("alias of", rows[tag]["meta"]["description"])
+        for tag in ("local-active", "daytime"):
+            self.assertIn(f"alias of {DAY}", rows[tag]["meta"]["description"])
+        self.assertIn(f"alias of {NIGHT}", rows["nighttime"]["meta"]["description"])
+        self.assertNotIn("alias of", rows[DAY]["meta"]["description"])
         self.assertTrue(rows[NIGHT]["meta"]["description"].endswith("; NSFW"))
         # Non-NSFW rows are public; NSFW rows (and their aliases) exclude the configured users.
         for tag in (DAY, "local-active", "daytime"):
@@ -127,11 +133,32 @@ class ReflectionTests(Fixture):
         s.close()
         self.run_doc(PAIRED)
         rows = self.rows()
-        self.assertEqual(rows[DAY]["name"], DAY)
+        self.assertEqual(rows[DAY]["name"], "Qwen Day (160K)", "adopted into the published display name")
         self.assertIs(rows[DAY]["meta"]["hidden"], False)
         self.assertEqual(rows[DAY]["meta"]["profile_image_url"], "/img/day.png", "a hand-picked image survives")
         self.assertEqual(rows[DAY]["meta"][ms.MARKER], {"tag": DAY})
         self.assertIn("160K context", rows[DAY]["meta"]["description"])
+
+    def test_republished_display_names_are_mirrored_onto_visible_rows(self):
+        self.run_doc(PAIRED)
+        reroll = copy.deepcopy(PAIRED)
+        reroll["models"][0]["display_name"] = "Qwen Day Rerolled (160K)"
+        reroll["revision"] = "r7"
+        _, changes, _ = self.run_doc(reroll)
+        self.assertEqual(self.rows()[DAY]["name"], "Qwen Day Rerolled (160K)")
+        self.assertTrue(any(f"name 'Qwen Day (160K)'->'Qwen Day Rerolled (160K)'" in c for c in changes))
+        self.assertEqual(self.run_doc(reroll)[1], [], "the mirror settles")
+
+    def test_alias_promoted_to_a_model_id_becomes_visible_and_display_named(self):
+        self.run_doc(PAIRED)
+        promoted = doc(model("daytime", ["local-active"], 131072, False, "Daytime Prime (128K)"))
+        self.run_doc(promoted)
+        rows = self.rows()
+        self.assertEqual((rows["daytime"]["name"], rows["daytime"]["meta"]["hidden"]), ("Daytime Prime (128K)", False))
+        self.assertEqual(rows["local-active"]["meta"]["hidden"], True)
+        self.assertEqual(rows["local-active"]["meta"]["description"].count("alias"), 1)
+        self.assertEqual(rows[DAY]["active"], 0, "the vanished model retires")
+        self.assertEqual(rows[NIGHT]["active"], 0)
 
     def test_rows_for_unpublished_tags_are_retired_and_return_with_the_tag(self):
         self.run_doc(PAIRED)
@@ -139,7 +166,7 @@ class ReflectionTests(Fixture):
         rows = self.rows()
         self.assertEqual((rows[NIGHT]["active"], rows["nighttime"]["active"]), (0, 0), "offline tags retire")
         self.assertEqual(self.grants(NIGHT), {OWNER, ALICE}, "retirement keeps grants for the return")
-        self.assertTrue(any(c.startswith(f"retire reflection row {NIGHT!r}") for c in changes))
+        self.assertTrue(any(c.startswith(f"retire managed row {NIGHT!r}") for c in changes))
         self.assertEqual(rows["flash"]["active"], 1)
         self.assertEqual(summary["offline"], ["nighttime", NIGHT])
         self.assertEqual(self.run_doc(SOLO)[1], [], "a second solo pass is a no-op")
@@ -149,7 +176,7 @@ class ReflectionTests(Fixture):
                   ("qwen-handmade", OWNER, None, "Hand Made (8K)", "{}", '{"description": "mine"}', 0, 0))
         s.commit()
         s.close()
-        self.assertEqual(self.run_doc(PAIRED)[1].count("retire reflection row 'qwen-handmade'"), 0)
+        self.assertEqual(self.run_doc(PAIRED)[1].count("retire managed row 'qwen-handmade'"), 0)
         self.assertEqual(self.rows()["qwen-handmade"]["active"], 1)
         back = doc(model(DAY, ["local-active", "daytime"], 163840, False, "Qwen Day (160K)"),
                    model(NIGHT, ["nighttime"], 98304, True, "Qwen Night Abliterated (96K)"), revision="r3")
@@ -224,7 +251,7 @@ class ReflectionTests(Fixture):
         before = self.rows()
         status, changes, _ = self.run_doc(SOLO, write=False)
         self.assertEqual(status, "dry_run")
-        self.assertTrue(any(c.startswith("create reflection row 'flash'") for c in changes))
+        self.assertTrue(any(c.startswith("create model row 'flash'") for c in changes))
         self.assertEqual(self.rows(), before)
 
     def test_run_once_records_state_under_the_lock(self):

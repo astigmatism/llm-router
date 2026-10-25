@@ -9,25 +9,27 @@ the router through its native Ollama connection, and Open WebUI layers its
 and a row marked hidden vanishes from the picker. This enforcer keeps those
 rows from branding or hiding what the router serves:
 
-  1. reflection rows — one active, visible row per published tag: every served
-     model's canonical id plus its aliases, which is exactly the set of names
-     GET /api/tags returns. A row is named with the tag itself and never
-     renamed; its description tells the model behind the tag, and an alias
-     description names its canonical model;
-  2. access — read grants on those rows follow each model's NSFW flag: NSFW
+  1. model rows — one active, visible row per served model, named with the
+     router's published `display_name` and mirrored on every publish, so a new
+     catalog or configuration renames the picker within seconds;
+  2. alias rows — one hidden, active row per alias, named with the raw alias
+     (the router publishes no display name beyond the word itself). Aliases
+     stay out of the picker but keep their access grants, so chats that name
+     an alias keep resolving;
+  3. access — read grants on those rows follow each model's NSFW flag: NSFW
      models (or models whose flag is unknown) go to every user except
      `nsfw_excluded_users`; other models go to everyone ('*');
-  3. retirement — rows this enforcer marked, for tags the router no longer
+  4. retirement — rows this enforcer marked, for tags the router no longer
      publishes, are soft-retired (`is_active = 0`) and reactivated if the tag
      returns. Nothing here is ever deleted.
 
 Rows this enforcer did not mark — user presets (any row with a base model)
 and rows made by hand — are never renamed, relabelled, re-granted, hidden or
-retired. Version 3 (2026-10-24) replaced version 2's profile branding (routine
-rows named "Daytime (160K)", hidden alias labels, preset relabelling and
-offline-service reactivation) with this reflection rule at the owner's
-request: the picker must show exactly what the router publishes, under the
-names the router publishes.
+retired. Version 3 (2026-10-24) replaced version 2's profile branding with a
+reflection rule at the owner's request: the picker must show what the router
+publishes, not a brand. Version 4 (2026-10-25) matched the DeepSeek Harness
+picker: each router model appears once, under its published display name, and
+the routing aliases step out of the picker into hidden rows.
 
 Runs once per invocation (timer) or follows the router's event stream
 (`--watch`). Writes nothing when the router is unreachable or publishes no
@@ -270,51 +272,53 @@ def reconcile(doc, cfg, write):
         }
         now = int(time.time())
 
-        # ---- pass 1: reflection rows, one per published tag, named by the tag ----
+        # ---- pass 1: model rows (visible, display-named) and alias rows (hidden) ----
         for tag in sorted(tags):
             canonical, model = tags[tag]
+            is_model = tag == canonical
+            name = (model.get("display_name") or tag) if is_model else tag
             desc = describe(model, canonical, tag)
             caps = caps_for(model)
             principals = principals_for(model, user_ids, excluded)
             marker = {"tag": tag}
             ex = existing.get(tag)
             if ex is None:
-                changes.append(f"create reflection row {tag!r}")
+                changes.append(f"create {'model' if is_model else 'alias'} row {tag!r} name={name!r}")
                 meta = {
                     "profile_image_url": None,
                     "description": desc,
                     "capabilities": caps,
                     "knowledge": None,
-                    "hidden": False,
+                    "hidden": not is_model,
                     MARKER: marker,
                 }
                 execute("insert into model (id, user_id, base_model_id, name, params, meta,"
                         " updated_at, created_at, is_active) values (?,?,?,?,?,?,?,?,1)",
-                        (tag, owner_id, None, tag, "{}", json.dumps(meta, separators=(",", ":")), now, now))
+                        (tag, owner_id, None, name, "{}", json.dumps(meta, separators=(",", ":")), now, now))
             else:
                 old_meta = json.loads(ex["meta"] or "{}")
                 new_meta = dict(old_meta)
                 new_meta["description"] = desc
                 new_meta["capabilities"] = caps
-                new_meta["hidden"] = False
+                new_meta["hidden"] = not is_model
                 new_meta[MARKER] = marker
                 what = []
-                if ex["name"] != tag:
-                    what.append(f"name {ex['name']!r}->{tag!r}")
+                if ex["name"] != name:
+                    what.append(f"name {ex['name']!r}->{name!r}")
                 if old_meta.get("description") != desc:
                     what.append("description refreshed")
                 if old_meta.get("capabilities") != caps:
                     what.append("capabilities refreshed")
-                if old_meta.get("hidden") is not False:
-                    what.append("hidden->false")
+                if old_meta.get("hidden") is not (not is_model):
+                    what.append("hidden->" + ("true" if not is_model else "false"))
                 if old_meta.get(MARKER) != marker:
                     what.append("marked")
                 if not ex["is_active"]:
                     what.append("re-activated")
                 if what:
-                    changes.append(f"update reflection row {tag!r}: " + ", ".join(what))
+                    changes.append(f"update {'model' if is_model else 'alias'} row {tag!r}: " + ", ".join(what))
                     execute("update model set name=?, meta=?, is_active=1, updated_at=? where id=?",
-                            (tag, json.dumps(new_meta, separators=(",", ":")), now, tag))
+                            (name, json.dumps(new_meta, separators=(",", ":")), now, tag))
             sync_grants(s, tag, principals, changes, write)
 
         # ---- pass 2: retire marked rows whose tag the router no longer publishes ----
@@ -328,7 +332,7 @@ def reconcile(doc, cfg, write):
             if not isinstance(meta.get(MARKER), dict):
                 continue  # not ours: hand-made rows and old experiments stay exactly as they are
             if ex["is_active"]:
-                changes.append(f"retire reflection row {mid!r} (no longer published)")
+                changes.append(f"retire managed row {mid!r} (no longer published)")
                 execute("update model set is_active=0, updated_at=? where id=?", (now, mid))
 
         if changes and write:
