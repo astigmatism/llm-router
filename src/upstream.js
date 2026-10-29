@@ -97,7 +97,15 @@ export async function generationFetch(config, pathname, options = {}) {
     } finally { checking = false; }
   }, Math.min(5000, Math.max(5, stallMs / 4)));
   timer.unref?.();
-  const cleanup = () => clearInterval(timer);
+  // The listener must detach itself. Node keeps any composite AbortSignal
+  // (AbortSignal.any) that has a live 'abort' listener alive in a module-global
+  // set, which pins this scope — and with it options.body, the full serialized
+  // upstream request, up to several MB. A generation that completes normally
+  // never aborts, so only an explicit removeEventListener releases the pin.
+  const cleanup = () => {
+    clearInterval(timer);
+    signal.removeEventListener('abort', cleanup);
+  };
   signal.addEventListener('abort', cleanup, { once: true });
   try {
     const response = await requestWithNodeTransport(`${config.upstreamUrl}${pathname}`, { ...options, signal, connectTimeoutMs: config.upstreamConnectTimeoutMs ?? 10000 });

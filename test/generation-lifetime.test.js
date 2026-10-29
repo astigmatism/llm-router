@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { upstreamFetch } from '../src/upstream.js';
 
 async function fixture(t, handler, overrides = {}) {
@@ -54,4 +56,61 @@ test('client cancellation interrupts cold prefill immediately', async (t) => {
   const pending = upstreamFetch(config, '/api/chat', { generation: true, signal: controller.signal });
   controller.abort(new DOMException('cancelled', 'AbortError'));
   await assert.rejects(pending, { name: 'AbortError' });
+});
+
+// A generation that finishes normally never aborts. While the stall watchdog's
+// abort listener stays attached to the composite signal, Node keeps that signal
+// alive in a module-global set for the life of the process, and the listener's
+// scope goes with it — the options object carrying the multi-megabyte serialized
+// upstream request. The tell is marginal retention: with the leak, every extra
+// completed generation adds about one request body; with the listener detached,
+// a second batch adds nothing measurable. Batching twice in one process cancels
+// the constant large-object floor the runtime carries anyway.
+function largeObjectBytes() {
+  return v8.getHeapSpaceStatistics()
+    .reduce((sum, space) => sum + (/large_object/.test(space.space_name) ? space.space_used_size : 0), 0);
+}
+
+async function collectGarbage(collect) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    collect();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function completedGenerations(config, count, megabyte) {
+  for (let run = 0; run < count; run += 1) {
+    const response = await upstreamFetch(config, '/v1/chat/completions', {
+      generation: true,
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(4 * megabyte) }] }),
+      signal: new AbortController().signal
+    });
+    assert.equal(await response.text(), 'delta completed');
+  }
+}
+
+test('a completed generation releases the request body it captured', async (t) => {
+  const megabyte = 1024 * 1024;
+  const perBatch = 8;
+  const config = await fixture(t, (_, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('delta completed');
+  }, { generationStallTimeoutMs: 120000 });
+  v8.setFlagsFromString('--expose-gc');
+  await new Promise((resolve) => setImmediate(resolve));
+  const collect = vm.runInNewContext('gc');
+  assert.equal(typeof collect, 'function', 'this test needs a controllable garbage collection');
+  const baseline = largeObjectBytes();
+  await completedGenerations(config, perBatch, megabyte);
+  await collectGarbage(collect);
+  const firstBatch = largeObjectBytes() - baseline;
+  await completedGenerations(config, perBatch, megabyte);
+  await collectGarbage(collect);
+  const marginal = largeObjectBytes() - baseline - firstBatch;
+  // A leaking batch of eight holds close to eight bodies; a repaired one holds
+  // far less than one body, so the leak must be gone, not merely reduced.
+  assert.ok(marginal < 4 * megabyte,
+    `each completed generation still holds ${((marginal / perBatch) / megabyte).toFixed(1)} MB of its serialized request body`);
 });
