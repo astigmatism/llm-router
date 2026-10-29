@@ -22,6 +22,8 @@ The test suite validates:
 - metrics aggregation
 - bounded metadata history on disk and in memory, including a sparse 600 MB legacy file, UTF-8 chunk boundaries, corrupt/oversized records, concurrent appends, atomic replacement failures, and abandoned snapshot cleanup
 - generation archive age/size eviction, active-journal protection, interrupted records, shared retention ownership, idle sweeps, deletion failure retries, and exclusion of unrelated files and symlinks
+- generation lifetime under a controlled clock: no total timer across the old 900-second boundary, cold prefill kept alive by changing backend slot progress, a stalled body failing with `TimeoutError` while keeping the bytes already read, and client cancellation interrupting cold prefill immediately
+- completed generations releasing the serialized request body they captured: the stall watchdog's abort listener detaches itself when a generation finishes normally, measured as marginal large-object retention over two batches of completed generations so the release has to be complete rather than partial
 - authenticated archive retrieval through concurrent eviction, 404 for pruned records, and admin visibility of cleanup failures without affecting generation
 - unauthenticated admin listener access
 - legacy same-port admin auth behavior

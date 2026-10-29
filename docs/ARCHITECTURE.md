@@ -64,6 +64,12 @@ The marker is also the source of truth for model-specific reasoning capabilities
 
 The proxy forwards sanitized JSON bodies to raw Ollama and streams response chunks back to the client without buffering the full response. It observes newline-delimited JSON chunks to capture the final usage object when `done: true`.
 
+### Generation lifetime and abort-signal lifetime
+
+A generation has no total timer: only a failed connection, a cancellation, or an interval without bytes or backend progress ends it (`generationFetch` in `src/upstream.js`). That stall watchdog combines the caller's signal with its own `AbortController`, and a combined signal is a composite. Node keeps every composite `AbortSignal` that has a live `abort` listener in a module-global set for the life of the process, together with its source signals and the entire function scope the listener's closure shares — including `options.body`, the serialized multi-megabyte upstream request. A generation that finishes normally never aborts, so `{ once: true }` releases nothing.
+
+The invariant: a listener attached to a composite signal must remove itself when the work ends. `generationFetch`'s `cleanup` clears the watchdog interval and calls `removeEventListener` on every terminal path — no response body, stream end, read failure, stream cancellation, and fetch throw — which releases the signal, its sources, and the retained request body. `test/generation-lifetime.test.js` measures marginal large-object retention across two batches of completed generations so a regression reads as megabytes per generation rather than as a vague trend. `src/request-gate.js` attaches its cancellation listener to the caller's signal and removes it on every dequeue path; the admitted path currently passes a plain controller signal, and the same rule applies if a caller ever passes a combined one.
+
 ### Telemetry and history
 
 `src/metrics.js` maintains in-memory metrics from request records. `src/fs-store.js` persists request and event logs as JSONL files under `/app/data`.
