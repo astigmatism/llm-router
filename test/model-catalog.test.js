@@ -654,6 +654,59 @@ async function journals(f) {
   return Promise.all((await fs.readdir(dir)).map(async (name) => (await fs.readFile(path.join(dir, name), 'utf8')).trim().split('\n').map(JSON.parse)));
 }
 
+test('reasoning-only stops retain their precise cause, generation and termination across Responses modes', async (t) => {
+  const f = await fixture(t);
+  const recordIds = new Set();
+  for (const [index, model] of [CODING, EVERYDAY].entries()) {
+    f.backends[index].state.generationHandler = (_, res) => streamResult(res, { content: '' });
+    for (const stream of [false, true]) {
+      const response = await f.post('/v1/responses', { model, input: 'synthetic task', stream });
+      assert.equal(response.status, stream ? 200 : 502);
+      const payload = stream ? (await response.text()).split('\n')
+        .filter((line) => line.startsWith('data:') && line.slice(5).trim() !== '[DONE]')
+        .map((line) => JSON.parse(line.slice(5))).at(-1).response
+        : await response.json();
+      if (stream) assert.equal(payload.status, 'failed');
+      assert.equal(payload.error.code, 'EMPTY_UPSTREAM_RESPONSE');
+      const diagnostic = payload.error.diagnostics;
+      assert.match(diagnostic.record_id, /^[a-f0-9-]{36}$/);
+      recordIds.add(diagnostic.record_id);
+      assert.equal(diagnostic.backend.model, model);
+      assert.equal(diagnostic.backend.origin, f.marker.models[index].backend_url);
+      assert.equal(diagnostic.backend.kind, f.marker.models[index].backend_kind);
+      assert.equal(diagnostic.finish_reason, 'stop');
+      assert.equal(diagnostic.done, true);
+      assert.equal(diagnostic.visible_characters, 0);
+      assert.equal(diagnostic.reasoning_characters, 'retained reasoning'.length);
+      assert.equal(diagnostic.tool_calls_seen, false);
+      assert.deepEqual(diagnostic.usage, { prompt_tokens: 20, completion_tokens: 1500 });
+      assert.ok(!JSON.stringify(diagnostic).includes('retained reasoning'));
+      if (stream) assert.equal(payload.x_router.record_id, diagnostic.record_id);
+    }
+  }
+  assert.equal(recordIds.size, 4);
+  for (const rows of await journals(f)) {
+    const terminal = rows.find((row) => row.type === 'terminal');
+    assert.equal(terminal.error.code, 'EMPTY_UPSTREAM_RESPONSE');
+    assert.ok(recordIds.has(terminal.error.diagnostics.record_id));
+    assert.equal(terminal.error.diagnostics.done, true);
+  }
+  await until(() => f.context.requestGate.active.size === 0);
+});
+
+test('a broken backend stream remains distinct from a complete but empty stop', async (t) => {
+  const f = await fixture(t);
+  f.backends[0].state.generationHandler = (_, res) => streamResult(res, { content: '', broken: true });
+  const response = await f.post('/v1/responses', { model: CODING, input: 'synthetic task', stream: false });
+  assert.equal(response.status, 502);
+  const { error } = await response.json();
+  assert.equal(error.code, 'INCOMPLETE_UPSTREAM_STREAM');
+  assert.equal(error.diagnostics.finish_reason, null);
+  assert.equal(error.diagnostics.done, false);
+  assert.equal(error.diagnostics.usage, null);
+  assert.equal(error.diagnostics.reasoning_characters, 'retained reasoning'.length);
+});
+
 test('length-ended Responses remain incomplete in both modes, retaining thinking and partial tool JSON', async (t) => {
   const f = await fixture(t);
   for (const tools of [null, [{ index: 0, id: 'call_partial', type: 'function', function: { name: 'lookup', arguments: '{"query":' } }]]) {

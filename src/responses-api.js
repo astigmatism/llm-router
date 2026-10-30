@@ -5,6 +5,7 @@ import { parseJsonBuffer, readRequestBody, sendJson, summarizeBody } from './htt
 import { createModelCapabilityLookup, normalizeThinkForModel, upstreamFetch } from './upstream.js';
 import { createToolCapabilityLookup, emptyToolPolicy, normalizeToolsForModel } from './native-tools.js';
 import { BackendAdapterError, resolveBackendAdapter, fetchPrepared } from './backend-adapters.js';
+import { GenerationSessionError } from './generation-session.js';
 import { RequestGateError } from './request-gate.js';
 import { queueHeartbeat, endQueuedError } from './queue-response.js';
 import {
@@ -49,7 +50,8 @@ export function responsesErrorPayload(error) {
       message: error.message,
       type: error.type || 'invalid_request_error',
       param: error.param ?? null,
-      code: error.code || 'RESPONSES_API_ERROR'
+      code: error.code || 'RESPONSES_API_ERROR',
+      ...(error.diagnostics?.record_id ? { diagnostics: error.diagnostics } : {})
     }
   };
 }
@@ -1001,6 +1003,10 @@ class StreamingResponseBuilder {
 async function endFailedStream(builder, writer, apiError) {
   const failed = builder.shell('failed');
   failed.error = { code: apiError.code, message: apiError.message };
+  if (apiError.diagnostics?.record_id) {
+    failed.error.diagnostics = apiError.diagnostics;
+    failed.x_router = { status: 'incomplete', record_id: apiError.diagnostics.record_id };
+  }
   await writer.event('response.failed', { response: failed });
   writer.end();
 }
@@ -1411,9 +1417,11 @@ export async function handleResponsesRequest(request, response, pathname, contex
           responseBytes: writer?.bytes || 0
         };
       }
-      const apiError = abortState.timedOut() || error?.name === 'TimeoutError'
-        ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for the active backend.', null, 'server_error')
-        : new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', error.message || 'Could not reach the active backend.', null, 'server_error');
+      const apiError = error instanceof GenerationSessionError
+        ? backendErrorToResponsesError(error)
+        : (abortState.timedOut() || error?.name === 'TimeoutError'
+          ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for the active backend.', null, 'server_error')
+          : new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', error.message || 'Could not reach the active backend.', null, 'server_error'));
       if (builder && writer && !response.destroyed) {
         await endFailedStream(builder, writer, apiError);
         return {
@@ -1425,6 +1433,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
           upstreamError: true,
           errorCode: apiError.code,
           errorSummary: apiError.message,
+          ...(apiError.diagnostics ? { errorDiagnostics: apiError.diagnostics } : {}),
           usage: null,
           responseBytes: writer.bytes
         };
@@ -1539,7 +1548,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
       }
       const apiError = error instanceof ResponsesApiError
         ? error
-        : (error instanceof BackendAdapterError
+        : (error instanceof BackendAdapterError || error instanceof GenerationSessionError
           ? backendErrorToResponsesError(error)
           : (abortState.timedOut() || error?.name === 'TimeoutError'
             ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for the active backend.', null, 'server_error')
@@ -1567,7 +1576,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
     };
     const apiError = error instanceof ResponsesApiError
       ? error
-      : (error instanceof BackendAdapterError
+      : (error instanceof BackendAdapterError || error instanceof GenerationSessionError
         ? backendErrorToResponsesError(error)
         : (abortState?.timedOut() || error?.name === 'TimeoutError'
           ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for Ollama.', null, 'server_error')

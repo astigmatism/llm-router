@@ -4,8 +4,21 @@ import { randomUUID, createHash } from 'node:crypto';
 import { upstreamFetch } from './upstream.js';
 import { generationRetention } from './generation-retention.js';
 
-function failure(code, message) {
-  return Object.assign(new Error(message), { code, statusCode: 502 });
+export class GenerationSessionError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'GenerationSessionError';
+    this.code = code;
+    this.statusCode = 502;
+  }
+}
+const failure = (code, message) => new GenerationSessionError(code, message);
+
+function diagnosticUsage(usage) {
+  if (!usage) return null;
+  return Object.fromEntries(['prompt_tokens', 'completion_tokens', 'total_tokens']
+    .filter((key) => Number.isFinite(usage[key]) && usage[key] >= 0)
+    .map((key) => [key, usage[key]]));
 }
 
 // This archive is separate from metadata logs and volatile backend caches.
@@ -126,6 +139,7 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
     let terminal = false;
     let completionTokens = 0;
     let promptTokens = 0;
+    let termination = {};
     try {
       if (prepared.transition) {
         metadata.context_transitions++;
@@ -137,6 +151,8 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
       }
       for (;;) {
         signal?.throwIfAborted();
+        termination = { finish_reason: null, done: false, usage: null,
+          visible_characters: 0, reasoning_characters: 0, tool_calls_seen: false };
         await journal.append({ type: 'backend_request', body });
         const response = await upstreamFetch(adapter.upstreamConfig, '/v1/chat/completions', {
           method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -147,7 +163,7 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
         const toolArguments = new Map();
         for await (const event of events(response.body)) {
           await journal.append({ type: 'backend_event', event });
-          if (event === null) { done = true; continue; }
+          if (event === null) { termination.done = done = true; continue; }
           if (event.error) throw failure('UPSTREAM_GENERATION_FAILED', typeof event.error === 'string' ? event.error : event.error.message);
           const choice = event.choices?.[0];
           const delta = choice?.delta ?? {};
@@ -165,6 +181,8 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
           }
           if (event.usage) lastUsage = event.usage;
           if (choice?.finish_reason) finish = choice.finish_reason;
+          Object.assign(termination, { finish_reason: finish, usage: diagnosticUsage(lastUsage),
+            visible_characters: text.length, reasoning_characters: reasoning.length, tool_calls_seen: toolSeen });
           if (Object.keys(delta).length) yield chunk(delta);
         }
         if (!done || !finish) throw failure('INCOMPLETE_UPSTREAM_STREAM', 'The backend stream ended without both a finish reason and terminal event. Received output is retained.');
@@ -206,7 +224,15 @@ export async function managedCompletion(adapter, prepared, headers, signal) {
         break;
       }
     } catch (error) {
-      await journal.append({ type: 'terminal', status: signal?.aborted ? 'cancelled' : 'incomplete', error: { code: error.code ?? 'UPSTREAM_STREAM_FAILED', message: error.message } });
+      if (error instanceof GenerationSessionError) {
+        error.diagnostics = { record_id: journal.id,
+          backend: { model: adapter.activeModel.model, kind: adapter.kind,
+            host_id: adapter.activeModel.host ?? null,
+            origin: new URL(adapter.upstreamConfig.upstreamUrl).origin }, ...termination };
+      }
+      await journal.append({ type: 'terminal', status: signal?.aborted ? 'cancelled' : 'incomplete',
+        error: { code: error.code ?? 'UPSTREAM_STREAM_FAILED', message: error.message,
+          ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}) } });
       throw error;
     } finally {
       try { if (!terminal && !signal?.aborted) await journal.append({ type: 'delivery_ended', status: 'incomplete' }); }

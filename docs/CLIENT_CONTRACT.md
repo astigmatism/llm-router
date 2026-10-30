@@ -254,6 +254,19 @@ Benchmarking and evaluation clients are the exception. A benchmark's identity is
   A streaming client MUST check the final frame, and MUST treat a stream that ends without a normal finish as incomplete.
 - **Tracing:** `x-router-generation-id` (a response header) and `x_router.record_id` identify the router's archive record. Include them in bug reports.
 
+  Managed generation failures preserve their specific code through Responses:
+  `EMPTY_UPSTREAM_RESPONSE` means the backend finished without visible content
+  or a tool call; `INCOMPLETE_UPSTREAM_STREAM` means a required terminal event
+  or finish reason was missing. Neither is replaced with a generic transport
+  failure. In JSON errors and streaming `response.failed`, `error.diagnostics`
+  includes the archive `record_id`, backend model/kind/host/origin, observed
+  `finish_reason`, terminal `done` flag, available token usage, channel character
+  counts and whether tool calls were seen. Unavailable termination facts stay
+  null/false. Diagnostics contain no prompt or reasoning text; the backend
+  origin excludes credentials and query strings. Request metadata and the
+  archive terminal retain these diagnostics too. This does not detect every
+  semantically unfinished non-empty answer or repair a backend completion.
+
 ## 10. Errors
 
 Every router error carries a machine-readable code:
