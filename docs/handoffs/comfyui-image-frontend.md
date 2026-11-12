@@ -1,5 +1,7 @@
 # Handoff: ComfyUI Image Frontend — contract 1.2: what the prompt assistant may send, and what it must not offer
 
+> **Superseded 2026-11-12** for this project by [contract 1.6's handoff](2026-11-12-comfyui-image-frontend-contract-1-6.md), which carries 1.3–1.6 with it. Kept because its §3 reading of the names this project may send, and the five re-verifications it asked for, are still cited by that project's map.
+
 **To:** the AI agent that maintains `comfyui-image-frontend`.
 **From:** the LLM Router maintainer. **Date:** 2026-10-13.
 **Contract:** [LLM Router client contract, version 1.2](https://github.com/astigmatism/llm-router/blob/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md), pinned at llm-router `0b16686`. Raw text: <https://raw.githubusercontent.com/astigmatism/llm-router/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md>
