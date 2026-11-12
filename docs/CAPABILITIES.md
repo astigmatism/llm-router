@@ -114,7 +114,7 @@ The shapes this covers include:
 | `nsfw` | `true` when the runtime declares the model abliterated (refusals removed, suitable for NSFW content), `false` when it declares it not, `null` when the catalog does not say. Never inferred from a model's name. |
 | `capability_score` | `{value, version, basis, components: {size, context, features}, inputs: {parameters, bits_per_weight, context_window, vision, tools, reasoning}}`; see below |
 | `placement` | `gpu_count`, `gpus` (text GPU card names, in the runtime's text GPU order), `vision_encoder` (`gpu`/`cpu`), `vision_gpu`, `vision_gpu_shared`, `exclusive`. GPU UUIDs, paths and URLs are never published. |
-| `live` | What the running process reports: `slots`, `slot_context_window`, `vision`, `model_context_window` (GGUF training context), `parameters`, `size_bytes`, `build`. Null when the backend cannot be reached. |
+| `live` | What the running process reports: `slots`, `slot_context_window`, `vision`, `model_context_window` (GGUF training context), `parameters`, `size_bytes`, `build`. Null when the backend cannot be reached — and, field by field, when a reachable engine reports no GGUF facts for the loaded model: an engine whose `/v1/models` entry carries no parameter count or file size leaves `parameters`, `size_bytes` and `model_context_window` null while `/health` and `/props` answer normally. A null here is an unobserved fact, never a failed check. |
 | `parameter_size`, `family` | `parameter_size` is formatted from the live parameter count (for example `27.3B`); `family` comes only from the catalog. Each is null when unknown, never guessed. |
 | `qualification_notes` | The runtime's deployment notes for this configuration, such as unqualified-experiment warnings |
 | `sources.backend_props` | Whether `/props` answered |
@@ -132,6 +132,8 @@ The shapes this covers include:
 | `features` | up to 20 | Vision 7, tools 7, reasoning 6 |
 
 On 2026-10-07 production scored Daytime (27B Q6_K_XL, 160K) **68.3** and Nighttime (27B abliterated Q6_K, 96K) **64.9**. Both are 27B models, so Daytime ranks higher on its larger context and higher precision. Parameter count and size are remembered for each model revision, so a briefly unreachable backend keeps its score. A model whose facts were never observed scores `null` with `basis: "incomplete"`. `version` changes if the formula changes.
+
+An engine that reports no parameter count or file size leaves **every** model it serves in that state — reachable, healthy and unscored at once — because the size part is observed from the process and never taken from the catalog or the model's name; `components.size: null` with `inputs.parameters: null` is that state, and it says nothing about the model. `complete` is not a claim about the score: a fact this router cannot observe does not make the document incomplete, so `complete: true` with `warnings: []` and null scores is a normal, trustworthy deployment. Contract §4 fixes the ranking to apply when scores are absent (scored rows first, then `context_window`).
 
 The score cannot measure how well a model actually answers. It can't weigh a fine-tune or abliteration against its base model, or a mixture-of-experts model (counted by total parameters) against a dense one. Use measured benchmarks such as Bench Studio's for those decisions.
 
@@ -160,6 +162,8 @@ An exclusive configuration stops Nighttime to give Daytime every GPU. The runtim
 ```
 
 Inference requests for an offline ID return **HTTP 503 `SERVICE_OFFLINE`**, and so does `GET /v1/models/<id>`. An unknown ID still returns 404 `MODEL_NOT_FOUND`. `/v1/models` and `/api/tags` continue to list only selectable models. Treat `SERVICE_OFFLINE` as "retry after the configuration changes", not as a configuration error. The router never redirects an offline service to another model.
+
+Every entry here is the runtime's own declaration of a service it chose not to run in the selected configuration; **the router never adds one of its own.** A machine it cannot reach produces no entry — its models stay listed with `available: false` and the document states no cause, which is contract §4's second row, not this one — and a service the configuration never declared produces none either, which is why that request is 404 `MODEL_NOT_FOUND` rather than `SERVICE_OFFLINE`. A publisher that omits `reason` is published as `not_running`: a statement about the catalog the machine sent, never a router verdict about a host. Clients that branch on `reason` MUST treat an unrecognised value as "stopped in this configuration" and read no more into it.
 
 ### Warnings and completeness
 
@@ -197,7 +201,7 @@ data: {"revision":"q8Zk…","load":{"qwen3.8-27b-ud-q6_k_xl-tensor-next":{"activ
 - Every connection starts with the full current `capabilities` document and `load`. A reconnecting client needs nothing else; `Last-Event-ID` is not replayed.
 - A `capabilities` event is sent whenever the revision changes:
   - **Immediately** after a runtime publication (`reload-config`), drain begin/end, or maintenance change.
-  - **Within `ROUTER_CAPABILITY_POLL_MS`** (default 5 s) after a backend health change, or after a marker edit that skipped the reload notification. This poll runs only while someone is subscribed.
+  - **Within `ROUTER_CAPABILITY_POLL_MS`** (default 5 s; the contract publishes the client-facing bound as about 10 s) after a backend health change, or after a marker edit that skipped the reload notification. A machine going away or coming back is one of these health changes: host availability is computed in the same pass from the same probes, including a machine that stops answering below HTTP. This poll runs only while someone is subscribed.
 - The same revision is never sent twice in a row. A state that returns (for example, drain then undrain) reuses its earlier revision.
 - `load` events are coalesced to at most one per second and sent only when occupancy changes. Load never changes `revision`.
 - A comment heartbeat is sent every `ROUTER_EVENTS_HEARTBEAT_MS` (default 15 s).

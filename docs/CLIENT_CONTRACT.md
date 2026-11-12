@@ -1,6 +1,6 @@
 # LLM Router client contract
 
-**Version 1.5 · 2026-10-22.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing; version 1.4 states how an alias is titled in the model listings, so that several names for one model read as the several names they are; version 1.5 adds `display_name_qualified`, the one label per row a client may render and match on when two publishers chose the same words. No client change is required; see [changes](#15-changes).
+**Version 1.6 · 2026-11-12.** Applies to LLM Router `87517ef` and later, with AI Runtime `e0530db` and later. Version 1.1 added the benchmark exception in §3; version 1.2 records the opt-in `trial` service ID and states what a published configuration really guarantees; version 1.3 describes what a router that spans several machines publishes, and what it does when one of them is missing; version 1.4 states how an alias is titled in the model listings, so that several names for one model read as the several names they are; version 1.5 adds `display_name_qualified`, the one label per row a client may render and match on when two publishers chose the same words; version 1.6 writes down the reading rules a multi-host deployment was already exercising — what each `hosts[]` field licenses a client to conclude, the four ways a model stops being available and the one of them that carries a reason, what a null `capability_score` does and does not mean, and `nsfw` as an attestation rather than a forecast. No client change is required; see [changes](#15-changes).
 
 This is the contract between the LLM Router and every application that sends it inference requests. It states what the router guarantees and what a client must do to keep working while models, contexts and configurations change underneath it. When another document disagrees with this one, this one wins. Detailed schemas and examples are in the [references](#14-references).
 
@@ -83,12 +83,12 @@ The router distinguishes sharply between a name that means a service and a name 
 
 | Field | Meaning |
 |---|---|
-| `revision` | Content hash of everything below except load. If `revision` is unchanged, nothing relevant has changed. |
+| `revision` | Content hash of everything below except load. If `revision` is unchanged, nothing relevant has changed — and a recheck that found the same deployment changes nothing, however many rechecks ran, which is what makes `If-None-Match` polling cheap. The converse is only half a rule: a moved `revision` means something in the document moved, not that *availability* moved, because the hash covers metadata a client never reads. Act on the fields, never on the fact of a change. |
 | `router.accepting_requests` | False while the router drains for a configuration switch, or during maintenance. |
-| `configuration.id`, `configuration.exclusive` | The AI Runtime configuration, and whether it is solo. |
+| `configuration.id`, `configuration.exclusive` | The AI Runtime configuration of the machine that answers an unnamed request, and whether it is solo. An exclusive configuration loads that one model and nothing beside it on that machine (see **NSFW flag and capability score** below). A multi-host deployment's other machines publish their own configurations, in `hosts[].configuration`. |
 | `models[]` | Each usable model: `service` (the ID to send), `display_name`, `display_name_qualified`, `aliases`, `available`, `slots`, `context_window`, `input_modalities`, `capabilities`, `nsfw`, `capability_score`, and full `metadata`. In a deployment whose models live on more than one machine, each also carries `host`. |
-| `hosts[]` | Only when the deployment spans more than one machine: each one's `id`, `display_name`, `default`, `published`, `available`, `draining`, `drain_reason`, `configuration`, and `model_ids`. See below. |
-| `offline_services[]` | Services this configuration deliberately stops: `model`, `aliases`, `display_name`, `reason`. |
+| `hosts[]` | Only when the deployment spans more than one machine: each one's `id`, `display_name`, `default`, `published`, `available`, `draining`, `drain_reason`, `configuration`, `model_ids` and `error`. A client whose router declares one machine never sees this field, and reads its absence as one machine — the one serving the document. What each field may be relied on for is in **Several machines, one router** below. |
+| `offline_services[]` | Services this configuration deliberately stops: `model`, `aliases`, `display_name`, `reason`. It is the runtime's own declaration of what it chose not to run, and the router never adds an entry of its own: a machine it cannot reach produces no entry here, and a service this configuration never declared produces none either (§3). |
 | `ids` | Every accepted ID → its current canonical model. |
 | `complete`, `warnings` | Whether this router trusts the picture it is publishing. See below. |
 | `load` (only with `?include=load`) | Per model: `active`, `queued`, `free_slots`. |
@@ -152,12 +152,37 @@ the way you treat a model being unavailable — the model is not `available`, an
 the router: an unnamed request answers from the machine the router was told is
 its default, whatever else is down.
 
+**What each `hosts[]` field licenses a client to conclude.**
+
+| Field | You may rely on it for |
+|---|---|
+| `id` | The key that matches a model's `host`. Key a table by it, display it; it is never a model ID to send (§3). |
+| `display_name` | Display only. Two machines may describe themselves in the same words, so it is not unique, and the labelling rules above hold for it unchanged. |
+| `default` | Which machine answers a request that named no model (§3). Diagnostic: a client that must not be served by a particular model sends an ID. |
+| `published` | That the router holds a usable catalog from this machine. It is a publication fact, not a heartbeat: a machine switched off keeps `published: true` on the catalog it left behind, for as long as that catalog stands. |
+| `available` | That this machine can serve something right now: it is not drained, and at least one of its models answers its own health check. It is an aggregate the router computes **from** `models[].available`, so the field a client acts on remains the model's — and while the whole router is draining it reads `false` on a healthy machine too. |
+| `draining`, `drain_reason` | A maintenance window, which may be scoped to this machine or be the whole router's — a router-wide drain appears on every host, and `router.draining` says which. Where `router.accepting_requests` is false the answer is §7: wait, rather than fall away from a machine that is merely being tended. |
+| `configuration` | What this machine publishes. It may differ between machines and may be `null`; the document-level `configuration` is the default machine's, not everybody's. Presentation and diagnosis only, never a selection key. |
+| `model_ids[]` | The canonical IDs this machine publishes, for display and diagnosis. §3 forbids sending them; map a model to its machine with `models[].host` rather than by matching canonical IDs, which a client MUST NOT persist as configuration. |
+| `error` | That this machine contributes **nothing usable** because its catalog is missing, unreadable or invalid — a code and a message. It is a publication fault. It is never how a switched-off machine reads, and a client MUST NOT wait for it before treating a machine's models as unavailable. |
+
+**The four ways a model stops being available, and what each one reads as.**
+
+| Situation | What the document says | What you do |
+|---|---|---|
+| The machine is switched off, or its backend stopped answering | Its models keep their rows with `available: false`; `offline_services[]` names nothing; `hosts[].error` stays `null` | Fall back (§5). Say unavailable, and **name no cause** — nothing in the document states one. A request that names the model answers 503 `BACKEND_UNAVAILABLE`, not `SERVICE_OFFLINE` (§10) |
+| This configuration deliberately stops the service | An `offline_services[]` entry naming the model and its aliases, with a `reason` | Fall back (§5). The request answers 503 `SERVICE_OFFLINE`, which costs no retry allowance or budget (§10) |
+| The machine never published, or published something the router cannot use | `hosts[].published` false or `hosts[].error` set, and its models **absent** from `models[]` | Those models are not offered. This is the one case whose reason the document carries: report it to your operator and keep using the rest |
+| The router drains or enters maintenance | `router.accepting_requests` false, and every host `draining: true` | Wait (§7). Nothing is down, and nothing may be substituted |
+
+Only the third of those carries a reason, and the absence of one is not an invitation to supply it: a client MUST NOT render a cause it was not given, and SHOULD reach for neutral wording ("not answering", "unavailable") over a diagnosis it cannot support ("crashed", "offline", "misconfigured"). `observed_at` is when this router first saw the revision it stamps — a content-change stamp for the whole document. It is not a per-machine last-seen-alive, and it is not a stale-data warning: an unchanged `revision` is already the contract's statement that no availability verdict has moved, and the verdict behind `available` is re-derived from the machine on every recheck (see **Change events**).
+
 ### Change events
 
 `GET /v1/router/events` is a Server-Sent Events stream.
 
 - **Each connection** starts with the complete document as `event: capabilities` (`id:` is its `revision`), then `event: load`.
-- **A new `capabilities` event**, always the complete document, follows every change: immediately for a runtime publication, drain or maintenance change; within about 10 s for a backend health change.
+- **A new `capabilities` event**, always the complete document, follows every change: immediately for a runtime publication, drain or maintenance change; within about 10 s for a backend health change. A machine becoming unreachable, and a machine coming back, *are* backend health changes: they arrive on this path within the same bound, including the case where the machine stopped answering below HTTP rather than at it. The recheck that finds them runs while at least one client is subscribed, which is what makes §4's subscriber rule also the freshness rule — with nobody watching, the deployment is re-read only when someone fetches it, and an unavailable verdict is then as old as the last reader.
 - **`load` events** carry slot occupancy, at most once per second.
 - **`: keepalive` comments** arrive every 15 s.
 
@@ -168,12 +193,16 @@ A long-running client SHOULD hold one subscription for its lifetime and replace 
 ### NSFW flag and capability score
 
 - **`nsfw`** is `true` for models the runtime declares abliterated (refusals removed), `false` for models it declares not, and `null` if undeclared. Treat `null` as "not known to be NSFW".
+- **`nsfw` is an attestation, not a forecast.** A `true` means the runtime has attested this model's abliteration — nothing more, and nothing less. It is deliberately conservative, and it can therefore lag observed behaviour in both directions: a model that answers every explicit prompt politely while declaring `false` is an ordinary state of a deployment and not a fault, and no model's `true` promises it never declines. So a client that finds no `nsfw: true` model in the document has found a **gap in what has been attested**, and describes it as that; it MUST NOT forecast refusals from a `false`, and MUST NOT soften the fact that its NSFW-first choice fell back (§5's refusal rule is about a refusal that happened, not about one that might).
+- **An exclusive configuration cannot answer this gap by adding a model.** Where `configuration.exclusive` is true, the configuration loads that one model and gives it every text GPU of its machine, so no second model — abliterated or not — can run beside it there. A missing `nsfw: true` row under an exclusive configuration is a property of the selected configuration, and only selecting a different configuration (a switch, with §7's drain) can change it. A client sees this coming from the `exclusive` flag it already reads.
 - **`capability_score`** is an automatic 0–100 ranking; higher is more capable. It is comparable only between models of this router. It is built from three parts:
   - parameter count, scaled down for heavier quantization;
   - context window;
   - vision, tools and reasoning support.
 
   Availability, load and speed never change it. It cannot measure answer quality: it can't account for what abliteration costs, or compare a mixture-of-experts model fairly with a dense one.
+- **A null `capability_score.value` means the router could not compute it, and says nothing about the model.** The quantization-scaled parameter part needs the model's parameter count and file size, and the router learns those from the process serving the model, never from a name or a claim; an engine that reports neither leaves `value: null` with `basis: "incomplete"`, `components.size: null` and null `inputs.parameters` — on every model it serves, at once. `metadata.capability_score` is where that shows, and it is the field that says whether a row was scored at all. **`complete: true` with `warnings: []` has never meant that scores exist**: a fact the router cannot observe is not a document it distrusts (§4). A client MUST NOT read an unscored deployment as a degraded one.
+- **Ranking when a score is missing is defined, not improvised.** The order the reference clients implement, and the one to copy: keep `available` rows that serve the request's features (§5's feature checks come before any ranking); rows with a score before rows without; then higher `capability_score`; then higher `context_window`. The last tie breaks in the order the document publishes the rows, which is stable for a given roster. A client MAY break that final tie another way — it MUST be deterministic, and MUST NOT reshuffle a list a person is reading — and where it presents a choice it SHOULD say what it ranked by, because "most capable" is not a claim a null score supports.
 
 ## 5. Choosing a model
 
@@ -329,7 +358,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 - [ ] Takes context, reserve, slots and features from the serving model, and recomputes them when it changes. Hard-codes no context size.
 - [ ] Uses read timeouts that allow for queueing, or streams. Doesn't abandon and resubmit queued requests.
 - [ ] Logs model changes and fallbacks, and surfaces refusals from a fallback model instead of retrying them.
-- [ ] If it shows where models run, reads it from `hosts[]`/`host` and treats a missing machine as that machine's models being unavailable (§4).
+- [ ] If it shows where models run, reads it from `hosts[]`/`host` and treats a missing machine as that machine's models being unavailable, naming no cause the document did not give (§4).
 - [ ] Keeps a verbatim copy of this contract at `docs/llm-router-contract.md`, a conformance map, and an `AGENTS.md` rule that upholds it (§11).
 
 ## 14. References
@@ -347,6 +376,7 @@ A client conforms when it meets every item below and has a test for each MUST:
 
 | Version | Change |
 |---|---|
+| 1.6 | §4: what a client may rely on each `hosts[]` field for, and what is display-only — `published` is a publication fact and not a heartbeat, `available` is an aggregate computed from `models[].available`, a router-wide drain appears on every host, `model_ids[]` are canonical IDs it must not send, and `error` is a publication fault rather than a down machine. §4 tabulates the four ways a model stops being available and states that only the machine that never published (or published something unusable) carries a reason: a machine that simply stopped answering keeps its rows at `available: false`, names nothing in `offline_services[]`, leaves `hosts[].error` null, and a client MUST NOT supply the cause the document withholds. §4 states that `observed_at` is a document-wide content stamp rather than a per-machine last-seen-alive, that an unchanged `revision` is the freshness statement, and that a moved `revision` need not mean an availability change; §4's change-event bound is confirmed to cover a machine going away and coming back, including failure below HTTP. §4 states what a null `capability_score` means (inputs the router could not observe, fleet-wide, with `complete: true` never claiming scores exist) and fixes the ranking order when scores are missing. §4 restates `nsfw` as an attestation rather than a behaviour forecast — a deployment with no `nsfw: true` model has a gap in what is attested, not a prediction of refusals — and records that an `exclusive` configuration loads nothing beside its model, so no second resident can appear without a switch. §13's machine line names the no-invented-cause rule. No client change is required: nothing any client reads by name moved, no field changed meaning, and every rule above states what a conformant client already does. |
 | 1.5 | §4: every capabilities row carries `display_name_qualified`, the label a client may render and match on when two publishers titled their model alike — the published title, qualified with the machine or, when one machine offers two services under one title, with the service ID. `display_name` is unchanged and still what a client records; where nothing collides the two strings are equal, so no client needs to change. `schema_version` stays 2: the field is additive and unknown fields are ignored. |
 | 1.4 | §4: an alias row in `/v1/models` and `/api/tags` is titled by the alias rather than by its model's title, unless the catalog states one, and the capabilities document publishes `metadata.alias_display_names` so a client that offers one option per service can label each name distinctly; clients identify rows by `id` and MUST NOT de-duplicate them by title. A client that sends service IDs needs no change: nothing it sends or reads by `id` moved, and the capabilities document still lists each model once, under its own title. |
 | 1.3 | §4: the capabilities document is `schema_version: 2`, adding `hosts[]` and a per-model `host` when a deployment serves models from more than one machine; a missing machine means those models are not `available`, and unnamed requests still answer. §7: a drain may scope to one machine. §11: schema note. Clients that send service IDs need no change; a client written against 1.2 keeps working untouched. |

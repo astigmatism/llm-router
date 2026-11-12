@@ -139,7 +139,8 @@ The capabilities document is `schema_version: 2`. It adds two things, both
 present only once a second host publishes:
 
 - `hosts[]` — each machine: `id`, `display_name`, `default`, `published`,
-  `available`, `draining`, `drain_reason`, its `configuration`, and `model_ids`.
+  `available`, `draining`, `drain_reason`, its `configuration`, `model_ids`, and
+  the `error` that names why it contributes nothing when it does.
 - `host` on each model — the machine running it.
 
 Everything else is what version 1 clients already read, with the same meaning,
@@ -182,13 +183,18 @@ problem never propagates:
 | A host has never published | `published: false`, its models absent, other hosts unaffected. An unnamed request is unaffected. |
 | A host's stored catalog is corrupt or unreadable | That host reports `HOST_CATALOG_INVALID`, contributes nothing, and the rest keep serving. |
 | A host publishes something invalid at the door | The publication is refused; the previously accepted catalog keeps serving. |
-| A host's backend stops answering | That model is `available: false`. The router is `degraded`, not down. |
+| A host's backend stops answering | That model is `available: false`, with no cause published: `hosts[].error` stays `null` and `offline_services[]` says nothing, because the runtime stopped nothing — the router merely cannot reach it. The router is `degraded`, not down. |
 | The default host stops publishing | `DEFAULT_HOST_UNAVAILABLE` is warned and the first declared host that *is* publishing answers the unnamed request. The router never invents an active model. |
 | Every host is broken | `503 INVALID_MODEL_CATALOG`, naming the first publisher's complaint. Nothing is servable and the container is unhealthy. |
 
 Because a client-facing name is never claimed twice, a model that disappears
-leaves no ambiguity behind: it is either in `models[]` or it is gone, and
-`offline_services[]` or `hosts[].error` says which kind of gone.
+leaves no ambiguity behind: it is either in `models[]` or it is gone. Of the
+three ways to be gone, two name themselves — `offline_services[]` for a service
+this configuration deliberately stops, `hosts[].error` for a host whose catalog
+is missing or unusable — and the third does not: a machine that stopped answering
+is reported as `available: false` and nothing more. That silence is the documented
+state of the document, not a lost field, and a client that needs a cause for it
+asks for a field rather than inventing one (contract §4).
 
 ## 6. Maintenance, drain, and what "healthy" means
 
