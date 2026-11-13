@@ -134,7 +134,7 @@ deployment repeats `display_name` exactly and a cached label never churns. Two r
   promised was unique. `offline_services[].display_name` has no qualified twin — a service the configuration
   stops is not a row a client can select.
 
-The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
+The router never invents a service ID. When the published catalog gives a model no service alias, `service` repeats that model's canonical ID: `service === id` is how a model with **no addressable ID** reads, and under §3 a client MUST NOT offer it as a choice — it may only be reached by a canonical ID, which clients may not configure. When no model of the active catalog has a service ID, the document carries `warnings: ["CATALOG_HAS_NO_SERVICE_ID"]` and `complete: false`: the router is saying out loud that a §3-conformant client has nothing to send in this configuration. Treat that as the runtime's business, report it to your operator, and keep the models you do have addressable in mind. The per-entry fact is published too, one level down: an entry with no service alias carries `MODEL_HAS_NO_SERVICE_ID` in its own `metadata.warnings`, which is the row-level statement of the same condition and the only place it is attributable to a row — the document's own `warnings` array holds the catalog-level code alone, and in a multi-host deployment holds it with the machine's name appended (`CATALOG_HAS_NO_SERVICE_ID:rosalina`). It is a different fact from the runtime's own `deployment_warnings`, which the publisher writes and which the router passes through unchanged.
 
 ### Several machines, one router
 
@@ -346,6 +346,8 @@ New codes may be added. An unknown 5xx code is transient; an unknown 4xx code is
 ## 13. Conformance checklist
 
 A client conforms when it meets every item below and has a test for each MUST:
+
+Items are cited by their number here, and a number belongs to an item for the life of the contract: a new item is added at the end, and an item that is withdrawn leaves its number unused rather than pulling the rest up. A map that would rather anchor on words than on position may cite the § an item cites, which identifies it just as well. Should a renumber ever become unavoidable, §15 announces it and names the numbers affected.
 
 - [ ] Sends service IDs only, or, for a benchmark, a canonical ID pinned per run (§3). Persists no canonical IDs as configuration. Sends `X-Client-Name`.
 - [ ] Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5).
